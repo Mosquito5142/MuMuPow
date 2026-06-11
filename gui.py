@@ -86,6 +86,8 @@ class MuMuGUI(tk.Tk):
         self.profiles = {}
         self.macros_dir = os.path.join(base_dir, "macros")
         os.makedirs(self.macros_dir, exist_ok=True)
+        self.templates_dir = os.path.join(base_dir, "templates")
+        os.makedirs(self.templates_dir, exist_ok=True)
 
         # ตัวแปรสำหรับการรันแบบแบ่งเซ็ต
         self.pause_between_sets = tk.BooleanVar(value=False)
@@ -96,6 +98,7 @@ class MuMuGUI(tk.Tk):
         # ตัวแปรสำหรับการจัดการบัญชีผู้ใช้
         self.accounts = []
         self.accounts_file = os.path.join(base_dir, "accounts.json")
+        self.ports_file = os.path.join(base_dir, "ports.json")
         self.account_checkboxes = {} # email -> BooleanVar
         self.group_checkboxes = {}   # group_name -> BooleanVar
         self.load_accounts()
@@ -348,8 +351,27 @@ class MuMuGUI(tk.Tk):
         # ฝั่งขวา: ฟอร์มป้อน/แก้ไขขั้นตอนคำสั่งการบอท (Right Panel)
         right_panel = tk.Frame(main_pane, bg=BG_DARK, width=340)
         right_panel.pack(side="right", fill="both")
+        right_panel.pack_propagate(False)
         
-        form_panel = tk.LabelFrame(right_panel, text=" ➕ เพิ่ม / แก้ไขขั้นตอนคำสั่ง ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=10)
+        # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มและปุ่มรันด้านล่างได้หากความสูงหน้าจอต่ำ
+        right_canvas = tk.Canvas(right_panel, bg=BG_DARK, highlightthickness=0)
+        right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
+        
+        right_scroll_frame = tk.Frame(right_canvas, bg=BG_DARK)
+        right_scroll_frame.bind(
+            "<Configure>",
+            lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+        )
+        
+        right_window_id = right_canvas.create_window((0, 0), window=right_scroll_frame, anchor="nw")
+        right_canvas.bind('<Configure>', lambda event: right_canvas.itemconfigure(right_window_id, width=event.width))
+        
+        right_canvas.configure(yscrollcommand=right_scrollbar.set)
+        right_canvas.pack(side="left", fill="both", expand=True)
+        right_scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(right_canvas)
+        
+        form_panel = tk.LabelFrame(right_scroll_frame, text=" ➕ เพิ่ม / แก้ไขขั้นตอนคำสั่ง ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=10)
         form_panel.pack(fill="both", expand=True, pady=(0, 10))
         
         # ตัวเลือกประเภทคำสั่ง
@@ -365,7 +387,8 @@ class MuMuGUI(tk.Tk):
                 "รอเวลา (Sleep)",
                 "เปิดแอป (Start App)",
                 "ปิดแอป (Stop App)",
-                "ล้างข้อมูลแอป (Clear App Data)"
+                "ล้างข้อมูลแอป (Clear App Data)",
+                "ตรวจจับรูปภาพ (Image Match)"
             ], 
             state="readonly", 
             width=22
@@ -437,7 +460,7 @@ class MuMuGUI(tk.Tk):
         form_panel.columnconfigure(1, weight=2)
         
         # ปุ่มสำหรับสั่งรันคำสั่งบอทมาโคร
-        run_card = tk.Frame(right_panel, bg=BG_DARK)
+        run_card = tk.Frame(right_scroll_frame, bg=BG_DARK)
         run_card.pack(fill="x")
         
         self.pause_chk = tk.Checkbutton(
@@ -516,9 +539,28 @@ class MuMuGUI(tk.Tk):
         # ฝั่งขวา: ฟอร์มเพิ่มบัญชีใหม่และคู่มือรันบอทวนลูป (Right Panel)
         right_panel = tk.Frame(main_pane, bg=BG_DARK, width=340)
         right_panel.pack(side="right", fill="both")
+        right_panel.pack_propagate(False)
+        
+        # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มและคู่มือด้านล่างได้หากความสูงหน้าจอต่ำ
+        right_canvas = tk.Canvas(right_panel, bg=BG_DARK, highlightthickness=0)
+        right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
+        
+        right_scroll_frame = tk.Frame(right_canvas, bg=BG_DARK)
+        right_scroll_frame.bind(
+            "<Configure>",
+            lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+        )
+        
+        right_window_id = right_canvas.create_window((0, 0), window=right_scroll_frame, anchor="nw")
+        right_canvas.bind('<Configure>', lambda event: right_canvas.itemconfigure(right_window_id, width=event.width))
+        
+        right_canvas.configure(yscrollcommand=right_scrollbar.set)
+        right_canvas.pack(side="left", fill="both", expand=True)
+        right_scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(right_canvas)
         
         # ฟอร์มเพิ่มบัญชี
-        add_box = tk.LabelFrame(right_panel, text=" ➕ เพิ่มบัญชีใหม่ ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
+        add_box = tk.LabelFrame(right_scroll_frame, text=" ➕ เพิ่มบัญชีใหม่ ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
         add_box.pack(fill="x", pady=(0, 15))
         
         tk.Label(add_box, text="อีเมล / ไอดีเกม:", bg=BG_DARK, fg=FG_WHITE).grid(row=0, column=0, sticky="w", pady=5)
@@ -542,7 +584,7 @@ class MuMuGUI(tk.Tk):
         add_box.columnconfigure(1, weight=2)
         
         # คู่มือการรันวนลูปหลายรหัส
-        info_box = tk.LabelFrame(right_panel, text=" 🔄 คู่มือการรันวนลูปหลายรหัส ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
+        info_box = tk.LabelFrame(right_scroll_frame, text=" 🔄 คู่มือการรันวนลูปหลายรหัส ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
         info_box.pack(fill="both", expand=True)
         
         info_text = (
@@ -561,9 +603,24 @@ class MuMuGUI(tk.Tk):
         self.refresh_accounts_ui()
 
     def build_sync_tab(self, parent):
+        # สร้าง Canvas และ Scrollbar เพื่อให้แท็บควบคุมแมนนวลเลื่อนขึ้น-ลงได้
+        canvas = tk.Canvas(parent, bg=BG_DARK, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        
         # แท็บสำหรับการคลิก/พิมพ์ แบบเรียลไทม์
-        sync_frame = tk.Frame(parent, bg=BG_DARK, padx=20, pady=20)
-        sync_frame.pack(fill="both", expand=True)
+        sync_frame = tk.Frame(canvas, bg=BG_DARK, padx=20, pady=20)
+        sync_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        window_id = canvas.create_window((0, 0), window=sync_frame, anchor="nw")
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(window_id, width=event.width))
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(canvas)
 
         # รายละเอียดคำอธิบายแท็บ
         desc_lbl = tk.Label(sync_frame, text="ควบคุมหน้าจอแบบแมนนวลพร้อมกัน", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold"))
@@ -631,8 +688,27 @@ class MuMuGUI(tk.Tk):
         ModernButton(cmd_input_frame, text="⚡ รันคำสั่งทันที", command=self.send_custom_cmd).pack(side="right")
 
     def build_settings_tab(self, parent):
-        settings_frame = tk.Frame(parent, bg=BG_DARK, padx=20, pady=20)
-        settings_frame.pack(fill="both", expand=True)
+        # สร้าง Canvas และ Scrollbar เพื่อให้หน้าต่างตั้งค่าเลื่อนขึ้น-ลงได้
+        canvas = tk.Canvas(parent, bg=BG_DARK, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        
+        # กล่องสำหรับใส่เนื้อหาทั้งหมด
+        settings_frame = tk.Frame(canvas, bg=BG_DARK, padx=20, pady=20)
+        settings_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        # วาดหน้าต่างเฟรมหลักภายใน Canvas
+        window_id = canvas.create_window((0, 0), window=settings_frame, anchor="nw")
+        
+        # ปรับความกว้างของ settings_frame ให้เต็มขนาดของ canvas เสมอเมื่อมีขนาดเปลี่ยนไป
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(window_id, width=event.width))
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(canvas)
 
         tk.Label(settings_frame, text="ตั้งค่าโปรแกรมเพิ่มเติม", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 15))
 
@@ -792,8 +868,9 @@ class MuMuGUI(tk.Tk):
     def open_port_config_dialog(self):
         dialog = tk.Toplevel(self)
         dialog.title("ตั้งค่าพอร์ต ADB (ADB Port Settings)")
-        dialog.geometry("500x450")
+        dialog.geometry("500x420")
         dialog.configure(bg=BG_DARK)
+        dialog.resizable(True, True) # อนุญาตให้ผู้ใช้ยืดขยายหน้าต่างได้ตามต้องการ
         dialog.transient(self)
         dialog.grab_set()
         
@@ -805,8 +882,26 @@ class MuMuGUI(tk.Tk):
         y = (dialog.winfo_screenheight() // 2) - (height // 2)
         dialog.geometry(f"+{x}+{y}")
 
+        # สร้าง Canvas และ Scrollbar เพื่อให้หน้าต่างนี้เลื่อนขึ้น-ลงได้หากความละเอียดของจอผู้ใช้งานต่ำ
+        canvas = tk.Canvas(dialog, bg=BG_DARK, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        
+        scroll_frame = tk.Frame(canvas, bg=BG_DARK)
+        scroll_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        window_id = canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(window_id, width=event.width))
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(canvas)
+
         title_lbl = tk.Label(
-            dialog, 
+            scroll_frame, 
             text="🔌 นำเข้าพอร์ต ADB จาก AI", 
             bg=BG_DARK, 
             fg=FG_WHITE, 
@@ -815,7 +910,7 @@ class MuMuGUI(tk.Tk):
         title_lbl.pack(pady=(15, 5))
 
         desc_lbl = tk.Label(
-            dialog,
+            scroll_frame,
             text="กรุณาวางโค้ด JSON ที่ได้จาก AI (เช่น [5555, 16384, ...]) ในช่องด้านล่างนี้:",
             bg=BG_DARK,
             fg=FG_MUTED,
@@ -843,15 +938,15 @@ class MuMuGUI(tk.Tk):
             dialog.update()
             messagebox.showinfo("สำเร็จ", "คัดลอกพร้อมต์สำหรับส่งให้ AI ลง Clipboard เรียบร้อยแล้ว!", parent=dialog)
 
-        ModernButton(dialog, text="📋 คัดลอกพร้อมต์ส่งให้ AI", command=copy_ai_prompt_dialog, bg=ACCENT_ORANGE, activebg="#d35400", font=("Segoe UI", 9, "bold")).pack(pady=2)
+        ModernButton(scroll_frame, text="📋 คัดลอกพร้อมต์ส่งให้ AI", command=copy_ai_prompt_dialog, bg=ACCENT_ORANGE, activebg="#d35400", font=("Segoe UI", 9, "bold")).pack(pady=2)
 
         # Text Area for pasting JSON
-        text_frame = tk.Frame(dialog, bg=BG_DARK)
+        text_frame = tk.Frame(scroll_frame, bg=BG_DARK)
         text_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
         # Standard Scrollbar + Text widget
-        scrollbar = ttk.Scrollbar(text_frame)
-        scrollbar.pack(side="right", fill="y")
+        text_scrollbar = ttk.Scrollbar(text_frame)
+        text_scrollbar.pack(side="right", fill="y")
 
         json_text = tk.Text(
             text_frame, 
@@ -861,13 +956,14 @@ class MuMuGUI(tk.Tk):
             relief="flat", 
             bd=0, 
             font=("Consolas", 10),
-            yscrollcommand=scrollbar.set
+            height=10, # ปรับความสูงกล่องป้อนข้อมูลลงเหลือ 10 บรรทัด เพื่อไม่ให้บีบขนาดกล่องจนล้นปุ่มกดออกนอกจอ
+            yscrollcommand=text_scrollbar.set
         )
         json_text.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=json_text.yview)
+        text_scrollbar.config(command=json_text.yview)
 
         # Load current ports JSON if file exists to pre-populate
-        ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.json")
+        ports_file = self.ports_file
         if os.path.exists(ports_file):
             try:
                 with open(ports_file, "r", encoding="utf-8") as f:
@@ -879,7 +975,7 @@ class MuMuGUI(tk.Tk):
             json_text.insert("1.0", "[\n  5555,\n  16384\n]")
 
         # Buttons frame
-        btn_frame = tk.Frame(dialog, bg=BG_DARK)
+        btn_frame = tk.Frame(scroll_frame, bg=BG_DARK)
         btn_frame.pack(fill="x", side="bottom", padx=20, pady=20)
 
         def save_ports():
@@ -1428,6 +1524,9 @@ class MuMuGUI(tk.Tk):
             elif t == "CLEAR_APP":
                 t_thai = "ล้างข้อมูล"
                 details = f"'{step.get('text')}'"
+            elif t == "DETECT_IMAGE":
+                t_thai = "รูปภาพ"
+                details = f"หา '{step.get('text')}'"
             else:
                 details = ""
                 
@@ -1521,6 +1620,8 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("ปิดแอป (Stop App)")
         elif t == "clear_app":
             self.form_type.set("ล้างข้อมูลแอป (Clear App Data)")
+        elif t == "detect_image":
+            self.form_type.set("ตรวจจับรูปภาพ (Image Match)")
             
         self.on_step_type_change()
         
@@ -1546,7 +1647,7 @@ class MuMuGUI(tk.Tk):
             self.form_x2.insert(0, step.get("x2", ""))
             self.form_y2.insert(0, step.get("y2", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5"))
-        elif t in ["text", "start_app", "stop_app", "clear_app"]:
+        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5" if t == "text" else "1.0"))
         elif t == "keyevent":
@@ -1615,6 +1716,15 @@ class MuMuGUI(tk.Tk):
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
+        elif "Image Match" in t:
+            self.form_sleep_label.configure(text="หน่วงหลังคลิก (วินาที):")
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_code.configure(state="disabled")
 
     def clear_form(self):
         self.form_x.delete(0, tk.END)
@@ -1643,6 +1753,8 @@ class MuMuGUI(tk.Tk):
             t = "stop_app"
         elif "Clear App Data" in t_label:
             t = "clear_app"
+        elif "Image Match" in t_label:
+            t = "detect_image"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -1661,11 +1773,11 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image"]:
                 step["text"] = self.form_text.get()
-                if t in ["start_app", "stop_app", "clear_app"] and not step["text"]:
-                    raise ValueError("ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.5" if t == "text" else "1.0")
+                if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
+                    raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
+                step["delay"] = float(self.form_sleep.get().strip() or ("0.5" if t == "text" else "1.0"))
             elif t == "keyevent":
                 step["code"] = self.form_code.get().strip()
                 if not step["code"]: raise ValueError("รหัสปุ่มกดคีย์เวนท์ห้ามว่างเปล่า")
@@ -1703,6 +1815,8 @@ class MuMuGUI(tk.Tk):
             t = "stop_app"
         elif "Clear App Data" in t_label:
             t = "clear_app"
+        elif "Image Match" in t_label:
+            t = "detect_image"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -1721,11 +1835,11 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image"]:
                 step["text"] = self.form_text.get()
-                if t in ["start_app", "stop_app", "clear_app"] and not step["text"]:
-                    raise ValueError("ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.5" if t == "text" else "1.0")
+                if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
+                    raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
+                step["delay"] = float(self.form_sleep.get().strip() or ("0.5" if t == "text" else "1.0"))
             elif t == "keyevent":
                 step["code"] = self.form_code.get().strip()
                 if not step["code"]: raise ValueError("รหัสปุ่มกดคีย์เวนท์ห้ามว่างเปล่า")
@@ -2008,7 +2122,7 @@ class MuMuGUI(tk.Tk):
                     step_delay = 0.5
                 elif t == "keyevent":
                     step_delay = 0.3
-                elif t in ["start_app", "stop_app", "clear_app"]:
+                elif t in ["start_app", "stop_app", "clear_app", "detect_image"]:
                     step_delay = 1.0
                 else:
                     step_delay = 0.0
@@ -2045,6 +2159,37 @@ class MuMuGUI(tk.Tk):
                 self.controller.clear_app(device, step["text"])
                 if step_delay > 0:
                     time.sleep(step_delay)
+            elif t == "detect_image":
+                template_file = step["text"]
+                template_path = os.path.join(self.templates_dir, template_file)
+                if not os.path.exists(template_path):
+                    self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file}", "warning")
+                else:
+                    safe_device = device.replace(":", "_").replace(".", "_")
+                    temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
+                    
+                    # ถ่ายภาพหน้าจอของจอนี้
+                    success, err = self.controller.take_screenshot(device, temp_screenshot)
+                    if not success:
+                        self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+                    else:
+                        # ค้นหาตำแหน่งภาพ
+                        found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.8)
+                        
+                        # ลบภาพแคปหน้าจอชั่วคราวทิ้งทันที
+                        if os.path.exists(temp_screenshot):
+                            try:
+                                os.remove(temp_screenshot)
+                            except Exception:
+                                pass
+                        
+                        if found:
+                            self.write_log(f"   🎯 [{device}] พบรูป '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
+                            self.controller.tap(device, match_x, match_y)
+                            if step_delay > 0:
+                                time.sleep(step_delay)
+                        else:
+                            self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
             elif t == "sleep":
                 sleep_time = float(step["seconds"])
                 slices = int(sleep_time / 0.1)

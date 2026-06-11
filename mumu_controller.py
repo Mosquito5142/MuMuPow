@@ -3,6 +3,8 @@ import os
 import re
 import time
 import json
+import cv2
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
 class MuMuController:
@@ -122,7 +124,13 @@ class MuMuController:
 
     def load_ports(self):
         """Loads ports from ports.json if it exists, otherwise returns empty list."""
-        ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.json")
+        import sys
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        ports_file = os.path.join(base_dir, "ports.json")
         if os.path.exists(ports_file):
             try:
                 with open(ports_file, "r", encoding="utf-8") as f:
@@ -251,3 +259,51 @@ class MuMuController:
         for device_id, success, output in fut_results:
             results[device_id] = (success, output)
         return results
+
+    def take_screenshot(self, device_id, local_path):
+        """Takes a screenshot of the specified device and saves it to local_path."""
+        safe_id = device_id.replace(":", "_").replace(".", "_")
+        remote_path = f"/data/local/tmp/screen_{safe_id}.png"
+        
+        # 1. Take screenshot on emulator
+        success, out = self.run_adb_cmd(["-s", device_id, "shell", "screencap", "-p", remote_path])
+        if not success:
+            return False, f"Failed to take screenshot: {out}"
+        
+        # 2. Pull screenshot to local machine
+        success, out = self.run_adb_cmd(["-s", device_id, "pull", remote_path, local_path])
+        
+        # 3. Delete the temporary remote screenshot file
+        self.run_adb_cmd(["-s", device_id, "shell", "rm", remote_path])
+        
+        return success, out
+
+    def find_image_on_screen(self, screen_path, template_path, threshold=0.8):
+        """Finds template_path image on screen_path using OpenCV matchTemplate."""
+        try:
+            if not os.path.exists(screen_path):
+                return False, 0, 0, "Screenshot file not found"
+            if not os.path.exists(template_path):
+                return False, 0, 0, "Template image file not found"
+
+            # Load images
+            screen = cv2.imread(screen_path)
+            template = cv2.imread(template_path)
+
+            if screen is None or template is None:
+                return False, 0, 0, "Failed to load screenshot or template image"
+
+            # Perform template matching
+            res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+
+            if max_val >= threshold:
+                h, w, _ = template.shape
+                # Center point coordinates
+                click_x = int(max_loc[0] + w / 2)
+                click_y = int(max_loc[1] + h / 2)
+                return True, click_x, click_y, f"Match found (confidence: {max_val:.2f})"
+            else:
+                return False, 0, 0, f"No match found (best confidence: {max_val:.2f})"
+        except Exception as e:
+            return False, 0, 0, str(e)
