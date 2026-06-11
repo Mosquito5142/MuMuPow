@@ -171,6 +171,28 @@ class MuMuGUI(tk.Tk):
         self.bind_class("Entry", "<Control-KeyPress>", handle_entry_ctrl)
         self.bind_class("Text", "<Control-KeyPress>", handle_text_ctrl)
 
+    def bind_canvas_mousewheel(self, canvas):
+        """Binds mouse wheel scrolling to the canvas and all its children."""
+        def _on_mousewheel(event):
+            curr = event.widget
+            while curr:
+                if curr == canvas:
+                    if event.delta:
+                        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    elif event.num == 4:
+                        canvas.yview_scroll(-1, "units")
+                    elif event.num == 5:
+                        canvas.yview_scroll(1, "units")
+                    return "break"
+                try:
+                    curr = curr.master
+                except AttributeError:
+                    break
+        
+        self.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+        self.bind_all("<Button-4>", _on_mousewheel, add="+")
+        self.bind_all("<Button-5>", _on_mousewheel, add="+")
+
     def build_layout(self):
         # 1. แถบส่วนหัวโปรแกรม (Header)
         header = tk.Frame(self, bg=BG_PANEL, height=60)
@@ -245,6 +267,7 @@ class MuMuGUI(tk.Tk):
         
         self.device_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(self.device_canvas)
 
     def build_tabs_panel(self, parent):
         self.notebook = ttk.Notebook(parent)
@@ -488,6 +511,7 @@ class MuMuGUI(tk.Tk):
         
         self.acc_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(self.acc_canvas)
         
         # ฝั่งขวา: ฟอร์มเพิ่มบัญชีใหม่และคู่มือรันบอทวนลูป (Right Panel)
         right_panel = tk.Frame(main_pane, bg=BG_DARK, width=340)
@@ -627,6 +651,43 @@ class MuMuGUI(tk.Tk):
 
         ModernButton(adb_path_frame, text="บันทึกและโหลดใหม่", command=self.save_adb_path).pack(side="right")
 
+        # ตั้งค่าพอร์ต ADB (ADB Port Settings)
+        port_box = tk.LabelFrame(settings_frame, text=" 🔌 ตั้งค่าพอร์ต ADB (ADB Port Settings) ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
+        port_box.pack(fill="x", pady=10)
+
+        tk.Label(port_box, text="ระบุหรือนำเข้าข้อมูลพอร์ตของ Emulator สำหรับสแกนและควบคุม (ใช้เมื่อมีจำนวนจอเยอะหรือพอร์ตแปลก):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w")
+
+        port_btn_frame = tk.Frame(port_box, bg=BG_DARK)
+        port_btn_frame.pack(fill="x", pady=5)
+
+        ModernButton(port_btn_frame, text="🔌 นำเข้าพอร์ตจาก JSON (AI)", command=self.open_port_config_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", padx=(0, 10))
+        
+        def copy_ai_prompt():
+            prompt_text = (
+                "ช่วยอ่านค่าพอร์ต ADB ของ Android Device จากในรูปภาพที่แนบมานี้\n"
+                "ให้ดึงเฉพาะตัวเลขพอร์ตทั้งหมด (ทั้งพอร์ต 5 หลัก และพอร์ต 4/5 หลักอื่นๆ เช่น 5555, 16384)\n"
+                "แล้วแปลงผลลัพธ์ออกมาเป็น JSON Array ของตัวเลขเท่านั้น ห้ามมีคำอธิบายอื่นเพิ่มเติม ตัวอย่างเช่น:\n"
+                "[\n"
+                "  5555,\n"
+                "  16384,\n"
+                "  5557,\n"
+                "  16416\n"
+                "]"
+            )
+            self.clipboard_clear()
+            self.clipboard_append(prompt_text)
+            self.update()
+            messagebox.showinfo("สำเร็จ", "คัดลอกพร้อมต์สำหรับส่งให้ AI ลง Clipboard เรียบร้อยแล้ว!\nสามารถนำไปวาง (Ctrl+V) ควบคู่กับรูปภาพในแชทบอท AI ได้ทันที")
+
+        ModernButton(port_btn_frame, text="📋 คัดลอกพร้อมต์ถาม AI", command=copy_ai_prompt, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", padx=(0, 10))
+
+        def show_current_ports():
+            ports = self.controller.load_ports()
+            msg = f"พอร์ตที่โปรแกรมกำลังสแกนอยู่ในปัจจุบัน:\n\n{ports}\n\nจำนวนทั้งหมด: {len(ports)} พอร์ต"
+            messagebox.showinfo("พอร์ตที่ใช้สแกน", msg)
+
+        ModernButton(port_btn_frame, text="🔍 แสดงรายชื่อพอร์ตปัจจุบัน", command=show_current_ports, bg=BG_INPUT, activebg="#444444").pack(side="left")
+
         # ระบบตรวจสอบความเหมาะสมของขนาดจอและ DPI
         diag_box = tk.LabelFrame(settings_frame, text=" 📊 ระบบตรวจสอบขนาดหน้าจอ Emulator ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
         diag_box.pack(fill="x", pady=10)
@@ -728,11 +789,161 @@ class MuMuGUI(tk.Tk):
         self.write_log(f"บันทึกเส้นทาง ADB ใหม่เรียบร้อยแล้ว: {new_path}", "warning")
         self.scan_devices()
 
+    def open_port_config_dialog(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("ตั้งค่าพอร์ต ADB (ADB Port Settings)")
+        dialog.geometry("500x450")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Center the window
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        title_lbl = tk.Label(
+            dialog, 
+            text="🔌 นำเข้าพอร์ต ADB จาก AI", 
+            bg=BG_DARK, 
+            fg=FG_WHITE, 
+            font=("Segoe UI", 12, "bold")
+        )
+        title_lbl.pack(pady=(15, 5))
+
+        desc_lbl = tk.Label(
+            dialog,
+            text="กรุณาวางโค้ด JSON ที่ได้จาก AI (เช่น [5555, 16384, ...]) ในช่องด้านล่างนี้:",
+            bg=BG_DARK,
+            fg=FG_MUTED,
+            font=("Segoe UI", 9),
+            justify="center",
+            wraplength=450
+        )
+        desc_lbl.pack(pady=5)
+
+        # เพิ่มปุ่มคัดลอกพร้อมต์ถาม AI ในป๊อปอัปด้วย
+        def copy_ai_prompt_dialog():
+            prompt_text = (
+                "ช่วยอ่านค่าพอร์ต ADB ของ Android Device จากในรูปภาพที่แนบมานี้\n"
+                "ให้ดึงเฉพาะตัวเลขพอร์ตทั้งหมด (ทั้งพอร์ต 5 หลัก และพอร์ต 4/5 หลักอื่นๆ เช่น 5555, 16384)\n"
+                "แล้วแปลงผลลัพธ์ออกมาเป็น JSON Array ของตัวเลขเท่านั้น ห้ามมีคำอธิบายอื่นเพิ่มเติม ตัวอย่างเช่น:\n"
+                "[\n"
+                "  5555,\n"
+                "  16384,\n"
+                "  5557,\n"
+                "  16416\n"
+                "]"
+            )
+            dialog.clipboard_clear()
+            dialog.clipboard_append(prompt_text)
+            dialog.update()
+            messagebox.showinfo("สำเร็จ", "คัดลอกพร้อมต์สำหรับส่งให้ AI ลง Clipboard เรียบร้อยแล้ว!", parent=dialog)
+
+        ModernButton(dialog, text="📋 คัดลอกพร้อมต์ส่งให้ AI", command=copy_ai_prompt_dialog, bg=ACCENT_ORANGE, activebg="#d35400", font=("Segoe UI", 9, "bold")).pack(pady=2)
+
+        # Text Area for pasting JSON
+        text_frame = tk.Frame(dialog, bg=BG_DARK)
+        text_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        # Standard Scrollbar + Text widget
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        json_text = tk.Text(
+            text_frame, 
+            bg=BG_INPUT, 
+            fg=FG_WHITE, 
+            insertbackground=FG_WHITE,
+            relief="flat", 
+            bd=0, 
+            font=("Consolas", 10),
+            yscrollcommand=scrollbar.set
+        )
+        json_text.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=json_text.yview)
+
+        # Load current ports JSON if file exists to pre-populate
+        ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.json")
+        if os.path.exists(ports_file):
+            try:
+                with open(ports_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    json_text.insert("1.0", content)
+            except Exception:
+                pass
+        else:
+            json_text.insert("1.0", "[\n  5555,\n  16384\n]")
+
+        # Buttons frame
+        btn_frame = tk.Frame(dialog, bg=BG_DARK)
+        btn_frame.pack(fill="x", side="bottom", padx=20, pady=20)
+
+        def save_ports():
+            raw_data = json_text.get("1.0", "end").strip()
+            if not raw_data:
+                messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกข้อมูล JSON ก่อนบันทึก")
+                return
+            try:
+                data = json.loads(raw_data)
+                if not isinstance(data, list):
+                    raise ValueError("JSON ต้องเป็นรายการ Array เช่น [5555, 16384]")
+                
+                # Filter valid port numbers
+                ports = []
+                for x in data:
+                    try:
+                        p = int(x)
+                        if 1 <= p <= 65535:
+                            ports.append(p)
+                    except (ValueError, TypeError):
+                        continue
+                
+                if not ports:
+                    raise ValueError("ไม่พบพอร์ตที่ถูกต้องในช่วง 1-65535")
+                
+                # Keep unique and sorted
+                ports = sorted(list(set(ports)))
+                
+                with open(ports_file, "w", encoding="utf-8") as f:
+                    json.dump(ports, f, indent=2)
+                
+                self.write_log(f"นำเข้าและบันทึกพอร์ต ADB จำนวน {len(ports)} พอร์ตเรียบร้อยแล้ว: {ports}", "success")
+                self.scan_devices()
+                dialog.destroy()
+                messagebox.showinfo("สำเร็จ", f"บันทึกพอร์ตเรียบร้อยแล้ว {len(ports)} พอร์ต และกำลังเริ่มสแกนใหม่")
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาดในการวิเคราะห์ JSON", f"รูปแบบ JSON ไม่ถูกต้อง:\n{str(e)}")
+
+        def clear_ports():
+            if os.path.exists(ports_file):
+                try:
+                    os.remove(ports_file)
+                except Exception as e:
+                    self.write_log(f"ลบไฟล์ ports.json ล้มเหลว: {e}", "error")
+            self.write_log("รีเซ็ตเป็นพอร์ตสแกนอัตโนมัติเริ่มต้นเรียบร้อยแล้ว", "warning")
+            self.scan_devices()
+            dialog.destroy()
+            messagebox.showinfo("สำเร็จ", "รีเซ็ตพอร์ตเป็นค่าเริ่มต้น และกำลังเริ่มสแกนใหม่")
+
+        ModernButton(btn_frame, text="💾 บันทึกพอร์ต", command=save_ports, bg=ACCENT_GREEN, activebg="#2ecc71").pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ModernButton(btn_frame, text="🧹 รีเซ็ตเป็นค่าเริ่มต้น", command=clear_ports, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", fill="x", expand=True, padx=5)
+        ModernButton(btn_frame, text="❌ ยกเลิก", command=dialog.destroy, bg=BG_INPUT, activebg="#444444").pack(side="right", padx=(5, 0))
+
     # --- ส่วนการสแกนอุปกรณ์ ---
     def scan_devices(self):
         threading.Thread(target=self._run_scan, daemon=True).start()
 
     def _run_scan(self):
+        ports = self.controller.load_ports()
+        if not ports:
+            self.write_log("⚠️ ไม่พบรายชื่อพอร์ตที่จะสแกน กรุณาเปิดหน้าตั้งค่า (Settings) และนำเข้าพอร์ตจาก JSON (AI) ก่อน", "warning")
+            self.after(0, lambda: self.update_device_checklist([]))
+            return
+
         self.write_log("🔄 กำลังค้นหาและเชื่อมต่อ Emulator ของคุณ...", "info")
         devices, log_str = self.controller.scan_and_connect_all()
         if log_str:

@@ -2,20 +2,13 @@ import subprocess
 import os
 import re
 import time
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 class MuMuController:
     def __init__(self, adb_path=None):
         self.adb_path = adb_path or self.find_adb()
-        # Common emulator ports to scan:
-        # 7555: MuMu Player 6
-        # 16384, 16400, 16416, 16432, 16448, 16464, 16480, 16496: MuMu Player 12
-        # 5554, 5556, 5558, 5560, 5562: LDPlayer, Nox, MEMu
-        self.common_ports = [
-            7555, 
-            16384, 16400, 16416, 16432, 16448, 16464, 16480, 16496,
-            5554, 5556, 5558, 5560, 5562
-        ]
+        self.common_ports = self.load_ports()
 
     def find_adb(self):
         """Attempts to find the ADB executable path."""
@@ -97,10 +90,64 @@ class MuMuController:
                     devices.append(parts[0])
         return devices
 
+    def get_unique_devices(self, connected_devices):
+        """Filters out duplicate connections to the same physical emulator."""
+        unique_devices = []
+        seen_serials = set()
+        
+        def get_device_serial(device_id):
+            # Query device serial number with a low timeout (2 seconds)
+            success, serial = self.run_adb_cmd(["-s", device_id, "shell", "getprop", "ro.serialno"], timeout=2)
+            if success and serial.strip():
+                return device_id, serial.strip()
+            # Fallback to MAC address
+            success, mac = self.run_adb_cmd(["-s", device_id, "shell", "cat", "/sys/class/net/wlan0/address"], timeout=2)
+            if success and mac.strip():
+                return device_id, mac.strip()
+            return device_id, device_id # Fallback to itself
+
+        if connected_devices:
+            with ThreadPoolExecutor(max_workers=max(1, len(connected_devices))) as executor:
+                results = list(executor.map(get_device_serial, connected_devices))
+
+            for device_id, serial in results:
+                if serial not in seen_serials:
+                    seen_serials.add(serial)
+                    unique_devices.append(device_id)
+                else:
+                    # Disconnect duplicate connection to keep ADB clean
+                    self.disconnect_device(device_id)
+        
+        return unique_devices
+
+    def load_ports(self):
+        """Loads ports from ports.json if it exists, otherwise returns empty list."""
+        ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ports.json")
+        if os.path.exists(ports_file):
+            try:
+                with open(ports_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        custom_ports = []
+                        for p in data:
+                            try:
+                                custom_ports.append(int(p))
+                            except (ValueError, TypeError):
+                                continue
+                        if custom_ports:
+                            return sorted(list(set(custom_ports)))
+            except Exception as e:
+                print(f"Error loading ports.json: {e}")
+        
+        return []
+
     def scan_and_connect_all(self):
         """Scans all common emulator ports and connects to open ones, disconnecting closed ones."""
         import socket
         
+        # Reload ports from file or defaults dynamically
+        self.common_ports = self.load_ports()
+
         def is_port_open(port):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -124,7 +171,7 @@ class MuMuController:
                 self.disconnect_device(addr)
             return None, False
 
-        with ThreadPoolExecutor(max_workers=len(self.common_ports)) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, len(self.common_ports))) as executor:
             results = list(executor.map(process_port, self.common_ports))
             
         for log_msg, is_conn in results:
@@ -132,8 +179,9 @@ class MuMuController:
                 logs.append(log_msg)
                 
         connected = self.get_connected_devices()
-        logs.append(f"📱 Current active devices: {', '.join(connected) if connected else 'None'}")
-        return connected, "\n".join(logs)
+        unique_connected = self.get_unique_devices(connected)
+        logs.append(f"📱 Current active devices: {', '.join(unique_connected) if unique_connected else 'None'}")
+        return unique_connected, "\n".join(logs)
 
     # Individual device shell commands
     def tap(self, device_id, x, y):
