@@ -1,0 +1,11 @@
+{
+  "name": "\u0e02\u0e49\u0e32\u0e21\u0e42\u0e06\u0e29\u0e13\u0e32",
+  "steps": [
+    {
+      "type": "clear_ads_loop",
+      "desc": "\u0e1b\u0e34\u0e14\u0e42\u0e06\u0e29\u0e13\u0e32",
+      "text": "close_btn.png",
+      "delay": 4.0
+    }
+  ]
+}

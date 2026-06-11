@@ -388,7 +388,8 @@ class MuMuGUI(tk.Tk):
                 "เปิดแอป (Start App)",
                 "ปิดแอป (Stop App)",
                 "ล้างข้อมูลแอป (Clear App Data)",
-                "ตรวจจับรูปภาพ (Image Match)"
+                "ตรวจจับรูปภาพ (Image Match)",
+                "ลูปปิดโฆษณา (Clear Ads Loop)"
             ], 
             state="readonly", 
             width=22
@@ -1527,6 +1528,9 @@ class MuMuGUI(tk.Tk):
             elif t == "DETECT_IMAGE":
                 t_thai = "รูปภาพ"
                 details = f"หา '{step.get('text')}'"
+            elif t == "CLEAR_ADS_LOOP":
+                t_thai = "ลูปปิดโฆษณา"
+                details = f"เคลียร์ '{step.get('text') or 'ทุกรูปในโฟลเดอร์'}'"
             else:
                 details = ""
                 
@@ -1622,6 +1626,8 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("ล้างข้อมูลแอป (Clear App Data)")
         elif t == "detect_image":
             self.form_type.set("ตรวจจับรูปภาพ (Image Match)")
+        elif t == "clear_ads_loop":
+            self.form_type.set("ลูปปิดโฆษณา (Clear Ads Loop)")
             
         self.on_step_type_change()
         
@@ -1647,7 +1653,7 @@ class MuMuGUI(tk.Tk):
             self.form_x2.insert(0, step.get("x2", ""))
             self.form_y2.insert(0, step.get("y2", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5"))
-        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image"]:
+        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5" if t == "text" else "1.0"))
         elif t == "keyevent":
@@ -1716,7 +1722,7 @@ class MuMuGUI(tk.Tk):
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
-        elif "Image Match" in t:
+        elif "Image Match" in t or "Clear Ads Loop" in t:
             self.form_sleep_label.configure(text="หน่วงหลังคลิก (วินาที):")
             self.form_x_label.configure(fg=FG_MUTED)
             self.form_x.configure(state="disabled")
@@ -1755,6 +1761,8 @@ class MuMuGUI(tk.Tk):
             t = "clear_app"
         elif "Image Match" in t_label:
             t = "detect_image"
+        elif "Clear Ads Loop" in t_label:
+            t = "clear_ads_loop"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -1773,7 +1781,7 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
@@ -1817,6 +1825,8 @@ class MuMuGUI(tk.Tk):
             t = "clear_app"
         elif "Image Match" in t_label:
             t = "detect_image"
+        elif "Clear Ads Loop" in t_label:
+            t = "clear_ads_loop"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -1835,7 +1845,7 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
@@ -2122,7 +2132,7 @@ class MuMuGUI(tk.Tk):
                     step_delay = 0.5
                 elif t == "keyevent":
                     step_delay = 0.3
-                elif t in ["start_app", "stop_app", "clear_app", "detect_image"]:
+                elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
                     step_delay = 1.0
                 else:
                     step_delay = 0.0
@@ -2190,6 +2200,93 @@ class MuMuGUI(tk.Tk):
                                 time.sleep(step_delay)
                         else:
                             self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
+            elif t == "clear_ads_loop":
+                step_text = step.get("text", "").strip()
+                lobby_template = ""
+                ad_templates = []
+                
+                if "|" in step_text:
+                    parts = step_text.split("|")
+                    lobby_template = parts[0].strip()
+                    ad_templates = [p.strip() for p in parts[1].split(",") if p.strip()]
+                else:
+                    if step_text.endswith(".png"):
+                        lobby_template = step_text
+                    elif step_text:
+                        ad_templates = [p.strip() for p in step_text.split(",") if p.strip()]
+                
+                # ถ้าไม่ระบุรูปภาพปุ่มปิดโฆษณา ให้ดึงไฟล์ .png ทั้งหมดในโฟลเดอร์ยกเว้นรูปหน้าหลักและรูปชั่วคราว
+                if not ad_templates:
+                    import glob
+                    all_pngs = [os.path.basename(f) for f in glob.glob(os.path.join(self.templates_dir, "*.png"))]
+                    ad_templates = [f for f in all_pngs if f != lobby_template and not f.startswith("temp_")]
+
+                self.write_log(f"   🔄 [{device}] เริ่มรันลูปเคลียร์โฆษณา (หน้าจอหลักเป้าหมาย: '{lobby_template or 'ไม่ได้ตั้งค่า'}')", "info")
+                if ad_templates:
+                    self.write_log(f"   🔍 [{device}] รายการรูปปุ่มปิดที่จะตรวจจับ: {', '.join(ad_templates)}", "info")
+
+                max_attempts = 15
+                for attempt in range(max_attempts):
+                    if not self.macro_running:
+                        break
+                        
+                    safe_device = device.replace(":", "_").replace(".", "_")
+                    temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
+                    
+                    success, err = self.controller.take_screenshot(device, temp_screenshot)
+                    if not success:
+                        self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+                        break
+                    
+                    # 1. ตรวจสอบว่ามาถึงหน้าจอหลัก/เริ่มต้น (Lobby) หรือยัง
+                    reached_lobby = False
+                    if lobby_template:
+                        lobby_path = os.path.join(self.templates_dir, lobby_template)
+                        if os.path.exists(lobby_path):
+                            found_lobby, lx, ly, lmsg = self.controller.find_image_on_screen(temp_screenshot, lobby_path, threshold=0.75)
+                            if found_lobby:
+                                self.write_log(f"   🎉 [{device}] รอบที่ {attempt+1}: ตรวจพบหน้าจอหลัก/เริ่มต้น '{lobby_template}' -> โฆษณาเคลียร์หมดแล้ว!", "success")
+                                reached_lobby = True
+                    
+                    if reached_lobby:
+                        if os.path.exists(temp_screenshot):
+                            try: os.remove(temp_screenshot)
+                            except Exception: pass
+                        break
+                        
+                    # 2. ตรวจสอบปุ่มปิดโฆษณาเพื่อกดปิด
+                    found_ad = False
+                    for template_file in ad_templates:
+                        template_path = os.path.join(self.templates_dir, template_file)
+                        if not os.path.exists(template_path):
+                            continue
+                            
+                        found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.7)
+                        if found:
+                            self.write_log(f"   🎯 [{device}] รอบที่ {attempt+1}: พบรูปปุ่มปิด '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
+                            self.controller.tap(device, match_x, match_y)
+                            found_ad = True
+                            if step_delay > 0:
+                                time.sleep(step_delay)
+                            break
+                    
+                    if os.path.exists(temp_screenshot):
+                        try: os.remove(temp_screenshot)
+                        except Exception: pass
+                        
+                    # 3. หากไม่พบปุ่มปิดใดๆ และยังไม่ถึงหน้าหลัก ให้ส่งปุ่ม BACK ย้อนกลับเป็นทางเลือกสำรอง
+                    if not found_ad:
+                        if lobby_template:
+                            self.write_log(f"   🔍 [{device}] รอบที่ {attempt+1}: ไม่พบหน้าหลัก และไม่พบปุ่มปิด -> ส่งปุ่มย้อนกลับ (BACK)", "warning")
+                            self.controller.keyevent(device, 4)
+                            if step_delay > 0:
+                                time.sleep(step_delay)
+                        else:
+                            # ถ้าไม่ได้ตั้งรูปหน้าจอหลัก และไม่เจอปุ่มปิดใดๆ อีก ให้ถือว่าเคลียร์เสร็จสิ้น
+                            self.write_log(f"   ✅ [{device}] เคลียร์โฆษณาเรียบร้อยแล้ว (ไม่พบโฆษณาบนจอ)", "success")
+                            break
+                else:
+                    self.write_log(f"   ⚠️ [{device}] ทำงานลูปเคลียร์โฆษณาครบ {max_attempts} รอบแล้ว (สิ้นสุดลูป)", "warning")
             elif t == "sleep":
                 sleep_time = float(step["seconds"])
                 slices = int(sleep_time / 0.1)
