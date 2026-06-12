@@ -74,6 +74,7 @@ class MuMuGUI(tk.Tk):
         self.controller = MuMuController()
         self.macro_thread = None
         self.macro_running = False
+        self.editing_email = None
 
         # หาโฟลเดอร์รันโปรแกรม (รองรับการแปลงเป็นไฟล์ .exe)
         if getattr(sys, 'frozen', False):
@@ -579,9 +580,20 @@ class MuMuGUI(tk.Tk):
         self.new_acc_group = ModernEntry(add_box, width=22)
         self.new_acc_group.grid(row=2, column=1, padx=10, pady=5)
         self.new_acc_group.insert(0, "ทั่วไป")
+
+        tk.Label(add_box, text="โทเคน (OAuth2 Token):", bg=BG_DARK, fg=FG_WHITE).grid(row=3, column=0, sticky="w", pady=5)
+        self.new_acc_token = ModernEntry(add_box, width=22)
+        self.new_acc_token.grid(row=3, column=1, padx=10, pady=5)
+
+        tk.Label(add_box, text="ไคลเอนต์ไอดี (Client ID):", bg=BG_DARK, fg=FG_WHITE).grid(row=4, column=0, sticky="w", pady=5)
+        self.new_acc_client_id = ModernEntry(add_box, width=22)
+        self.new_acc_client_id.grid(row=4, column=1, padx=10, pady=5)
         
-        ModernButton(add_box, text="➕ เพิ่มบัญชีเข้าคิว", command=self.add_account, bg=ACCENT_GREEN, activebg="#2ecc71").grid(row=3, column=0, columnspan=2, sticky="ew", pady=(15, 0))
-        ModernButton(add_box, text="📥 นำเข้าบัญชีแบบกลุ่ม (Batch)", command=self.open_batch_import_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.save_acc_btn = ModernButton(add_box, text="➕ เพิ่มบัญชีเข้าคิว", command=self.add_account, bg=ACCENT_GREEN, activebg="#2ecc71")
+        self.save_acc_btn.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(15, 0))
+        
+        self.batch_import_btn = ModernButton(add_box, text="📥 นำเข้าบัญชีแบบกลุ่ม (Batch)", command=self.open_batch_import_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER)
+        self.batch_import_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         add_box.columnconfigure(0, weight=1)
         add_box.columnconfigure(1, weight=2)
@@ -1424,28 +1436,135 @@ class MuMuGUI(tk.Tk):
                 )
                 del_btn.pack(side="right", padx=5, pady=5)
 
+                # ปุ่มแก้ไขบัญชี
+                edit_btn = tk.Button(
+                    frame,
+                    text="📝",
+                    command=lambda acc=acc: self.start_edit_account(acc),
+                    bg=ACCENT_BLUE,
+                    fg=FG_WHITE,
+                    activebackground=ACCENT_HOVER,
+                    activeforeground=FG_WHITE,
+                    relief="flat",
+                    bd=0,
+                    font=("Segoe UI", 8),
+                    width=2
+                )
+                edit_btn.pack(side="right", padx=2, pady=5)
+
     def add_account(self):
         email = self.new_acc_email.get().strip()
         pwd = self.new_acc_pass.get().strip()
         group = self.new_acc_group.get().strip() or "ทั่วไป"
+        token = self.new_acc_token.get().strip()
+        client_id = self.new_acc_client_id.get().strip()
         
         if not email or not pwd:
             messagebox.showwarning("คำเตือน", "กรุณากรอกอีเมลและรหัสผ่านให้ครบถ้วน!")
             return
             
-        if any(acc.get("email") == email for acc in self.accounts):
-            messagebox.showwarning("คำเตือน", "บัญชีอีเมลนี้มีอยู่แล้วในคิว!")
-            return
+        if self.editing_email:
+            # โหมดแก้ไขบัญชี
+            if email != self.editing_email and any(acc.get("email") == email for acc in self.accounts):
+                messagebox.showwarning("คำเตือน", "บัญชีอีเมลใหม่นี้มีอยู่แล้วในคิว!")
+                return
+                
+            # อัปเดตข้อมูลในลิสต์
+            for acc in self.accounts:
+                if acc.get("email") == self.editing_email:
+                    acc["email"] = email
+                    acc["password"] = pwd
+                    acc["group"] = group
+                    acc["refresh_token"] = token
+                    acc["client_id"] = client_id
+                    break
             
-        self.accounts.append({"email": email, "password": pwd, "checked": True, "group": group})
+            self.editing_email = None
+            self.save_acc_btn.configure(text="➕ เพิ่มบัญชีเข้าคิว", bg=ACCENT_GREEN, activebackground="#2ecc71")
+            if hasattr(self, 'cancel_edit_btn'):
+                self.cancel_edit_btn.grid_remove()
+                
+            self.batch_import_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            self.write_log(f"แก้ไขบัญชี {email} สำเร็จ", "success")
+        else:
+            # โหมดเพิ่มบัญชีใหม่
+            if any(acc.get("email") == email for acc in self.accounts):
+                messagebox.showwarning("คำเตือน", "บัญชีอีเมลนี้มีอยู่แล้วในคิว!")
+                return
+                
+            self.accounts.append({
+                "email": email, 
+                "password": pwd, 
+                "refresh_token": token,
+                "client_id": client_id,
+                "checked": True, 
+                "group": group
+            })
+            self.write_log(f"เพิ่มบัญชี {email} ลงในกลุ่ม {group} สำเร็จ", "success")
+            
         self.save_accounts()
         self.refresh_accounts_ui()
-        self.write_log(f"เพิ่มบัญชี {email} ลงในกลุ่ม {group} สำเร็จ", "success")
         
+        # ล้างค่าในฟอร์ม
         self.new_acc_email.delete(0, tk.END)
         self.new_acc_pass.delete(0, tk.END)
         self.new_acc_group.delete(0, tk.END)
         self.new_acc_group.insert(0, "ทั่วไป")
+        self.new_acc_token.delete(0, tk.END)
+        self.new_acc_client_id.delete(0, tk.END)
+
+    def start_edit_account(self, acc):
+        # เติมค่าใส่ฟอร์ม
+        self.new_acc_email.delete(0, tk.END)
+        self.new_acc_email.insert(0, acc.get("email", ""))
+        
+        self.new_acc_pass.delete(0, tk.END)
+        self.new_acc_pass.insert(0, acc.get("password", ""))
+        
+        self.new_acc_group.delete(0, tk.END)
+        self.new_acc_group.insert(0, acc.get("group", "ทั่วไป"))
+        
+        self.new_acc_token.delete(0, tk.END)
+        self.new_acc_token.insert(0, acc.get("refresh_token", ""))
+        
+        self.new_acc_client_id.delete(0, tk.END)
+        self.new_acc_client_id.insert(0, acc.get("client_id", ""))
+        
+        self.editing_email = acc.get("email")
+        
+        # เปลี่ยนปุ่มหลักเป็นบันทึกการแก้ไข
+        self.save_acc_btn.configure(text="💾 บันทึกการแก้ไข", bg=ACCENT_ORANGE, activebackground="#d35400")
+        
+        # แสดงปุ่มยกเลิกการแก้ไข
+        if not hasattr(self, 'cancel_edit_btn'):
+            self.cancel_edit_btn = ModernButton(
+                self.save_acc_btn.master, 
+                text="❌ ยกเลิกการแก้ไข", 
+                command=self.cancel_edit_account, 
+                bg=ACCENT_RED, 
+                activebg="#c0392b"
+            )
+        self.cancel_edit_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        
+        # เลื่อนปุ่มนำเข้าแบบกลุ่มลงไปแถว 7
+        self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+    def cancel_edit_account(self):
+        self.editing_email = None
+        self.save_acc_btn.configure(text="➕ เพิ่มบัญชีเข้าคิว", bg=ACCENT_GREEN, activebackground="#2ecc71")
+        if hasattr(self, 'cancel_edit_btn'):
+            self.cancel_edit_btn.grid_remove()
+            
+        # เลื่อนปุ่มนำเข้าแบบกลุ่มกลับมาแถว 6
+        self.batch_import_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        
+        # ล้างค่าในฟอร์ม
+        self.new_acc_email.delete(0, tk.END)
+        self.new_acc_pass.delete(0, tk.END)
+        self.new_acc_group.delete(0, tk.END)
+        self.new_acc_group.insert(0, "ทั่วไป")
+        self.new_acc_token.delete(0, tk.END)
+        self.new_acc_client_id.delete(0, tk.END)
 
     def open_batch_import_dialog(self):
         """เปิดหน้าต่างป๊อปอัปสำหรับป้อนบัญชีแบบกลุ่มและทำการจัดเรียงพาร์สข้อมูล"""
