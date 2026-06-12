@@ -1178,6 +1178,9 @@
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\queue.py',
    'PYMODULE'),
+  ('quick_builder',
+   'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\quick_builder.py',
+   'PYMODULE'),
   ('quopri',
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\quopri.py',
@@ -1189,6 +1192,9 @@
   ('runpy',
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\runpy.py',
+   'PYMODULE'),
+  ('script_sets',
+   'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\script_sets.py',
    'PYMODULE'),
   ('secrets',
    'C:\\Program '

@@ -7,6 +7,23 @@ import os
 import glob
 import sys
 from mumu_controller import MuMuController
+from quick_builder import (
+    DEFAULT_COORDINATE_PRESETS,
+    build_key_step,
+    build_sleep_step,
+    build_swipe_step,
+    build_tap_step_from_preset,
+    build_text_step,
+    normalize_coordinate_presets,
+    normalize_coordinate_preset,
+)
+from script_sets import (
+    build_run_set_step,
+    expand_steps_with_sets,
+    load_script_set,
+    safe_set_slug,
+    save_script_set,
+)
 
 # จานสีสำหรับธีมมืดระดับพรีเมียม (Premium Dark Theme Color Palette)
 BG_DARK = "#121212"
@@ -20,6 +37,17 @@ ACCENT_HOVER = "#0098FF"
 ACCENT_GREEN = "#2ECC71"
 ACCENT_RED = "#E74C3C"
 ACCENT_ORANGE = "#E67E22"
+
+def build_status_summary(total_devices, selected_devices, total_accounts, selected_accounts, macro_steps, profile_name, is_running):
+    profile = profile_name.strip() if profile_name else "Custom"
+    state = "Running" if is_running else "Ready"
+    return (
+        f"Emulator: {selected_devices}/{total_devices}  |  "
+        f"Accounts: {selected_accounts}/{total_accounts}  |  "
+        f"Steps: {macro_steps}  |  "
+        f"Profile: {profile}  |  "
+        f"Status: {state}"
+    )
 
 class ModernButton(tk.Button):
     """ปุ่มกดสไตล์โมเดิร์นพร้อมแอนิเมชันตอนเอาเมาส์ชี้"""
@@ -67,7 +95,8 @@ class MuMuGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("MuMupow - โปรแกรมควบคุมและบอทจำลองหน้าจอพร้อมกันหลายจอ")
-        self.geometry("1100x700")
+        self.geometry("1280x760")
+        self.minsize(1100, 700)
         self.configure(bg=BG_DARK)
 
         # เริ่มต้นโมดูลควบคุม
@@ -87,6 +116,9 @@ class MuMuGUI(tk.Tk):
         self.profiles = {}
         self.macros_dir = os.path.join(base_dir, "macros")
         os.makedirs(self.macros_dir, exist_ok=True)
+        self.script_sets_dir = os.path.join(base_dir, "script_sets")
+        os.makedirs(self.script_sets_dir, exist_ok=True)
+        self.script_sets = {}
         self.templates_dir = os.path.join(base_dir, "templates")
         os.makedirs(self.templates_dir, exist_ok=True)
 
@@ -100,6 +132,8 @@ class MuMuGUI(tk.Tk):
         self.accounts = []
         self.accounts_file = os.path.join(base_dir, "accounts.json")
         self.ports_file = os.path.join(base_dir, "ports.json")
+        self.presets_file = os.path.join(base_dir, "presets.json")
+        self.coordinate_presets = self.load_coordinate_presets()
         self.account_checkboxes = {} # email -> BooleanVar
         self.group_checkboxes = {}   # group_name -> BooleanVar
         self.load_accounts()
@@ -107,6 +141,7 @@ class MuMuGUI(tk.Tk):
         # ตัวแปรสำหรับการเลือกอุปกรณ์ Emulator
         self.device_checkboxes = {} # device_id -> BooleanVar
         self.device_frames = {}     # device_id -> tk.Frame
+        self.log_expanded = tk.BooleanVar(value=True)
 
         # กำหนดสไตล์วิดเจ็ตมาตรฐาน
         self.setup_styles()
@@ -208,6 +243,8 @@ class MuMuGUI(tk.Tk):
         subtitle_lbl = tk.Label(header, text="พิกัดหน้าจอเป้าหมาย: กว้าง 960 / สูง 540 | DPI: 160", bg=BG_PANEL, fg=ACCENT_BLUE, font=("Segoe UI", 10, "italic"))
         subtitle_lbl.pack(side="left", pady=22)
 
+        self.build_status_bar()
+
         # 2. พื้นที่เนื้อหาหลัก (แบ่งเป็น แถบซ้ายมือ และ แผงฟังก์ชันหลักขวามือ)
         content_frame = tk.Frame(self, bg=BG_DARK)
         content_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -220,6 +257,61 @@ class MuMuGUI(tk.Tk):
 
         # 3. แผงคอนโซล Log บันทึกระบบด้านล่างสุด
         self.build_log_panel()
+        self.update_status_summary()
+
+    def build_status_bar(self):
+        status_frame = tk.Frame(self, bg="#181818", height=36)
+        status_frame.pack(fill="x", side="top")
+        status_frame.pack_propagate(False)
+
+        self.status_summary_lbl = tk.Label(
+            status_frame,
+            text="",
+            bg="#181818",
+            fg=FG_WHITE,
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+        )
+        self.status_summary_lbl.pack(side="left", fill="x", expand=True, padx=20)
+
+        self.status_hint_lbl = tk.Label(
+            status_frame,
+            text="เลือก Emulator + บัญชี + มาโคร แล้วกดรัน",
+            bg="#181818",
+            fg=FG_MUTED,
+            font=("Segoe UI", 9),
+            anchor="e",
+        )
+        self.status_hint_lbl.pack(side="right", padx=20)
+
+    def update_status_summary(self):
+        if not hasattr(self, "status_summary_lbl"):
+            return
+
+        total_devices = len(self.device_checkboxes)
+        selected_devices = sum(1 for var in self.device_checkboxes.values() if var.get())
+        total_accounts = len(self.accounts)
+
+        if self.account_checkboxes:
+            selected_accounts = sum(1 for var in self.account_checkboxes.values() if var.get())
+        else:
+            selected_accounts = sum(1 for acc in self.accounts if acc.get("checked", True))
+
+        profile_name = ""
+        if hasattr(self, "profile_cb"):
+            profile_name = self.profile_cb.get()
+
+        self.status_summary_lbl.configure(
+            text=build_status_summary(
+                total_devices=total_devices,
+                selected_devices=selected_devices,
+                total_accounts=total_accounts,
+                selected_accounts=selected_accounts,
+                macro_steps=len(self.macro_steps),
+                profile_name=profile_name,
+                is_running=self.macro_running,
+            )
+        )
 
     def build_sidebar(self, parent):
         sidebar = tk.Frame(parent, bg=BG_PANEL, width=280)
@@ -328,6 +420,23 @@ class MuMuGUI(tk.Tk):
         
         ModernButton(prof_act_frame, text="💾 บันทึก", command=self.save_profile, bg=ACCENT_GREEN, activebg="#2ecc71").pack(side="left", padx=2)
         ModernButton(prof_act_frame, text="🗑️ ลบไฟล์", command=self.delete_profile, bg=ACCENT_RED, activebg="#c0392b").pack(side="left", padx=2)
+
+        quick_builder_frame = tk.Frame(left_panel, bg=BG_DARK)
+        quick_builder_frame.pack(fill="x", pady=(4, 8))
+        ModernButton(
+            quick_builder_frame,
+            text="⚡ สร้างสคริปต์เร็ว",
+            command=self.open_quick_builder_dialog,
+            bg=ACCENT_ORANGE,
+            activebg="#d35400",
+        ).pack(side="left", fill="x", expand=True, padx=(0, 3))
+        ModernButton(
+            quick_builder_frame,
+            text="🧩 จัดการ Sets",
+            command=self.open_script_sets_dialog,
+            bg=ACCENT_BLUE,
+            activebg=ACCENT_HOVER,
+        ).pack(side="left", fill="x", expand=True, padx=(3, 0))
         
         # ลิสต์ขั้นตอนการทำงาน (Listbox)
         list_frame = tk.Frame(left_panel, bg=BG_DARK)
@@ -391,7 +500,8 @@ class MuMuGUI(tk.Tk):
                 "ล้างข้อมูลแอป (Clear App Data)",
                 "ตรวจจับรูปภาพ (Image Match)",
                 "ลูปปิดโฆษณา (Clear Ads Loop)",
-                "กรอก OTP อัตโนมัติ (Auto Fill OTP)"
+                "กรอก OTP อัตโนมัติ (Auto Fill OTP)",
+                "ใช้ชุดคำสั่ง (Run Set)"
             ], 
             state="readonly", 
             width=22
@@ -455,9 +565,14 @@ class MuMuGUI(tk.Tk):
         form_btn_frame = tk.Frame(form_panel, bg=BG_DARK)
         form_btn_frame.grid(row=7, column=0, columnspan=2, sticky="ew", pady=15)
         
-        ModernButton(form_btn_frame, text="➕ เพิ่มขั้นตอน", command=self.add_step, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", fill="x", expand=True, padx=2)
-        ModernButton(form_btn_frame, text="✏️ อัปเดตขั้นตอนที่เลือก", command=self.update_step, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", fill="x", expand=True, padx=2)
-        ModernButton(form_btn_frame, text="🧹 ล้าง", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(side="right", padx=2)
+        primary_step_row = tk.Frame(form_btn_frame, bg=BG_DARK)
+        primary_step_row.pack(fill="x", pady=(0, 5))
+        secondary_step_row = tk.Frame(form_btn_frame, bg=BG_DARK)
+        secondary_step_row.pack(fill="x")
+
+        ModernButton(primary_step_row, text="➕ เพิ่มขั้นตอน", command=self.add_step, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", fill="x", expand=True, padx=(0, 3))
+        ModernButton(primary_step_row, text="✏️ อัปเดต", command=self.update_step, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", fill="x", expand=True, padx=(3, 0))
+        ModernButton(secondary_step_row, text="🧹 ล้างฟอร์ม", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(fill="x")
         
         form_panel.columnconfigure(0, weight=1)
         form_panel.columnconfigure(1, weight=2)
@@ -507,6 +622,7 @@ class MuMuGUI(tk.Tk):
         self.on_step_type_change()
         
         # โหลดรายชื่อโปรไฟล์จากโฟลเดอร์เก็บข้อมูลมาโคร
+        self.load_script_sets()
         self.load_profiles()
 
     def build_accounts_tab(self, parent):
@@ -818,20 +934,22 @@ class MuMuGUI(tk.Tk):
         helper_lbl.pack(anchor="w", pady=(5, 0))
 
     def build_log_panel(self):
-        log_frame = tk.Frame(self, bg=BG_PANEL, height=150)
-        log_frame.pack(fill="both", side="bottom", padx=10, pady=(0, 10))
-        log_frame.pack_propagate(False)
+        self.log_frame = tk.Frame(self, bg=BG_PANEL, height=130)
+        self.log_frame.pack(fill="x", side="bottom", padx=10, pady=(0, 10))
+        self.log_frame.pack_propagate(False)
 
         # แถบหัวข้อคอนโซล Log
-        log_header = tk.Frame(log_frame, bg=BG_PANEL)
+        log_header = tk.Frame(self.log_frame, bg=BG_PANEL)
         log_header.pack(fill="x", side="top", padx=10, pady=2)
         
         tk.Label(log_header, text="คอนโซลบันทึกการทำงานของระบบ (Log Console)", bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 9, "bold")).pack(side="left")
+        self.log_toggle_btn = ModernButton(log_header, text="ย่อ", command=self.toggle_log_panel, bg=BG_INPUT, activebg="#444444", font=("Segoe UI", 8))
+        self.log_toggle_btn.pack(side="right", padx=(5, 0))
         ModernButton(log_header, text="ล้างบันทึก", command=self.clear_logs, bg=BG_INPUT, activebg="#444444", font=("Segoe UI", 8)).pack(side="right")
 
         # ตัวแสดงผลข้อความล็อก
         self.log_txt = tk.Text(
-            log_frame, 
+            self.log_frame, 
             bg=BG_DARK, 
             fg=FG_WHITE, 
             font=("Consolas", 9), 
@@ -840,17 +958,32 @@ class MuMuGUI(tk.Tk):
             state="disabled",
             wrap="word"
         )
-        scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_txt.yview)
+        self.log_scrollbar = ttk.Scrollbar(self.log_frame, orient="vertical", command=self.log_txt.yview)
         
-        self.log_txt.configure(yscrollcommand=scroll.set)
+        self.log_txt.configure(yscrollcommand=self.log_scrollbar.set)
         self.log_txt.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 10))
-        scroll.pack(side="right", fill="y", padx=(0, 10), pady=(0, 10))
+        self.log_scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=(0, 10))
 
         # กำหนดแท็กเพื่อแสดงสีของตัวอักษร
         self.log_txt.tag_configure("info", foreground=FG_WHITE)
         self.log_txt.tag_configure("success", foreground=ACCENT_GREEN)
         self.log_txt.tag_configure("error", foreground=ACCENT_RED)
         self.log_txt.tag_configure("warning", foreground=ACCENT_ORANGE)
+
+    def toggle_log_panel(self):
+        expanded = not self.log_expanded.get()
+        self.log_expanded.set(expanded)
+
+        if expanded:
+            self.log_frame.configure(height=130)
+            self.log_txt.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+            self.log_scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=(0, 10))
+            self.log_toggle_btn.configure(text="ย่อ")
+        else:
+            self.log_txt.pack_forget()
+            self.log_scrollbar.pack_forget()
+            self.log_frame.configure(height=42)
+            self.log_toggle_btn.configure(text="ขยาย")
 
     # --- ฟังก์ชันช่วยเหลือเกี่ยวกับระบบ Log ---
     def write_log(self, message, log_type="info"):
@@ -870,6 +1003,27 @@ class MuMuGUI(tk.Tk):
         self.log_txt.configure(state="normal")
         self.log_txt.delete("1.0", "end")
         self.log_txt.configure(state="disabled")
+
+    def load_coordinate_presets(self):
+        if not os.path.exists(self.presets_file):
+            presets = normalize_coordinate_presets(DEFAULT_COORDINATE_PRESETS)
+            self.save_coordinate_presets(presets)
+            return presets
+
+        try:
+            with open(self.presets_file, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            presets = data.get("presets", data if isinstance(data, list) else [])
+            return normalize_coordinate_presets(presets)
+        except Exception as e:
+            if hasattr(self, "log_txt"):
+                self.write_log(f"โหลด preset พิกัดล้มเหลว ใช้ค่าเริ่มต้นแทน: {e}", "warning")
+            return normalize_coordinate_presets(DEFAULT_COORDINATE_PRESETS)
+
+    def save_coordinate_presets(self, presets=None):
+        presets_to_save = presets if presets is not None else self.coordinate_presets
+        with open(self.presets_file, "w", encoding="utf-8") as file:
+            json.dump({"presets": presets_to_save}, file, ensure_ascii=False, indent=2)
 
     def save_adb_path(self):
         new_path = self.adb_path_entry.get().strip()
@@ -1084,6 +1238,15 @@ class MuMuGUI(tk.Tk):
         if not active_devices:
             lbl = tk.Label(self.device_scroll_frame, text="ไม่พบ Emulator ที่เปิดอยู่\nกรุณาเปิด Emulator ก่อน\nหรือเชื่อมต่อแบบแมนนวล", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="center")
             lbl.pack(pady=20, fill="x")
+            ModernButton(
+                self.device_scroll_frame,
+                text="ไปตั้งค่าพอร์ต",
+                command=lambda: self.notebook.select(3),
+                bg=BG_INPUT,
+                activebg="#444444",
+                font=("Segoe UI", 9, "bold")
+            ).pack(fill="x", padx=10, pady=(0, 10))
+            self.update_status_summary()
             return
 
         for idx, dev in enumerate(active_devices):
@@ -1106,6 +1269,7 @@ class MuMuGUI(tk.Tk):
                 frame, 
                 text=lbl_text, 
                 variable=chk_var, 
+                command=self.update_status_summary,
                 bg=BG_CARD, 
                 fg=FG_WHITE, 
                 activebackground=BG_CARD, 
@@ -1131,6 +1295,8 @@ class MuMuGUI(tk.Tk):
                 width=2
             )
             disc_btn.pack(side="right", padx=5, pady=5)
+
+        self.update_status_summary()
 
     def disconnect_one(self, device_id):
         def worker():
@@ -1315,6 +1481,7 @@ class MuMuGUI(tk.Tk):
         if not self.accounts:
             lbl = tk.Label(self.acc_scroll_frame, text="ไม่มีบัญชีในคิวระบบ\nกรุณาเพิ่มบัญชีเกมด้านขวามือ", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="center")
             lbl.pack(pady=30, fill="x")
+            self.update_status_summary()
             return
 
         # 1. จัดกลุ่มบัญชี
@@ -1352,6 +1519,7 @@ class MuMuGUI(tk.Tk):
                     if email in self.account_checkboxes:
                         self.account_checkboxes[email].set(new_state)
                 self.save_accounts()
+                self.update_status_summary()
 
             chk_grp = tk.Checkbutton(
                 group_header, 
@@ -1394,6 +1562,7 @@ class MuMuGUI(tk.Tk):
                     all_grp_checked = all(a.get("checked", True) for a in grp_accs)
                     if g in self.group_checkboxes:
                         self.group_checkboxes[g].set(all_grp_checked)
+                    self.update_status_summary()
 
                 chk = tk.Checkbutton(
                     frame,
@@ -1451,6 +1620,8 @@ class MuMuGUI(tk.Tk):
                     width=2
                 )
                 edit_btn.pack(side="right", padx=2, pady=5)
+
+        self.update_status_summary()
 
     def add_account(self):
         email = self.new_acc_email.get().strip()
@@ -1775,8 +1946,262 @@ class MuMuGUI(tk.Tk):
                     self.profile_name_entry.delete(0, tk.END)
                     self.profile_name_entry.insert(0, name.lower().replace(" ", "_"))
                     self.write_log(f"โหลดโปรไฟล์มาโครเรียบร้อยแล้ว: {name} (จำนวนขั้นตอน: {len(self.macro_steps)} ขั้นตอน)", "success")
+                    self.update_status_summary()
             except Exception as e:
                 self.write_log(f"โหลดโปรไฟล์ผิดพลาด: {e}", "error")
+
+    def load_script_sets(self):
+        """ค้นหาและโหลดไฟล์ชุดคำสั่งย่อย (Script Sets) ในโฟลเดอร์ script_sets/"""
+        self.script_sets.clear()
+        search_pattern = os.path.join(self.script_sets_dir, "*.json")
+        files = glob.glob(search_pattern)
+        for f in files:
+            try:
+                data = load_script_set(f)
+                name = data["name"]
+                self.script_sets[name] = data["steps"]
+            except Exception as e:
+                self.write_log(f"พบปัญหาการอ่านไฟล์ชุดคำสั่งย่อย {os.path.basename(f)}: {e}", "error")
+
+    def open_script_sets_dialog(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("🧩 จัดการชุดคำสั่งย่อย (Script Sets)")
+        dialog.geometry("780x560")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # กึ่งกลางหน้าจอหลัก
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (width // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # หัวข้อ
+        tk.Label(
+            dialog,
+            text="🧩 จัดการชุดคำสั่งย่อย (Script Sets)",
+            bg=BG_DARK,
+            fg=FG_WHITE,
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w", padx=20, pady=(15, 5))
+
+        tk.Label(
+            dialog,
+            text="คุณสามารถบันทึกกลุ่มขั้นตอนมาโครเป็นเซ็ตย่อย (เหมือนเลโก้) แล้วนำมาประกอบกันในมาโครหลักได้",
+            bg=BG_DARK,
+            fg=FG_MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=20, pady=(0, 15))
+
+        # เฟรมหลัก
+        main_frame = tk.Frame(dialog, bg=BG_DARK)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+        main_frame.columnconfigure(0, weight=1)  # แผงซ้าย (รายการเซ็ต)
+        main_frame.columnconfigure(1, weight=1)  # แผงขวา (รายละเอียด / คำสั่งจัดการ)
+        main_frame.rowconfigure(0, weight=1)
+
+        # แผงซ้าย: รายชื่อเซ็ตที่มีอยู่
+        left_box = tk.LabelFrame(
+            main_frame,
+            text=" รายชื่อชุดคำสั่งย่อยที่มีอยู่ ",
+            bg=BG_DARK,
+            fg=ACCENT_BLUE,
+            font=("Segoe UI", 10, "bold"),
+            padx=10,
+            pady=10,
+        )
+        left_box.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        sets_list = tk.Listbox(
+            left_box,
+            bg=BG_PANEL,
+            fg=FG_WHITE,
+            selectbackground=ACCENT_BLUE,
+            selectforeground=FG_WHITE,
+            bd=0,
+            highlightthickness=0,
+            font=("Segoe UI", 10),
+        )
+        
+        left_scroll = ttk.Scrollbar(left_box, orient="vertical", command=sets_list.yview)
+        sets_list.configure(yscrollcommand=left_scroll.set)
+        left_scroll.pack(side="right", fill="y")
+        sets_list.pack(side="left", fill="both", expand=True)
+
+        # แผงขวา: รายละเอียดของเซ็ตที่เลือก
+        right_box = tk.LabelFrame(
+            main_frame,
+            text=" รายละเอียดและคำสั่งจัดการ ",
+            bg=BG_DARK,
+            fg=ACCENT_BLUE,
+            font=("Segoe UI", 10, "bold"),
+            padx=10,
+            pady=10,
+        )
+        right_box.grid(row=0, column=1, sticky="nsew")
+
+        tk.Label(right_box, text="ชื่อชุดคำสั่ง (Set Name):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=(0, 5))
+        set_name_entry = ModernEntry(right_box, width=30)
+        set_name_entry.pack(fill="x", pady=(0, 10))
+
+        tk.Label(right_box, text="ขั้นตอนภายในชุดคำสั่งย่อยนี้:", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=(0, 5))
+        
+        steps_list_frame = tk.Frame(right_box, bg=BG_DARK)
+        steps_list_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        steps_list = tk.Listbox(
+            steps_list_frame,
+            bg=BG_PANEL,
+            fg=FG_WHITE,
+            bd=0,
+            highlightthickness=0,
+            font=("Consolas", 9),
+            height=10,
+        )
+        
+        right_scroll = ttk.Scrollbar(steps_list_frame, orient="vertical", command=steps_list.yview)
+        steps_list.configure(yscrollcommand=right_scroll.set)
+        right_scroll.pack(side="right", fill="y")
+        steps_list.pack(side="left", fill="both", expand=True)
+
+        # ฟังก์ชันรีเฟรชรายชื่อเซ็ต
+        def refresh_sets_list(select_name=None):
+            sets_list.delete(0, tk.END)
+            self.load_script_sets()
+            sorted_names = sorted(self.script_sets.keys())
+            for name in sorted_names:
+                sets_list.insert(tk.END, name)
+            if select_name:
+                if select_name in sorted_names:
+                    idx = sorted_names.index(select_name)
+                    sets_list.selection_set(idx)
+                    sets_list.see(idx)
+                    fill_selected_set()
+            elif sorted_names:
+                sets_list.selection_set(0)
+                fill_selected_set()
+
+        # แสดงรายละเอียดเมื่อเลือกเซ็ต
+        def fill_selected_set(event=None):
+            selection = sets_list.curselection()
+            if not selection:
+                set_name_entry.delete(0, tk.END)
+                steps_list.delete(0, tk.END)
+                return
+            name = sets_list.get(selection[0])
+            set_name_entry.delete(0, tk.END)
+            set_name_entry.insert(0, name)
+
+            steps_list.delete(0, tk.END)
+            steps = self.script_sets.get(name, [])
+            for i, step in enumerate(steps):
+                t = step.get("type", "tap").upper()
+                desc = step.get("desc", "")
+                if t == "TAP":
+                    info = f"คลิก ({step.get('x')}, {step.get('y')})"
+                elif t == "SWIPE":
+                    info = f"ลากจอ ({step.get('x')},{step.get('y')} -> {step.get('x2')},{step.get('y2')})"
+                elif t == "TEXT":
+                    info = f"พิมพ์ '{step.get('text')}'"
+                elif t == "KEYEVENT":
+                    info = f"ปุ่ม {step.get('code')}"
+                elif t == "SLEEP":
+                    info = f"รอ {step.get('seconds')} วิ"
+                elif t == "START_APP":
+                    info = f"เปิดแอป '{step.get('text')}'"
+                elif t == "STOP_APP":
+                    info = f"ปิดแอป '{step.get('text')}'"
+                elif t == "CLEAR_APP":
+                    info = f"ล้างแอป '{step.get('text')}'"
+                elif t == "DETECT_IMAGE":
+                    info = f"รูป '{step.get('text')}'"
+                elif t == "CLEAR_ADS_LOOP":
+                    info = f"ลูปปิดโฆษณา '{step.get('text') or ''}'"
+                elif t == "FETCH_OTP":
+                    info = f"ดึง OTP '{step.get('text') or ''}'"
+                elif t == "RUN_SET":
+                    info = f"ใช้เซ็ต '{step.get('set') or ''}'"
+                else:
+                    info = t
+                steps_list.insert(tk.END, f"{i+1:02d}. [{info}] {desc}")
+
+        sets_list.bind("<<ListboxSelect>>", fill_selected_set)
+
+        # บันทึกขั้นตอนหลักเป็นเซ็ตย่อย
+        def save_current_as_set():
+            name = set_name_entry.get().strip()
+            if not name:
+                messagebox.showerror("ข้อผิดพลาด", "กรุณาระบุชื่อชุดคำสั่งย่อย!", parent=dialog)
+                return
+            if not self.macro_steps:
+                messagebox.showerror("ข้อผิดพลาด", "ไม่มีขั้นตอนในคิวหลักที่จะนำมาบันทึก!", parent=dialog)
+                return
+
+            slug = safe_set_slug(name)
+            filepath = os.path.join(self.script_sets_dir, f"{slug}.json")
+            try:
+                # กรองไม่ให้เซ็ตย่อยเรียกตัวเองโดยตรง
+                for s in self.macro_steps:
+                    if s.get("type") == "run_set" and s.get("set") == name:
+                        raise ValueError("ไม่สามารถบันทึกเซ็ตที่เรียกใช้ตัวเองเพื่อป้องกันการทำงานวนลูปไม่รู้จบ")
+                
+                save_script_set(filepath, name, self.macro_steps)
+                self.write_log(f"บันทึกชุดคำสั่งย่อยสำเร็จ: {name} ({len(self.macro_steps)} ขั้นตอน)", "success")
+                refresh_sets_list(name)
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถบันทึกได้: {e}", parent=dialog)
+
+        # ลบเซ็ตย่อย
+        def delete_selected_set():
+            selection = sets_list.curselection()
+            if not selection:
+                return
+            name = sets_list.get(selection[0])
+            slug = safe_set_slug(name)
+            filepath = os.path.join(self.script_sets_dir, f"{slug}.json")
+
+            confirm = messagebox.askyesno("ยืนยันการลบ", f"คุณแน่ใจหรือไม่ที่จะลบชุดคำสั่งย่อย '{name}'?", parent=dialog)
+            if confirm:
+                try:
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                    self.write_log(f"ลบชุดคำสั่งย่อยสำเร็จ: {name}", "warning")
+                    refresh_sets_list()
+                except Exception as e:
+                    messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถลบไฟล์ได้: {e}", parent=dialog)
+
+        # แทรกเซ็ตเข้าไปในคิวขั้นตอนหลัก
+        def insert_set_into_macro():
+            selection = sets_list.curselection()
+            if not selection:
+                messagebox.showwarning("คำเตือน", "กรุณาเลือกชุดคำสั่งย่อยในรายการด้านซ้ายก่อน!", parent=dialog)
+                return
+            name = sets_list.get(selection[0])
+
+            step = build_run_set_step(name)
+            step["desc"] = f"ใช้ชุดคำสั่ง {name}"
+            self.macro_steps.append(step)
+            self.refresh_listbox()
+            self.write_log(f"แทรกชุดคำสั่งย่อย '{name}' เข้าคิวหลักสำเร็จ", "success")
+            dialog.destroy()
+
+        # ส่วนปุ่มดำเนินการ
+        actions_frame = tk.Frame(right_box, bg=BG_DARK)
+        actions_frame.pack(fill="x", pady=(5, 0))
+
+        ModernButton(actions_frame, text="📥 แทรกเข้าคิวสคริปต์หลัก", command=insert_set_into_macro, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(fill="x", pady=2)
+        ModernButton(actions_frame, text="➕ บันทึกขั้นตอนหลักปัจจุบันเป็น Set นี้", command=save_current_as_set, bg=ACCENT_GREEN, activebg="#2ecc71").pack(fill="x", pady=2)
+        ModernButton(actions_frame, text="🗑️ ลบชุดคำสั่งย่อยนี้", command=delete_selected_set, bg=ACCENT_RED, activebg="#c0392b").pack(fill="x", pady=2)
+
+        # ปิด
+        footer = tk.Frame(dialog, bg=BG_DARK)
+        footer.pack(fill="x", padx=20, pady=(0, 15))
+        ModernButton(footer, text="ปิดหน้าต่าง", command=dialog.destroy, bg=BG_INPUT, activebg="#444444").pack(side="right")
+
+        refresh_sets_list()
 
     def refresh_listbox(self):
         """อัปเดตลิสต์ในกล่องสคริปต์ขั้นตอน (Listbox) ใหม่"""
@@ -1820,6 +2245,9 @@ class MuMuGUI(tk.Tk):
             elif t == "FETCH_OTP":
                 t_thai = "ดึง OTP"
                 details = f"แพทเทิร์น '{step.get('text') or '\\d{6}'}'"
+            elif t == "RUN_SET":
+                t_thai = "ใช้ชุดคำสั่ง"
+                details = f"เซ็ต '{step.get('set') or step.get('text') or ''}'"
             else:
                 details = ""
                 
@@ -1840,6 +2268,7 @@ class MuMuGUI(tk.Tk):
                         delay_info = " (หน่วง 1.0 วิ)"
                         
             self.step_listbox.insert(tk.END, f"{idx+1:02d}. [{t_thai}] {details}{delay_info} - {desc}")
+        self.update_status_summary()
 
     def save_profile(self):
         name_slug = self.profile_name_entry.get().strip()
@@ -1919,6 +2348,8 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("ลูปปิดโฆษณา (Clear Ads Loop)")
         elif t == "fetch_otp":
             self.form_type.set("กรอก OTP อัตโนมัติ (Auto Fill OTP)")
+        elif t == "run_set":
+            self.form_type.set("ใช้ชุดคำสั่ง (Run Set)")
             
         self.on_step_type_change()
         
@@ -1947,6 +2378,8 @@ class MuMuGUI(tk.Tk):
         elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5" if t == "text" else "1.0"))
+        elif t == "run_set":
+            self.form_text.insert(0, step.get("set", ""))
         elif t == "keyevent":
             self.form_code.insert(0, step.get("code", ""))
             self.form_sleep.insert(0, step.get("delay", "0.3"))
@@ -2025,6 +2458,15 @@ class MuMuGUI(tk.Tk):
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
+        elif "Run Set" in t or "ใช้ชุดคำสั่ง" in t:
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_code.configure(state="disabled")
+            self.form_sleep.configure(state="disabled")
 
     def clear_form(self):
         self.form_x.delete(0, tk.END)
@@ -2035,6 +2477,195 @@ class MuMuGUI(tk.Tk):
         self.form_code.delete(0, tk.END)
         self.form_sleep.delete(0, tk.END)
         self.form_desc.delete(0, tk.END)
+
+    def append_quick_step(self, step):
+        self.macro_steps.append(step)
+        self.refresh_listbox()
+        self.step_listbox.selection_clear(0, tk.END)
+        self.step_listbox.selection_set(tk.END)
+        self.step_listbox.see(tk.END)
+        self.write_log(f"เพิ่มขั้นตอนจาก Quick Builder: {step.get('desc', step.get('type'))}", "info")
+
+    def open_quick_builder_dialog(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("⚡ สร้างสคริปต์เร็ว")
+        dialog.geometry("760x720")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        x = self.winfo_x() + (self.winfo_width() // 2) - 380
+        y = self.winfo_y() + (self.winfo_height() // 2) - 360
+        dialog.geometry(f"+{x}+{y}")
+
+        tk.Label(
+            dialog,
+            text="สร้างสคริปต์เร็วจากจุดกดที่จำไว้",
+            bg=BG_DARK,
+            fg=FG_WHITE,
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w", padx=18, pady=(16, 4))
+
+        tk.Label(
+            dialog,
+            text="กด preset หรือปุ่มคำสั่งด้านขวาเพื่อเพิ่ม step เข้าโปรไฟล์มาโครทันที",
+            bg=BG_DARK,
+            fg=FG_MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+
+        body = tk.Frame(dialog, bg=BG_DARK)
+        body.pack(fill="both", expand=True, padx=18, pady=(0, 8))
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        preset_box = tk.LabelFrame(
+            body,
+            text=" จุดกดที่ใช้บ่อย ",
+            bg=BG_DARK,
+            fg=ACCENT_BLUE,
+            font=("Segoe UI", 10, "bold"),
+            padx=12,
+            pady=10,
+        )
+        preset_box.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        preset_list = tk.Listbox(
+            preset_box,
+            bg=BG_PANEL,
+            fg=FG_WHITE,
+            selectbackground=ACCENT_BLUE,
+            selectforeground=FG_WHITE,
+            bd=0,
+            highlightthickness=0,
+            font=("Segoe UI", 10),
+            height=9,
+        )
+        preset_list.pack(fill="both", expand=True)
+
+        fields = tk.Frame(preset_box, bg=BG_DARK)
+        fields.pack(fill="x", pady=(10, 0))
+
+        tk.Label(fields, text="ชื่อ:", bg=BG_DARK, fg=FG_WHITE).grid(row=0, column=0, sticky="w", pady=3)
+        preset_name_entry = ModernEntry(fields, width=18)
+        preset_name_entry.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=3)
+
+        tk.Label(fields, text="X:", bg=BG_DARK, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=3)
+        preset_x_entry = ModernEntry(fields, width=8)
+        preset_x_entry.grid(row=1, column=1, sticky="w", padx=(8, 12), pady=3)
+
+        tk.Label(fields, text="Y:", bg=BG_DARK, fg=FG_WHITE).grid(row=1, column=2, sticky="w", pady=3)
+        preset_y_entry = ModernEntry(fields, width=8)
+        preset_y_entry.grid(row=1, column=3, sticky="w", padx=(8, 0), pady=3)
+        fields.columnconfigure(1, weight=1)
+
+        def refresh_preset_list(select_index=None):
+            preset_list.delete(0, tk.END)
+            for preset in self.coordinate_presets:
+                preset_list.insert(tk.END, f"{preset['name']}  ({preset['x']}, {preset['y']})")
+            if select_index is not None and self.coordinate_presets:
+                safe_index = max(0, min(select_index, len(self.coordinate_presets) - 1))
+                preset_list.selection_set(safe_index)
+                preset_list.see(safe_index)
+
+        def fill_selected_preset(event=None):
+            selection = preset_list.curselection()
+            if not selection:
+                return
+            preset = self.coordinate_presets[selection[0]]
+            preset_name_entry.delete(0, tk.END)
+            preset_name_entry.insert(0, preset["name"])
+            preset_x_entry.delete(0, tk.END)
+            preset_x_entry.insert(0, str(preset["x"]))
+            preset_y_entry.delete(0, tk.END)
+            preset_y_entry.insert(0, str(preset["y"]))
+
+        def add_selected_preset_step():
+            selection = preset_list.curselection()
+            if not selection:
+                messagebox.showwarning("เลือกจุดก่อน", "กรุณาเลือก preset พิกัดที่ต้องการเพิ่ม", parent=dialog)
+                return
+            self.append_quick_step(build_tap_step_from_preset(self.coordinate_presets[selection[0]]))
+
+        def save_preset_from_fields():
+            try:
+                preset = normalize_coordinate_preset({
+                    "name": preset_name_entry.get(),
+                    "x": preset_x_entry.get(),
+                    "y": preset_y_entry.get(),
+                })
+            except ValueError as e:
+                messagebox.showerror("Preset ไม่ถูกต้อง", str(e), parent=dialog)
+                return
+
+            existing_index = next((idx for idx, item in enumerate(self.coordinate_presets) if item["name"] == preset["name"]), None)
+            if existing_index is None:
+                self.coordinate_presets.append(preset)
+                selected_index = len(self.coordinate_presets) - 1
+            else:
+                self.coordinate_presets[existing_index] = preset
+                selected_index = existing_index
+
+            self.save_coordinate_presets()
+            refresh_preset_list(selected_index)
+            self.write_log(f"บันทึก preset พิกัด: {preset['name']} ({preset['x']}, {preset['y']})", "success")
+
+        def delete_selected_preset():
+            selection = preset_list.curselection()
+            if not selection:
+                return
+            preset = self.coordinate_presets.pop(selection[0])
+            self.save_coordinate_presets()
+            refresh_preset_list()
+            self.write_log(f"ลบ preset พิกัด: {preset['name']}", "warning")
+
+        preset_list.bind("<<ListboxSelect>>", fill_selected_preset)
+
+        preset_actions = tk.Frame(preset_box, bg=BG_DARK)
+        preset_actions.pack(fill="x", pady=(10, 0))
+        ModernButton(preset_actions, text="➕ เพิ่มคลิกจาก preset", command=add_selected_preset_step, bg=ACCENT_GREEN, activebg="#2ecc71").pack(fill="x", pady=2)
+        ModernButton(preset_actions, text="💾 บันทึก/แก้ไข preset", command=save_preset_from_fields, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(fill="x", pady=2)
+        ModernButton(preset_actions, text="🗑️ ลบ preset", command=delete_selected_preset, bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=2)
+
+        command_box = tk.LabelFrame(
+            body,
+            text=" ปุ่มคำสั่งเร็ว ",
+            bg=BG_DARK,
+            fg=ACCENT_BLUE,
+            font=("Segoe UI", 10, "bold"),
+            padx=12,
+            pady=10,
+        )
+        command_box.grid(row=0, column=1, sticky="nsew")
+
+        def add_step_button(parent, text, step_factory, bg=ACCENT_BLUE):
+            ModernButton(parent, text=text, command=lambda: self.append_quick_step(step_factory()), bg=bg, activebg=ACCENT_HOVER).pack(fill="x", pady=2)
+
+        text_box = tk.LabelFrame(command_box, text=" ข้อมูลบัญชี ", bg=BG_DARK, fg=FG_MUTED, padx=8, pady=8)
+        text_box.pack(fill="x", pady=(0, 8))
+        add_step_button(text_box, "พิมพ์ {EMAIL}", lambda: build_text_step("{EMAIL}"))
+        add_step_button(text_box, "พิมพ์ {PASSWORD}", lambda: build_text_step("{PASSWORD}"))
+
+        timing_box = tk.LabelFrame(command_box, text=" หน่วงเวลา ", bg=BG_DARK, fg=FG_MUTED, padx=8, pady=8)
+        timing_box.pack(fill="x", pady=(0, 8))
+        for seconds in (0.3, 0.5, 1, 2):
+            add_step_button(timing_box, f"รอ {seconds:g} วิ", lambda s=seconds: build_sleep_step(s), bg=BG_INPUT)
+
+        nav_box = tk.LabelFrame(command_box, text=" ปุ่มระบบ / เลื่อนจอ ", bg=BG_DARK, fg=FG_MUTED, padx=8, pady=8)
+        nav_box.pack(fill="x")
+        add_step_button(nav_box, "กด BACK", lambda: build_key_step("BACK"), bg=BG_INPUT)
+        add_step_button(nav_box, "กด HOME", lambda: build_key_step("HOME"), bg=BG_INPUT)
+        add_step_button(nav_box, "กด ENTER", lambda: build_key_step("ENTER"), bg=BG_INPUT)
+        add_step_button(nav_box, "เลื่อนขึ้น", lambda: build_swipe_step("up"), bg=ACCENT_ORANGE)
+        add_step_button(nav_box, "เลื่อนลง", lambda: build_swipe_step("down"), bg=ACCENT_ORANGE)
+
+        footer = tk.Frame(dialog, bg=BG_DARK)
+        footer.pack(fill="x", padx=18, pady=(0, 12))
+        ModernButton(footer, text="ปิด", command=dialog.destroy, bg=BG_INPUT, activebg="#444444").pack(side="right")
+
+        refresh_preset_list(0)
+        fill_selected_preset()
 
     def add_step(self):
         t_label = self.form_type.get()
@@ -2059,6 +2690,8 @@ class MuMuGUI(tk.Tk):
             t = "clear_ads_loop"
         elif "Auto Fill OTP" in t_label:
             t = "fetch_otp"
+        elif "Run Set" in t_label or "ใช้ชุดคำสั่ง" in t_label:
+            t = "run_set"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -2088,6 +2721,9 @@ class MuMuGUI(tk.Tk):
                 step["delay"] = float(self.form_sleep.get().strip() or "0.3")
             elif t == "sleep":
                 step["seconds"] = float(self.form_sleep.get().strip())
+            elif t == "run_set":
+                step["set"] = self.form_text.get().strip()
+                if not step["set"]: raise ValueError("ชื่อชุดคำสั่งย่อยห้ามว่างเปล่า")
         except ValueError as e:
             messagebox.showerror("ข้อมูลไม่ถูกต้อง", f"การตรวจสอบความถูกต้องการป้อนข้อมูลล้มเหลว: {e}")
             return
@@ -2125,6 +2761,8 @@ class MuMuGUI(tk.Tk):
             t = "clear_ads_loop"
         elif "Auto Fill OTP" in t_label:
             t = "fetch_otp"
+        elif "Run Set" in t_label or "ใช้ชุดคำสั่ง" in t_label:
+            t = "run_set"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -2154,6 +2792,9 @@ class MuMuGUI(tk.Tk):
                 step["delay"] = float(self.form_sleep.get().strip() or "0.3")
             elif t == "sleep":
                 step["seconds"] = float(self.form_sleep.get().strip())
+            elif t == "run_set":
+                step["set"] = self.form_text.get().strip()
+                if not step["set"]: raise ValueError("ชื่อชุดคำสั่งย่อยห้ามว่างเปล่า")
         except ValueError as e:
             messagebox.showerror("ข้อมูลไม่ถูกต้อง", f"การตรวจสอบความถูกต้องการป้อนข้อมูลล้มเหลว: {e}")
             return
@@ -2245,6 +2886,7 @@ class MuMuGUI(tk.Tk):
         self.macro_running = True
         self.run_macro_btn.configure(state="disabled", bg=BG_INPUT)
         self.stop_macro_btn.configure(state="normal")
+        self.update_status_summary()
         
         # เริ่มทำงานบอทแบบ Thread (ทำงานเบื้องหลัง)
         self.macro_thread = threading.Thread(
@@ -2257,6 +2899,7 @@ class MuMuGUI(tk.Tk):
     def stop_macro_flow(self):
         if self.macro_running or self.is_paused_waiting_for_next_set:
             self.macro_running = False
+            self.update_status_summary()
             was_paused = self.is_paused_waiting_for_next_set
             self.is_paused_waiting_for_next_set = False
             self.remaining_accounts = []
@@ -2358,6 +3001,7 @@ class MuMuGUI(tk.Tk):
                 self.macro_running = False
                 self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="🚀 รันคำสั่งบอทมาโครที่เลือก"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
+                self.after(0, self.update_status_summary)
 
     def run_macro_task_resume(self):
         from concurrent.futures import ThreadPoolExecutor
@@ -2403,6 +3047,7 @@ class MuMuGUI(tk.Tk):
                 self.macro_running = False
                 self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="🚀 รันคำสั่งบอทมาโครที่เลือก"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
+                self.after(0, self.update_status_summary)
  
     def fetch_otp_via_readmail_api(self, mail_address, refresh_token, client_id, pattern_str=None):
         """ดึงข้อความอีเมลผ่าน API ของ read-mail.me โดยใช้ OAuth2 Token"""
@@ -2550,17 +3195,25 @@ class MuMuGUI(tk.Tk):
 
     def execute_device_macro(self, device, account, highlight=True):
         """รันสคริปต์มาโครบน Emulator จอเดียวกับบัญชีที่กำหนด"""
-        for idx, step in enumerate(self.macro_steps):
+        # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี
+        resolver = lambda name: self.script_sets.get(name)
+        try:
+            steps_to_run = expand_steps_with_sets(self.macro_steps, resolver)
+        except Exception as e:
+            self.write_log(f"❌ เกิดข้อผิดพลาดในการขยายชุดคำสั่ง (Script Sets): {e}", "error")
+            return
+
+        for idx, step in enumerate(steps_to_run):
             if not self.macro_running:
                 return
             
             t = step.get("type", "tap")
             desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
             email_log = f" ({account['email']})" if account else ""
-            self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {idx+1}/{len(self.macro_steps)}: {desc}...", "info")
+            self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {idx+1}/{len(steps_to_run)}: {desc}...", "info")
             
             # ไฮไลท์การทำงานบนลิสต์บ็อกซ์ GUI เฉพาะกรณีที่ระบุไฮไลท์
-            if highlight:
+            if highlight and idx < self.step_listbox.size():
                 self.after(0, lambda i=idx: self.step_listbox.selection_clear(0, tk.END))
                 self.after(0, lambda i=idx: self.step_listbox.selection_set(i))
                 self.after(0, lambda i=idx: self.step_listbox.see(i))
