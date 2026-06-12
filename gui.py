@@ -389,7 +389,8 @@ class MuMuGUI(tk.Tk):
                 "ปิดแอป (Stop App)",
                 "ล้างข้อมูลแอป (Clear App Data)",
                 "ตรวจจับรูปภาพ (Image Match)",
-                "ลูปปิดโฆษณา (Clear Ads Loop)"
+                "ลูปปิดโฆษณา (Clear Ads Loop)",
+                "กรอก OTP อัตโนมัติ (Auto Fill OTP)"
             ], 
             state="readonly", 
             width=22
@@ -580,6 +581,7 @@ class MuMuGUI(tk.Tk):
         self.new_acc_group.insert(0, "ทั่วไป")
         
         ModernButton(add_box, text="➕ เพิ่มบัญชีเข้าคิว", command=self.add_account, bg=ACCENT_GREEN, activebg="#2ecc71").grid(row=3, column=0, columnspan=2, sticky="ew", pady=(15, 0))
+        ModernButton(add_box, text="📥 นำเข้าบัญชีแบบกลุ่ม (Batch)", command=self.open_batch_import_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         add_box.columnconfigure(0, weight=1)
         add_box.columnconfigure(1, weight=2)
@@ -1440,6 +1442,166 @@ class MuMuGUI(tk.Tk):
         self.new_acc_group.delete(0, tk.END)
         self.new_acc_group.insert(0, "ทั่วไป")
 
+    def open_batch_import_dialog(self):
+        """เปิดหน้าต่างป๊อปอัปสำหรับป้อนบัญชีแบบกลุ่มและทำการจัดเรียงพาร์สข้อมูล"""
+        dialog = tk.Toplevel(self)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.title("📥 นำเข้าบัญชีแบบกลุ่ม (Batch Import)")
+        dialog.geometry("600x550")
+        dialog.configure(bg=BG_DARK)
+        
+        # กึ่งกลางหน้าจอหลัก
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (width // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (height // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        lbl_title = tk.Label(
+            dialog, 
+            text="📥 นำเข้าบัญชีแบบกลุ่ม (Batch Import)", 
+            bg=BG_DARK, 
+            fg=FG_WHITE, 
+            font=("Segoe UI", 12, "bold")
+        )
+        lbl_title.pack(pady=(15, 5))
+        
+        lbl_desc = tk.Label(
+            dialog,
+            text="วางข้อมูลแยกแต่ละบรรทัด คั่นด้วยเครื่องหมาย | , ; หรือ TAB\nรูปแบบ: อีเมล|รหัสผ่าน (ข้อมูลส่วนอื่นนอกจาก 2 ช่องแรกจะถูกข้ามอัตโนมัติ)",
+            bg=BG_DARK,
+            fg=FG_MUTED,
+            font=("Segoe UI", 9),
+            justify="center"
+        )
+        lbl_desc.pack(pady=(0, 10))
+
+        # พื้นที่พิมพ์ข้อความ
+        text_frame = tk.Frame(dialog, bg=BG_DARK)
+        text_frame.pack(fill="both", expand=True, padx=20, pady=5)
+        
+        text_scroll = ttk.Scrollbar(text_frame)
+        text_scroll.pack(side="right", fill="y")
+        
+        text_area = tk.Text(
+            text_frame, 
+            bg=BG_INPUT, 
+            fg=FG_WHITE, 
+            insertbackground=FG_WHITE, 
+            relief="flat", 
+            bd=1, 
+            font=("Consolas", 10),
+            yscrollcommand=text_scroll.set
+        )
+        text_area.pack(side="left", fill="both", expand=True)
+        text_scroll.config(command=text_area.yview)
+
+        # ตั้งค่ากลุ่มบัญชีปลายทาง
+        group_frame = tk.Frame(dialog, bg=BG_DARK)
+        group_frame.pack(fill="x", padx=20, pady=10)
+        
+        tk.Label(group_frame, text="กลุ่มบัญชีปลายทาง (Group Name):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10)).pack(side="left", padx=(0, 10))
+        
+        group_entry = ModernEntry(group_frame, width=25)
+        group_entry.pack(side="left")
+        group_entry.insert(0, "ทั่วไป")
+
+        # ปุ่มตกลง/ยกเลิก
+        btn_frame = tk.Frame(dialog, bg=BG_DARK)
+        btn_frame.pack(fill="x", padx=20, pady=(5, 20))
+
+        def do_import():
+            raw_text = text_area.get("1.0", tk.END).strip()
+            group_name = group_entry.get().strip() or "ทั่วไป"
+            
+            if not raw_text:
+                messagebox.showwarning("คำเตือน", "กรุณาป้อนข้อมูลบัญชีก่อนกดยืนยัน!", parent=dialog)
+                return
+                
+            lines = raw_text.splitlines()
+            imported_count = 0
+            duplicate_count = 0
+            invalid_count = 0
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                parts = []
+                for sep in ['|', ',', ';', '\t']:
+                    if sep in line:
+                        parts = [p.strip() for p in line.split(sep)]
+                        break
+                else:
+                    parts = [p.strip() for p in line.split() if p.strip()]
+                    
+                if len(parts) < 2:
+                    invalid_count += 1
+                    continue
+                    
+                email = parts[0]
+                pwd = parts[1]
+                refresh_token = ""
+                client_id = ""
+                
+                # พาร์สหาโทเคนและไคลเอนต์ไอดีในคอลัมน์อื่นๆ ถัดไป
+                import re
+                for p in parts[2:]:
+                    # ค้นหา client_id (UUID)
+                    if re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', p):
+                        client_id = p
+                    # ค้นหา refresh_token
+                    elif len(p) > 50:
+                        refresh_token = p
+                
+                if not email or not pwd or "@" not in email:
+                    invalid_count += 1
+                    continue
+                    
+                if any(acc.get("email") == email for acc in self.accounts):
+                    duplicate_count += 1
+                    continue
+                    
+                self.accounts.append({
+                    "email": email,
+                    "password": pwd,
+                    "refresh_token": refresh_token,
+                    "client_id": client_id,
+                    "checked": True,
+                    "group": group_name
+                })
+                imported_count += 1
+                
+            if imported_count > 0:
+                self.save_accounts()
+                self.refresh_accounts_ui()
+                self.write_log(f"นำเข้าบัญชีแบบกลุ่มสำเร็จ: {imported_count} ไอดี (กลุ่ม: {group_name})", "success")
+                messagebox.showinfo(
+                    "นำเข้าสำเร็จ", 
+                    f"นำเข้าบัญชีสำเร็จ: {imported_count} บัญชี\n"
+                    f"ข้ามบัญชีซ้ำ: {duplicate_count} บัญชี\n"
+                    f"รูปแบบไม่ถูกต้อง: {invalid_count} บัญชี",
+                    parent=dialog
+                )
+                dialog.destroy()
+            else:
+                messagebox.showwarning(
+                    "ผลการนำเข้า", 
+                    f"ไม่มีบัญชีใหม่ถูกนำเข้า\n"
+                    f"ข้ามบัญชีซ้ำ: {duplicate_count} บัญชี\n"
+                    f"รูปแบบไม่ถูกต้อง: {invalid_count} บัญชี",
+                    parent=dialog
+                )
+
+        btn_cancel = ModernButton(btn_frame, text="❌ ยกเลิก", command=dialog.destroy, bg=ACCENT_RED, activebg="#c0392b")
+        btn_cancel.pack(side="right", padx=5)
+        
+        btn_import = ModernButton(btn_frame, text="📥 นำเข้าบัญชี", command=do_import, bg=ACCENT_GREEN, activebg="#2ecc71")
+        btn_import.pack(side="right", padx=5)
+
     def delete_account(self, email):
         confirm = messagebox.askyesno("ลบบัญชี", f"คุณต้องการลบบัญชี {email} หรือไม่?")
         if confirm:
@@ -1531,6 +1693,9 @@ class MuMuGUI(tk.Tk):
             elif t == "CLEAR_ADS_LOOP":
                 t_thai = "ลูปปิดโฆษณา"
                 details = f"เคลียร์ '{step.get('text') or 'ทุกรูปในโฟลเดอร์'}'"
+            elif t == "FETCH_OTP":
+                t_thai = "ดึง OTP"
+                details = f"แพทเทิร์น '{step.get('text') or '\\d{6}'}'"
             else:
                 details = ""
                 
@@ -1628,6 +1793,8 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("ตรวจจับรูปภาพ (Image Match)")
         elif t == "clear_ads_loop":
             self.form_type.set("ลูปปิดโฆษณา (Clear Ads Loop)")
+        elif t == "fetch_otp":
+            self.form_type.set("กรอก OTP อัตโนมัติ (Auto Fill OTP)")
             
         self.on_step_type_change()
         
@@ -1653,7 +1820,7 @@ class MuMuGUI(tk.Tk):
             self.form_x2.insert(0, step.get("x2", ""))
             self.form_y2.insert(0, step.get("y2", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5"))
-        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
+        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5" if t == "text" else "1.0"))
         elif t == "keyevent":
@@ -1722,8 +1889,11 @@ class MuMuGUI(tk.Tk):
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
-        elif "Image Match" in t or "Clear Ads Loop" in t:
-            self.form_sleep_label.configure(text="หน่วงหลังคลิก (วินาที):")
+        elif "Image Match" in t or "Clear Ads Loop" in t or "Auto Fill OTP" in t:
+            if "Auto Fill OTP" in t:
+                self.form_sleep_label.configure(text="หน่วงหลังกรอก OTP (วินาที):")
+            else:
+                self.form_sleep_label.configure(text="หน่วงหลังคลิก (วินาที):")
             self.form_x_label.configure(fg=FG_MUTED)
             self.form_x.configure(state="disabled")
             self.form_y.configure(state="disabled")
@@ -1763,6 +1933,8 @@ class MuMuGUI(tk.Tk):
             t = "detect_image"
         elif "Clear Ads Loop" in t_label:
             t = "clear_ads_loop"
+        elif "Auto Fill OTP" in t_label:
+            t = "fetch_otp"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -1781,7 +1953,7 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
@@ -1827,6 +1999,8 @@ class MuMuGUI(tk.Tk):
             t = "detect_image"
         elif "Clear Ads Loop" in t_label:
             t = "clear_ads_loop"
+        elif "Auto Fill OTP" in t_label:
+            t = "fetch_otp"
             
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
@@ -1845,7 +2019,7 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
@@ -2105,6 +2279,150 @@ class MuMuGUI(tk.Tk):
                 self.macro_running = False
                 self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="🚀 รันคำสั่งบอทมาโครที่เลือก"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
+ 
+    def fetch_otp_via_readmail_api(self, mail_address, refresh_token, client_id, pattern_str=None):
+        """ดึงข้อความอีเมลผ่าน API ของ read-mail.me โดยใช้ OAuth2 Token"""
+        import urllib.request
+        import json
+        import re
+        
+        if not pattern_str or pattern_str.strip() in ["", "{EMAIL}", "{PASSWORD}"]:
+            pattern_str = r'\b\d{6}\b'
+            
+        url = "https://read-mail.me/get_data.php"
+        data = {
+            "email": mail_address,
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "api_type": "graph_api"
+        }
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-Token': 'rm_8Xk2pQwZ9vNjL5hTdYcA3sE7uBfM4oR',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        
+        try:
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(data).encode('utf-8'), 
+                headers=headers,
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=20) as response:
+                res_json = json.loads(response.read().decode('utf-8'))
+                
+                if res_json.get("status") and "messages" in res_json:
+                    messages = res_json["messages"]
+                    for msg in messages[:5]:
+                        subject = msg.get("subject", "")
+                        body = msg.get("_body") or msg.get("message") or ""
+                        
+                        otp_match = re.search(pattern_str, body)
+                        if otp_match:
+                            otp_code = otp_match.group(0)
+                            self.write_log(f"   📨 [{mail_address}] [API] พบข้อความหัวข้อ: '{subject}' -> ดึงรหัสสำเร็จ", "success")
+                            return otp_code
+                            
+                    self.write_log(f"   🔍 [{mail_address}] [API] สแกนจดหมายแล้วไม่พบรหัสตามแพทเทิร์น: '{pattern_str}'", "warning")
+                else:
+                    err = res_json.get("error") or "ไม่พบข้อความ"
+                    self.write_log(f"   ⚠️ [{mail_address}] [API] ดึงข้อมูลไม่สำเร็จ: {err}", "warning")
+        except Exception as e:
+            self.write_log(f"   ❌ [{mail_address}] [API] เกิดข้อผิดพลาดทางเทคนิค: {e}", "error")
+            
+        return None
+
+    def fetch_otp_from_mail(self, mail_address, mail_password, pattern_str=None, refresh_token="", client_id=""):
+        """เชื่อมต่อไปยังกล่องจดหมาย Outlook/Hotmail เพื่อดึงรหัส OTP ล่าสุด"""
+        if not pattern_str or pattern_str.strip() in ["", "{EMAIL}", "{PASSWORD}"]:
+            pattern_str = r'\b\d{6}\b'
+
+        if refresh_token and client_id:
+            self.write_log(f"   📨 [{mail_address}] พบโทเคน OAuth2 -> กำลังดึงอีเมลผ่าน API read-mail.me...", "info")
+            otp_code = self.fetch_otp_via_readmail_api(mail_address, refresh_token, client_id, pattern_str)
+            if otp_code:
+                return otp_code
+            self.write_log(f"   ⚠️ [{mail_address}] ดึงผ่าน API ล้มเหลว -> กำลังลองเชื่อมต่อผ่าน IMAP ทางเลือกสำรอง...", "warning")
+
+        import imaplib
+        import email
+        import re
+            
+        try:
+            # เชื่อมต่อกับ Server ของ Outlook/Hotmail
+            mail = imaplib.IMAP4_SSL("outlook.office365.com")
+            mail.login(mail_address, mail_password)
+            
+            # เลือกกล่องขาเข้า
+            status, messages = mail.select("inbox")
+            if status != "OK":
+                self.write_log(f"   ❌ [{mail_address}] ไม่สามารถเปิดกล่องจดหมาย Inbox ได้", "error")
+                return None
+                
+            num_messages = int(messages[0])
+            if num_messages == 0:
+                self.write_log(f"   ⚠️ [{mail_address}] ไม่มีข้อความใดๆ ในกล่องจดหมาย", "warning")
+                return None
+                
+            # ตรวจสอบจาก 5 ข้อความล่าสุด (เริ่มจากใหม่สุดย้อนหลัง)
+            for seq_num in range(num_messages, max(0, num_messages - 5), -1):
+                status, data = mail.fetch(str(seq_num), "(RFC822)")
+                if status != "OK" or not data:
+                    continue
+                    
+                raw_email = data[0][1]
+                msg = email.message_from_bytes(raw_email)
+                
+                # ดึงหัวข้อและผู้ส่งเพื่อบันทึก Log หรือเปรียบเทียบ
+                subject = ""
+                try:
+                    from email.header import decode_header
+                    sub_decoded, encoding = decode_header(msg.get("Subject", ""))[0]
+                    if isinstance(sub_decoded, bytes):
+                        subject = sub_decoded.decode(encoding or "utf-8", errors="ignore")
+                    else:
+                        subject = sub_decoded
+                except Exception:
+                    subject = str(msg.get("Subject", ""))
+
+                # ดึงเนื้อความอีเมล
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        content_disposition = str(part.get("Content-Disposition"))
+                        if content_type in ["text/plain", "text/html"] and "attachment" not in content_disposition:
+                            try:
+                                payload = part.get_payload(decode=True)
+                                charset = part.get_content_charset() or "utf-8"
+                                body += payload.decode(charset, errors="ignore")
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        payload = msg.get_payload(decode=True)
+                        charset = msg.get_content_charset() or "utf-8"
+                        body = payload.decode(charset, errors="ignore")
+                    except Exception:
+                        pass
+                
+                # ค้นหา OTP ด้วย Regex
+                otp_match = re.search(pattern_str, body)
+                if otp_match:
+                    otp_code = otp_match.group(0)
+                    self.write_log(f"   📨 [{mail_address}] พบข้อความหัวข้อ: '{subject}' -> ดึงรหัสสำเร็จ", "success")
+                    mail.logout()
+                    return otp_code
+                    
+            mail.logout()
+            self.write_log(f"   🔍 [{mail_address}] สแกน 5 เมลล่าสุดแล้วไม่พบแพทเทิร์น OTP: '{pattern_str}'", "warning")
+            
+        except Exception as e:
+            self.write_log(f"   ❌ [{mail_address}] เกิดข้อผิดพลาดเชื่อมต่อกล่องเมล: {e}", "error")
+            
+        return None
 
     def execute_device_macro(self, device, account, highlight=True):
         """รันสคริปต์มาโครบน Emulator จอเดียวกับบัญชีที่กำหนด"""
@@ -2132,7 +2450,7 @@ class MuMuGUI(tk.Tk):
                     step_delay = 0.5
                 elif t == "keyevent":
                     step_delay = 0.3
-                elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop"]:
+                elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
                     step_delay = 1.0
                 else:
                     step_delay = 0.0
@@ -2215,11 +2533,16 @@ class MuMuGUI(tk.Tk):
                     elif step_text:
                         ad_templates = [p.strip() for p in step_text.split(",") if p.strip()]
                 
-                # ถ้าไม่ระบุรูปภาพปุ่มปิดโฆษณา ให้ดึงไฟล์ .png ทั้งหมดในโฟลเดอร์ยกเว้นรูปหน้าหลักและรูปชั่วคราว
+                # ถ้าไม่ระบุรูปภาพปุ่มปิดโฆษณา ให้ดึงไฟล์ .png ทั้งหมดในโฟลเดอร์ยกเว้นรูปหน้าหลัก รูปชั่วคราว และรูปที่มีคีย์เวิร์ดบ่งบอกว่าเป็นหน้าหลัก
                 if not ad_templates:
                     import glob
                     all_pngs = [os.path.basename(f) for f in glob.glob(os.path.join(self.templates_dir, "*.png"))]
-                    ad_templates = [f for f in all_pngs if f != lobby_template and not f.startswith("temp_")]
+                    ad_templates = [
+                        f for f in all_pngs 
+                        if f != lobby_template 
+                        and not f.startswith("temp_")
+                        and not any(k in f.lower() for k in ["lobby", "home", "main", "start"])
+                    ]
 
                 self.write_log(f"   🔄 [{device}] เริ่มรันลูปเคลียร์โฆษณา (หน้าจอหลักเป้าหมาย: '{lobby_template or 'ไม่ได้ตั้งค่า'}')", "info")
                 if ad_templates:
@@ -2240,10 +2563,12 @@ class MuMuGUI(tk.Tk):
                     
                     # 1. ตรวจสอบว่ามาถึงหน้าจอหลัก/เริ่มต้น (Lobby) หรือยัง
                     reached_lobby = False
+                    lobby_msg = ""
                     if lobby_template:
                         lobby_path = os.path.join(self.templates_dir, lobby_template)
                         if os.path.exists(lobby_path):
-                            found_lobby, lx, ly, lmsg = self.controller.find_image_on_screen(temp_screenshot, lobby_path, threshold=0.75)
+                            found_lobby, lx, ly, lmsg = self.controller.find_image_on_screen(temp_screenshot, lobby_path, threshold=0.7)
+                            lobby_msg = lmsg
                             if found_lobby:
                                 self.write_log(f"   🎉 [{device}] รอบที่ {attempt+1}: ตรวจพบหน้าจอหลัก/เริ่มต้น '{lobby_template}' -> โฆษณาเคลียร์หมดแล้ว!", "success")
                                 reached_lobby = True
@@ -2277,7 +2602,14 @@ class MuMuGUI(tk.Tk):
                     # 3. หากไม่พบปุ่มปิดใดๆ และยังไม่ถึงหน้าหลัก ให้ส่งปุ่ม BACK ย้อนกลับเป็นทางเลือกสำรอง
                     if not found_ad:
                         if lobby_template:
-                            self.write_log(f"   🔍 [{device}] รอบที่ {attempt+1}: ไม่พบหน้าหลัก และไม่พบปุ่มปิด -> ส่งปุ่มย้อนกลับ (BACK)", "warning")
+                            conf_info = ""
+                            if "confidence:" in lobby_msg:
+                                try:
+                                    conf_val = lobby_msg.split("confidence:")[1].strip().replace(")", "")
+                                    conf_info = f" (ความเหมือนสูงสุด: {conf_val})"
+                                except Exception:
+                                    pass
+                            self.write_log(f"   🔍 [{device}] รอบที่ {attempt+1}: ไม่พบหน้าหลัก '{lobby_template}'{conf_info} และไม่พบปุ่มปิด -> ส่งปุ่มย้อนกลับ (BACK)", "warning")
                             self.controller.keyevent(device, 4)
                             if step_delay > 0:
                                 time.sleep(step_delay)
@@ -2287,6 +2619,27 @@ class MuMuGUI(tk.Tk):
                             break
                 else:
                     self.write_log(f"   ⚠️ [{device}] ทำงานลูปเคลียร์โฆษณาครบ {max_attempts} รอบแล้ว (สิ้นสุดลูป)", "warning")
+            elif t == "fetch_otp":
+                if not account:
+                    self.write_log(f"   ⚠️ [{device}] ข้ามขั้นตอนดึง OTP เนื่องจากรันแบบไม่มีบัญชีไอดี", "warning")
+                else:
+                    email_addr = account.get("email", "").strip()
+                    email_pass = account.get("password", "").strip()
+                    ref_token = account.get("refresh_token", "").strip()
+                    cli_id = account.get("client_id", "").strip()
+                    
+                    self.write_log(f"   📥 [{device}] กำลังเชื่อมต่อดึงรหัส OTP ของบัญชี {email_addr}...", "info")
+                    
+                    pattern_str = step.get("text", "").strip()
+                    otp_code = self.fetch_otp_from_mail(email_addr, email_pass, pattern_str, refresh_token=ref_token, client_id=cli_id)
+                    
+                    if otp_code:
+                        self.write_log(f"   ✅ [{device}] ดึงรหัส OTP สำเร็จ: {otp_code} -> กำลังกรอกรหัสลงบนจอ", "success")
+                        self.controller.input_text(device, otp_code)
+                        if step_delay > 0:
+                            time.sleep(step_delay)
+                    else:
+                        self.write_log(f"   ❌ [{device}] ไม่สามารถดึงรหัส OTP ได้หลังจากสแกนกล่องข้อความ", "error")
             elif t == "sleep":
                 sleep_time = float(step["seconds"])
                 slices = int(sleep_time / 0.1)
