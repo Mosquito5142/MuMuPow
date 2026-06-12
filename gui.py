@@ -1403,6 +1403,11 @@ class MuMuGUI(tk.Tk):
                 lbl_pwd = tk.Label(frame, text=f"({masked_pwd})", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 8))
                 lbl_pwd.pack(side="left", padx=5)
 
+                # แสดงสัญลักษณ์สำหรับไอดีที่รองรับการรับ OTP ผ่าน Token
+                if acc.get("refresh_token"):
+                    lbl_otp = tk.Label(frame, text="[📨 OTP]", bg=BG_CARD, fg=ACCENT_GREEN, font=("Segoe UI", 8, "bold"))
+                    lbl_otp.pack(side="left", padx=5)
+
                 # ปุ่มลบบัญชี
                 del_btn = tk.Button(
                     frame,
