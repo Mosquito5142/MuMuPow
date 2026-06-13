@@ -584,10 +584,23 @@ class MuMuGUI(tk.Tk):
         # ช่องตั้งค่าการดีเลย์ปล่อยรันแต่ละจอ
         stagger_frame = tk.Frame(run_card, bg=BG_DARK)
         stagger_frame.pack(fill="x", pady=2)
-        tk.Label(stagger_frame, text="⏳ หน่วงเริ่มแต่ละจอ (วิ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10)).pack(side="left")
+        self.use_stagger_delay = tk.BooleanVar(value=False)
+        self.stagger_chk = tk.Checkbutton(
+            stagger_frame,
+            text="⏳ หน่วงเริ่มแต่ละจอ (วิ):",
+            variable=self.use_stagger_delay,
+            bg=BG_DARK,
+            fg=FG_WHITE,
+            activebackground=BG_DARK,
+            activeforeground=FG_WHITE,
+            selectcolor=BG_DARK,
+            relief="flat",
+            font=("Segoe UI", 10)
+        )
+        self.stagger_chk.pack(side="left")
         self.stagger_delay_entry = ModernEntry(stagger_frame, width=8)
         self.stagger_delay_entry.pack(side="left", padx=10)
-        self.stagger_delay_entry.insert(0, "5.0")
+        self.stagger_delay_entry.insert(0, "30.0")
         
         self.pause_chk = tk.Checkbutton(
             run_card,
@@ -2926,11 +2939,12 @@ class MuMuGUI(tk.Tk):
             highlight = (len(devices) == 1)
 
             stagger_delay = 0.0
-            if hasattr(self, 'stagger_delay_entry'):
-                try:
-                    stagger_delay = float(self.stagger_delay_entry.get().strip() or "0")
-                except ValueError:
-                    stagger_delay = 0.0
+            if hasattr(self, 'use_stagger_delay') and self.use_stagger_delay.get():
+                if hasattr(self, 'stagger_delay_entry'):
+                    try:
+                        stagger_delay = float(self.stagger_delay_entry.get().strip() or "0")
+                    except ValueError:
+                        stagger_delay = 0.0
 
             def sleep_stagger(dev, idx):
                 delay = idx * stagger_delay
@@ -3049,11 +3063,12 @@ class MuMuGUI(tk.Tk):
             self.write_log(f"🏁 รันต่อ: เริ่มรันชุดบัญชีคู่ขนานจำนวน {len(current_batch)} ไอดี ลงบน Emulator...", "warning")
 
             stagger_delay = 0.0
-            if hasattr(self, 'stagger_delay_entry'):
-                try:
-                    stagger_delay = float(self.stagger_delay_entry.get().strip() or "0")
-                except ValueError:
-                    stagger_delay = 0.0
+            if hasattr(self, 'use_stagger_delay') and self.use_stagger_delay.get():
+                if hasattr(self, 'stagger_delay_entry'):
+                    try:
+                        stagger_delay = float(self.stagger_delay_entry.get().strip() or "0")
+                    except ValueError:
+                        stagger_delay = 0.0
 
             def sleep_stagger(dev, idx):
                 delay = idx * stagger_delay
