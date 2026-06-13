@@ -501,7 +501,8 @@ class MuMuGUI(tk.Tk):
                 "ตรวจจับรูปภาพ (Image Match)",
                 "ลูปปิดโฆษณา (Clear Ads Loop)",
                 "กรอก OTP อัตโนมัติ (Auto Fill OTP)",
-                "ใช้ชุดคำสั่ง (Run Set)"
+                "ใช้ชุดคำสั่ง (Run Set)",
+                "แคปหน้าจอ (Screenshot)"
             ], 
             state="readonly", 
             width=22
@@ -707,30 +708,34 @@ class MuMuGUI(tk.Tk):
         self.new_acc_email = ModernEntry(add_box, width=22)
         self.new_acc_email.grid(row=0, column=1, padx=10, pady=5)
         self.new_acc_email.insert(0, "test_user02@gmail.com")
+
+        tk.Label(add_box, text="ชื่อเรียกไอดี (Name):", bg=BG_DARK, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=5)
+        self.new_acc_name = ModernEntry(add_box, width=22)
+        self.new_acc_name.grid(row=1, column=1, padx=10, pady=5)
         
-        tk.Label(add_box, text="รหัสผ่าน (Password):", bg=BG_DARK, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="รหัสผ่าน (Password):", bg=BG_DARK, fg=FG_WHITE).grid(row=2, column=0, sticky="w", pady=5)
         self.new_acc_pass = ModernEntry(add_box, width=22)
-        self.new_acc_pass.grid(row=1, column=1, padx=10, pady=5)
+        self.new_acc_pass.grid(row=2, column=1, padx=10, pady=5)
         self.new_acc_pass.insert(0, "test_pass02")
 
-        tk.Label(add_box, text="กลุ่มบัญชี (Group):", bg=BG_DARK, fg=FG_WHITE).grid(row=2, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="กลุ่มบัญชี (Group):", bg=BG_DARK, fg=FG_WHITE).grid(row=3, column=0, sticky="w", pady=5)
         self.new_acc_group = ModernEntry(add_box, width=22)
-        self.new_acc_group.grid(row=2, column=1, padx=10, pady=5)
+        self.new_acc_group.grid(row=3, column=1, padx=10, pady=5)
         self.new_acc_group.insert(0, "ทั่วไป")
 
-        tk.Label(add_box, text="โทเคน (OAuth2 Token):", bg=BG_DARK, fg=FG_WHITE).grid(row=3, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="โทเคน (OAuth2 Token):", bg=BG_DARK, fg=FG_WHITE).grid(row=4, column=0, sticky="w", pady=5)
         self.new_acc_token = ModernEntry(add_box, width=22)
-        self.new_acc_token.grid(row=3, column=1, padx=10, pady=5)
+        self.new_acc_token.grid(row=4, column=1, padx=10, pady=5)
 
-        tk.Label(add_box, text="ไคลเอนต์ไอดี (Client ID):", bg=BG_DARK, fg=FG_WHITE).grid(row=4, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="ไคลเอนต์ไอดี (Client ID):", bg=BG_DARK, fg=FG_WHITE).grid(row=5, column=0, sticky="w", pady=5)
         self.new_acc_client_id = ModernEntry(add_box, width=22)
-        self.new_acc_client_id.grid(row=4, column=1, padx=10, pady=5)
+        self.new_acc_client_id.grid(row=5, column=1, padx=10, pady=5)
         
         self.save_acc_btn = ModernButton(add_box, text="➕ เพิ่มบัญชีเข้าคิว", command=self.add_account, bg=ACCENT_GREEN, activebg="#2ecc71")
-        self.save_acc_btn.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(15, 0))
+        self.save_acc_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(15, 0))
         
         self.batch_import_btn = ModernButton(add_box, text="📥 นำเข้าบัญชีแบบกลุ่ม (Batch)", command=self.open_batch_import_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER)
-        self.batch_import_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         add_box.columnconfigure(0, weight=1)
         add_box.columnconfigure(1, weight=2)
@@ -824,7 +829,22 @@ class MuMuGUI(tk.Tk):
         control_grid.columnconfigure(1, weight=1)
         control_grid.columnconfigure(2, weight=1)
 
-        # 4. กล่องรันคำสั่ง ADB แบบแมนนวลเอง
+        # 4. ถ่ายภาพหน้าจอพร้อมกัน
+        screenshot_box = tk.LabelFrame(control_grid, text=" 📸 ถ่ายภาพหน้าจอพร้อมกัน ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
+        screenshot_box.grid(row=1, column=0, columnspan=3, sticky="ew", pady=10)
+        
+        tk.Label(screenshot_box, text="ระบุชื่อไฟล์รูปภาพ (รองรับ {NAME}, {EMAIL}, {DEVICE}):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=2)
+        
+        screenshot_input_frame = tk.Frame(screenshot_box, bg=BG_DARK)
+        screenshot_input_frame.pack(fill="x", pady=5)
+        
+        self.manual_screenshot_entry = ModernEntry(screenshot_input_frame)
+        self.manual_screenshot_entry.pack(fill="x", side="left", expand=True, padx=(0, 10))
+        self.manual_screenshot_entry.insert(0, "screenshot_{NAME}.png")
+        
+        ModernButton(screenshot_input_frame, text="📸 ถ่ายภาพหน้าจอทุกเครื่อง", command=self.send_manual_screenshot).pack(side="right")
+
+        # 5. กล่องรันคำสั่ง ADB แบบแมนนวลเอง
         raw_box = tk.LabelFrame(sync_frame, text=" 💻 รันคำสั่ง ADB Shell เองแบบกำหนดเอง ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
         raw_box.pack(fill="x", pady=10)
 
@@ -1467,6 +1487,67 @@ class MuMuGUI(tk.Tk):
                     self.write_log(f"   [{dev}] ล้มเหลว: {out}", "error")
         threading.Thread(target=worker, daemon=True).start()
 
+    def send_manual_screenshot(self):
+        devices = self.get_selected_devices()
+        if not devices:
+            self.write_log("⚠️ ไม่สามารถถ่ายภาพหน้าจอได้: กรุณาเลือก Emulator ด้านซ้ายอย่างน้อย 1 เครื่อง!", "warning")
+            return
+            
+        filename_pattern = self.manual_screenshot_entry.get().strip() or "screenshot_{NAME}.png"
+        checked_accounts = [acc for acc in self.accounts if acc.get("checked", True)]
+        
+        # ค้นหาคู่ของ emulator และบัญชีตามอันดับ (index) เช่นเดียวกับตอนรันปกติ
+        paired_list = []
+        for idx, dev in enumerate(devices):
+            acc = checked_accounts[idx] if idx < len(checked_accounts) else None
+            paired_list.append((dev, acc))
+            
+        def worker():
+            from concurrent.futures import ThreadPoolExecutor
+            self.write_log(f"📸 กำลังบันทึกภาพหน้าจอแบบบรอดแคสต์จาก Emulator ทั้งหมด {len(devices)} เครื่อง...", "info")
+            
+            def capture_single(pair):
+                dev, acc = pair
+                filename = filename_pattern
+                if acc:
+                    filename = filename.replace("{EMAIL}", acc.get("email", "no_account"))
+                    filename = filename.replace("{PASSWORD}", acc.get("password", "no_password"))
+                    filename = filename.replace("{NAME}", acc.get("name", ""))
+                else:
+                    filename = filename.replace("{EMAIL}", "no_account")
+                    filename = filename.replace("{PASSWORD}", "no_password")
+                    filename = filename.replace("{NAME}", "no_name")
+                
+                # ปรับแต่งเครื่องหมายและอักขระที่ปลอดภัยสำหรับ Windows
+                import string
+                safe_device = dev.replace(":", "_").replace(".", "_")
+                filename = filename.replace("{DEVICE}", safe_device)
+                
+                valid_chars = f"-_.() {string.ascii_letters}{string.digits}\u0e00-\u0e7f"
+                filename = "".join(c for c in filename if c in valid_chars or c in "/\\")
+                
+                if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    filename += ".png"
+                    
+                screenshots_dir = os.path.dirname(os.path.abspath(filename))
+                if screenshots_dir and not os.path.exists(screenshots_dir):
+                    os.makedirs(screenshots_dir, exist_ok=True)
+                    
+                success, err = self.controller.take_screenshot(dev, filename)
+                return dev, success, filename, err
+
+            # รันการแคปจอพร้อมกันแบบขนาน (Parallel screenshot captures)
+            with ThreadPoolExecutor(max_workers=max(1, len(paired_list))) as executor:
+                results = list(executor.map(capture_single, paired_list))
+                
+            for dev, success, filename, err in results:
+                if success:
+                    self.write_log(f"   [{dev}] บันทึกสำเร็จ: '{filename}'", "success")
+                else:
+                    self.write_log(f"   [{dev}] บันทึกภาพล้มเหลว: {err}", "error")
+                    
+        threading.Thread(target=worker, daemon=True).start()
+
     # --- บัญชีผู้ใช้ (Accounts Manager Database) ---
     def load_accounts(self):
         """โหลดข้อมูลบัญชีผู้ใช้จากไฟล์ accounts.json"""
@@ -1585,9 +1666,12 @@ class MuMuGUI(tk.Tk):
                         self.group_checkboxes[g].set(all_grp_checked)
                     self.update_status_summary()
 
+                display_text = email
+                if acc.get("name"):
+                    display_text = f"{acc.get('name')} ({email})"
                 chk = tk.Checkbutton(
                     frame,
-                    text=email,
+                    text=display_text,
                     variable=var,
                     command=on_single_click,
                     bg=BG_CARD,
@@ -1646,6 +1730,7 @@ class MuMuGUI(tk.Tk):
 
     def add_account(self):
         email = self.new_acc_email.get().strip()
+        name = self.new_acc_name.get().strip()
         pwd = self.new_acc_pass.get().strip()
         group = self.new_acc_group.get().strip() or "ทั่วไป"
         token = self.new_acc_token.get().strip()
@@ -1665,6 +1750,7 @@ class MuMuGUI(tk.Tk):
             for acc in self.accounts:
                 if acc.get("email") == self.editing_email:
                     acc["email"] = email
+                    acc["name"] = name
                     acc["password"] = pwd
                     acc["group"] = group
                     acc["refresh_token"] = token
@@ -1676,7 +1762,7 @@ class MuMuGUI(tk.Tk):
             if hasattr(self, 'cancel_edit_btn'):
                 self.cancel_edit_btn.grid_remove()
                 
-            self.batch_import_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
             self.write_log(f"แก้ไขบัญชี {email} สำเร็จ", "success")
         else:
             # โหมดเพิ่มบัญชีใหม่
@@ -1686,6 +1772,7 @@ class MuMuGUI(tk.Tk):
                 
             self.accounts.append({
                 "email": email, 
+                "name": name,
                 "password": pwd, 
                 "refresh_token": token,
                 "client_id": client_id,
@@ -1699,6 +1786,7 @@ class MuMuGUI(tk.Tk):
         
         # ล้างค่าในฟอร์ม
         self.new_acc_email.delete(0, tk.END)
+        self.new_acc_name.delete(0, tk.END)
         self.new_acc_pass.delete(0, tk.END)
         self.new_acc_group.delete(0, tk.END)
         self.new_acc_group.insert(0, "ทั่วไป")
@@ -1709,6 +1797,9 @@ class MuMuGUI(tk.Tk):
         # เติมค่าใส่ฟอร์ม
         self.new_acc_email.delete(0, tk.END)
         self.new_acc_email.insert(0, acc.get("email", ""))
+        
+        self.new_acc_name.delete(0, tk.END)
+        self.new_acc_name.insert(0, acc.get("name", ""))
         
         self.new_acc_pass.delete(0, tk.END)
         self.new_acc_pass.insert(0, acc.get("password", ""))
@@ -1736,10 +1827,10 @@ class MuMuGUI(tk.Tk):
                 bg=ACCENT_RED, 
                 activebg="#c0392b"
             )
-        self.cancel_edit_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        self.cancel_edit_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         
-        # เลื่อนปุ่มนำเข้าแบบกลุ่มลงไปแถว 7
-        self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        # เลื่อนปุ่มนำเข้าแบบกลุ่มลงไปแถว 8
+        self.batch_import_btn.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def cancel_edit_account(self):
         self.editing_email = None
@@ -1747,11 +1838,12 @@ class MuMuGUI(tk.Tk):
         if hasattr(self, 'cancel_edit_btn'):
             self.cancel_edit_btn.grid_remove()
             
-        # เลื่อนปุ่มนำเข้าแบบกลุ่มกลับมาแถว 6
-        self.batch_import_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        # เลื่อนปุ่มนำเข้าแบบกลุ่มกลับมาแถว 7
+        self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         # ล้างค่าในฟอร์ม
         self.new_acc_email.delete(0, tk.END)
+        self.new_acc_name.delete(0, tk.END)
         self.new_acc_pass.delete(0, tk.END)
         self.new_acc_group.delete(0, tk.END)
         self.new_acc_group.insert(0, "ทั่วไป")
@@ -1883,6 +1975,7 @@ class MuMuGUI(tk.Tk):
                     
                 self.accounts.append({
                     "email": email,
+                    "name": "",
                     "password": pwd,
                     "refresh_token": refresh_token,
                     "client_id": client_id,
@@ -2145,6 +2238,8 @@ class MuMuGUI(tk.Tk):
                     info = f"ดึง OTP '{step.get('text') or ''}'"
                 elif t == "RUN_SET":
                     info = f"ใช้เซ็ต '{step.get('set') or ''}'"
+                elif t == "SCREENSHOT":
+                    info = f"แคปจอ '{step.get('text') or ''}'"
                 else:
                     info = t
                 steps_list.insert(tk.END, f"{i+1:02d}. [{info}] {desc}")
@@ -2269,6 +2364,9 @@ class MuMuGUI(tk.Tk):
             elif t == "RUN_SET":
                 t_thai = "ใช้ชุดคำสั่ง"
                 details = f"เซ็ต '{step.get('set') or step.get('text') or ''}'"
+            elif t == "SCREENSHOT":
+                t_thai = "แคปจอ"
+                details = f"ไฟล์ '{step.get('text') or 'screenshot_{NAME}.png'}'"
             else:
                 details = ""
                 
@@ -2371,6 +2469,8 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("กรอก OTP อัตโนมัติ (Auto Fill OTP)")
         elif t == "run_set":
             self.form_type.set("ใช้ชุดคำสั่ง (Run Set)")
+        elif t == "screenshot":
+            self.form_type.set("แคปหน้าจอ (Screenshot)")
             
         self.on_step_type_change()
         
@@ -2396,7 +2496,7 @@ class MuMuGUI(tk.Tk):
             self.form_x2.insert(0, step.get("x2", ""))
             self.form_y2.insert(0, step.get("y2", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5"))
-        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
+        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "0.5" if t == "text" else "1.0"))
         elif t == "run_set":
@@ -2488,6 +2588,14 @@ class MuMuGUI(tk.Tk):
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
             self.form_sleep.configure(state="disabled")
+        elif "Screenshot" in t or "แคปหน้าจอ" in t:
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_code.configure(state="disabled")
 
     def clear_form(self):
         self.form_x.delete(0, tk.END)
@@ -2731,7 +2839,7 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
@@ -2802,7 +2910,7 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "0.5")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
+            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
@@ -3279,7 +3387,10 @@ class MuMuGUI(tk.Tk):
             
             t = step.get("type", "tap")
             desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
-            email_log = f" ({account['email']})" if account else ""
+            email_log = ""
+            if account:
+                acc_name = account.get("name", "")
+                email_log = f" ({acc_name if acc_name else account['email']})"
             self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {idx+1}/{len(steps_to_run)}: {desc}...", "info")
             
             # ไฮไลท์การทำงานบนลิสต์บ็อกซ์ GUI เฉพาะกรณีที่ระบุไฮไลท์
@@ -3297,7 +3408,7 @@ class MuMuGUI(tk.Tk):
                     step_delay = 0.5
                 elif t == "keyevent":
                     step_delay = 0.3
-                elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp"]:
+                elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                     step_delay = 1.0
                 else:
                     step_delay = 0.0
@@ -3314,9 +3425,10 @@ class MuMuGUI(tk.Tk):
             elif t == "text":
                 text_to_send = step["text"]
                 if account:
-                    # แทนที่ตัวแปร {EMAIL} และ {PASSWORD} ด้วยไอดีรอบนี้
+                    # แทนที่ตัวแปร {EMAIL}, {PASSWORD} และ {NAME} ด้วยไอดีรอบนี้
                     text_to_send = text_to_send.replace("{EMAIL}", account["email"])
                     text_to_send = text_to_send.replace("{PASSWORD}", account["password"])
+                    text_to_send = text_to_send.replace("{NAME}", account.get("name", ""))
                 self.controller.input_text(device, text_to_send)
                 time.sleep(step_delay)  # หน่วงเวลาหลังพิมพ์ข้อความ
             elif t == "keyevent":
@@ -3365,6 +3477,48 @@ class MuMuGUI(tk.Tk):
                                 time.sleep(step_delay)
                         else:
                             self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
+            elif t == "screenshot":
+                filename_pattern = step.get("text", "").strip() or "screenshot_{NAME}.png"
+                
+                # แทนที่ตัวแปร {EMAIL}, {PASSWORD}, {NAME} ในชื่อไฟล์ภาพ
+                filename = filename_pattern
+                if account:
+                    filename = filename.replace("{EMAIL}", account["email"])
+                    filename = filename.replace("{PASSWORD}", account["password"])
+                    filename = filename.replace("{NAME}", account.get("name", ""))
+                else:
+                    filename = filename.replace("{EMAIL}", "no_account")
+                    filename = filename.replace("{PASSWORD}", "no_password")
+                    filename = filename.replace("{NAME}", "no_name")
+                
+                # ทำความสะอาดชื่อไฟล์ให้ปลอดภัยสำหรับ Windows
+                import string
+                safe_device = device.replace(":", "_").replace(".", "_")
+                filename = filename.replace("{DEVICE}", safe_device)
+                
+                # จัดการแทนที่สัญลักษณ์พิเศษในชื่อไฟล์ไม่ให้มีปัญหากับ Windows
+                valid_chars = f"-_.() {string.ascii_letters}{string.digits}\u0e00-\u0e7f"
+                filename = "".join(c for c in filename if c in valid_chars or c in "/\\")
+                
+                # หากไม่มีนามสกุล .png หรือ .jpg ให้เติม .png
+                if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    filename += ".png"
+                
+                # สร้างโฟลเดอร์สำหรับเก็บภาพสกรีนช็อต
+                screenshots_dir = os.path.dirname(os.path.abspath(filename))
+                if screenshots_dir and not os.path.exists(screenshots_dir):
+                    os.makedirs(screenshots_dir, exist_ok=True)
+                
+                # ถ่ายภาพหน้าจอ
+                self.write_log(f"   📸 [{device}] กำลังบันทึกภาพหน้าจอเป็น '{filename}'...", "info")
+                success, err = self.controller.take_screenshot(device, filename)
+                if success:
+                    self.write_log(f"   ✅ [{device}] บันทึกภาพหน้าจอสำเร็จ: '{filename}'", "success")
+                else:
+                    self.write_log(f"   ❌ [{device}] บันทึกภาพหน้าจอล้มเหลว: {err}", "error")
+                
+                if step_delay > 0:
+                    time.sleep(step_delay)
             elif t == "clear_ads_loop":
                 step_text = step.get("text", "").strip()
                 lobby_template = ""
