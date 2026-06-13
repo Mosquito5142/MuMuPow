@@ -581,6 +581,14 @@ class MuMuGUI(tk.Tk):
         run_card = tk.Frame(right_scroll_frame, bg=BG_DARK)
         run_card.pack(fill="x")
         
+        # ช่องตั้งค่าการดีเลย์ปล่อยรันแต่ละจอ
+        stagger_frame = tk.Frame(run_card, bg=BG_DARK)
+        stagger_frame.pack(fill="x", pady=2)
+        tk.Label(stagger_frame, text="⏳ หน่วงเริ่มแต่ละจอ (วิ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10)).pack(side="left")
+        self.stagger_delay_entry = ModernEntry(stagger_frame, width=8)
+        self.stagger_delay_entry.pack(side="left", padx=10)
+        self.stagger_delay_entry.insert(0, "5.0")
+        
         self.pause_chk = tk.Checkbutton(
             run_card,
             text="⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
@@ -2917,12 +2925,32 @@ class MuMuGUI(tk.Tk):
             # ตรวจสอบว่าต้องไฮไลท์ขั้นตอนที่ลิสต์บ็อกซ์หรือไม่ (ทำเฉพาะตอนรันจอเดียวเพื่อไม่ให้กะพริบแย่งกัน)
             highlight = (len(devices) == 1)
 
+            stagger_delay = 0.0
+            if hasattr(self, 'stagger_delay_entry'):
+                try:
+                    stagger_delay = float(self.stagger_delay_entry.get().strip() or "0")
+                except ValueError:
+                    stagger_delay = 0.0
+
+            def sleep_stagger(dev, idx):
+                delay = idx * stagger_delay
+                if delay > 0 and self.macro_running:
+                    self.write_log(f"⏳ [{dev}] รอหน่วงเวลาเริ่มต้นรันบอท {delay:.1f} วินาที...", "info")
+                    start_time = time.time()
+                    while time.time() - start_time < delay:
+                        if not self.macro_running:
+                            return False
+                        time.sleep(0.2)
+                return True
+
             if not checked_accounts:
                 self.write_log(f"🏁 เริ่มต้นการรันมาโคร 1 รอบพร้อมกันบน Emulator ทั้งหมด {len(devices)} จอ (ไม่มีบัญชีไอดี)...", "warning")
                 
                 # รันมาโครพร้อมกันทีละจอใน ThreadPool
                 def worker(dev):
-                    self.execute_device_macro(dev, None, highlight)
+                    idx = devices.index(dev)
+                    if sleep_stagger(dev, idx):
+                        self.execute_device_macro(dev, None, highlight)
 
                 with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                     executor.map(worker, devices)
@@ -2946,8 +2974,11 @@ class MuMuGUI(tk.Tk):
                     def batch_worker(pair):
                         dev, acc = pair
                         email = acc.get("email")
-                        self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
-                        self.execute_device_macro(dev, acc, highlight)
+                        idx = paired.index(pair)
+                        if sleep_stagger(dev, idx):
+                            if self.macro_running:
+                                self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
+                                self.execute_device_macro(dev, acc, highlight)
 
                     with ThreadPoolExecutor(max_workers=len(paired)) as executor:
                         executor.map(batch_worker, paired)
@@ -2975,6 +3006,9 @@ class MuMuGUI(tk.Tk):
 
                     # ฟังก์ชันการทำงานของแต่ละจอ
                     def device_worker(dev):
+                        idx = devices.index(dev)
+                        if not sleep_stagger(dev, idx):
+                            return
                         while self.macro_running:
                             try:
                                 acc = account_queue.get_nowait()
@@ -3013,6 +3047,24 @@ class MuMuGUI(tk.Tk):
             self.remaining_accounts = self.remaining_accounts[batch_size:]
             
             self.write_log(f"🏁 รันต่อ: เริ่มรันชุดบัญชีคู่ขนานจำนวน {len(current_batch)} ไอดี ลงบน Emulator...", "warning")
+
+            stagger_delay = 0.0
+            if hasattr(self, 'stagger_delay_entry'):
+                try:
+                    stagger_delay = float(self.stagger_delay_entry.get().strip() or "0")
+                except ValueError:
+                    stagger_delay = 0.0
+
+            def sleep_stagger(dev, idx):
+                delay = idx * stagger_delay
+                if delay > 0 and self.macro_running:
+                    self.write_log(f"⏳ [{dev}] รอหน่วงเวลาเริ่มต้นรันบอท {delay:.1f} วินาที...", "info")
+                    start_time = time.time()
+                    while time.time() - start_time < delay:
+                        if not self.macro_running:
+                            return False
+                        time.sleep(0.2)
+                return True
             
             # จับคู่ อุปกรณ์ กับ บัญชี
             paired = list(zip(devices, current_batch))
@@ -3020,8 +3072,11 @@ class MuMuGUI(tk.Tk):
             def batch_worker(pair):
                 dev, acc = pair
                 email = acc.get("email")
-                self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
-                self.execute_device_macro(dev, acc, highlight)
+                idx = paired.index(pair)
+                if sleep_stagger(dev, idx):
+                    if self.macro_running:
+                        self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
+                        self.execute_device_macro(dev, acc, highlight)
 
             with ThreadPoolExecutor(max_workers=len(paired)) as executor:
                 executor.map(batch_worker, paired)
