@@ -503,7 +503,8 @@ class MuMuGUI(tk.Tk):
                 "ลูปปิดโฆษณา (Clear Ads Loop)",
                 "กรอก OTP อัตโนมัติ (Auto Fill OTP)",
                 "ใช้ชุดคำสั่ง (Run Set)",
-                "แคปหน้าจอ (Screenshot)"
+                "แคปหน้าจอ (Screenshot)",
+                "คีย์บอร์ด (Keyboard)"
             ], 
             state="readonly", 
             width=22
@@ -2622,6 +2623,9 @@ class MuMuGUI(tk.Tk):
             elif t == "SCREENSHOT":
                 t_thai = "แคปจอ"
                 details = f"ไฟล์ '{step.get('text') or 'screenshots/{DATE}/screenshot_{NAME}_{TIME}.png'}'"
+            elif t == "KEYBOARD":
+                t_thai = "คีย์บอร์ด"
+                details = f"ปุ่ม '{step.get('key')}' ({step.get('action')})"
             else:
                 details = ""
                 
@@ -2726,6 +2730,8 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("ใช้ชุดคำสั่ง (Run Set)")
         elif t == "screenshot":
             self.form_type.set("แคปหน้าจอ (Screenshot)")
+        elif t == "keyboard":
+            self.form_type.set("คีย์บอร์ด (Keyboard)")
             
         self.on_step_type_change()
         
@@ -2761,6 +2767,10 @@ class MuMuGUI(tk.Tk):
             self.form_sleep.insert(0, step.get("delay", "0.3"))
         elif t == "sleep":
             self.form_sleep.insert(0, step.get("seconds", "1.0"))
+        elif t == "keyboard":
+            self.form_text.insert(0, step.get("key", ""))
+            self.form_code.insert(0, step.get("action", ""))
+            self.form_sleep.insert(0, step.get("delay", "0.1"))
 
     def on_step_type_change(self, event=None):
         t = self.form_type.get()
@@ -2851,6 +2861,13 @@ class MuMuGUI(tk.Tk):
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
+        elif "Keyboard" in t or "คีย์บอร์ด" in t:
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
 
     def clear_form(self):
         self.form_x.delete(0, tk.END)
@@ -3108,6 +3125,13 @@ class MuMuGUI(tk.Tk):
             elif t == "run_set":
                 step["set"] = self.form_text.get().strip()
                 if not step["set"]: raise ValueError("ชื่อชุดคำสั่งย่อยห้ามว่างเปล่า")
+            elif t == "keyboard":
+                step["key"] = self.form_text.get().strip().lower()
+                step["action"] = self.form_code.get().strip().lower()
+                if not step["key"] or not step["action"]: raise ValueError("คีย์และสถานะคีย์บอร์ดห้ามว่างเปล่า")
+                if step["action"] not in ["down", "up", "press"]:
+                    raise ValueError("สถานะคีย์บอร์ดต้องเป็น down, up หรือ press")
+                step["delay"] = float(self.form_sleep.get().strip() or "0.1")
         except ValueError as e:
             messagebox.showerror("ข้อมูลไม่ถูกต้อง", f"การตรวจสอบความถูกต้องการป้อนข้อมูลล้มเหลว: {e}")
             return
@@ -3179,6 +3203,13 @@ class MuMuGUI(tk.Tk):
             elif t == "run_set":
                 step["set"] = self.form_text.get().strip()
                 if not step["set"]: raise ValueError("ชื่อชุดคำสั่งย่อยห้ามว่างเปล่า")
+            elif t == "keyboard":
+                step["key"] = self.form_text.get().strip().lower()
+                step["action"] = self.form_code.get().strip().lower()
+                if not step["key"] or not step["action"]: raise ValueError("คีย์และสถานะคีย์บอร์ดห้ามว่างเปล่า")
+                if step["action"] not in ["down", "up", "press"]:
+                    raise ValueError("สถานะคีย์บอร์ดต้องเป็น down, up หรือ press")
+                step["delay"] = float(self.form_sleep.get().strip() or "0.1")
         except ValueError as e:
             messagebox.showerror("ข้อมูลไม่ถูกต้อง", f"การตรวจสอบความถูกต้องการป้อนข้อมูลล้มเหลว: {e}")
             return
@@ -3920,3 +3951,102 @@ class MuMuGUI(tk.Tk):
                         return
                     time.sleep(0.1)
                 time.sleep(sleep_time % 0.1)
+            elif t == "keyboard":
+                key_name = step.get("key", "").strip().lower()
+                action = step.get("action", "").strip().lower()
+                self.write_log(f"   ⌨️ [{device}] ส่งปุ่มคีย์บอร์ด: '{key_name}' ({action})", "info")
+                self.execute_keyboard_input(device, key_name, action)
+                if step_delay > 0:
+                    time.sleep(step_delay)
+
+
+    def execute_keyboard_input(self, device, key_name, action):
+        import ctypes
+        
+        EnumWindows = ctypes.windll.user32.EnumWindows
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        GetWindowText = ctypes.windll.user32.GetWindowTextW
+        GetWindowTextLength = ctypes.windll.user32.GetWindowTextLengthW
+        IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+        
+        found_windows = []
+        
+        def foreach_window(hwnd, lParam):
+            if IsWindowVisible(hwnd):
+                length = GetWindowTextLength(hwnd)
+                buff = ctypes.create_unicode_buffer(length + 1)
+                GetWindowText(hwnd, buff, length + 1)
+                title = buff.value
+                title_lower = title.lower()
+                if any(k in title_lower for k in ["mumu player", "nemu", "มูมู่"]):
+                    found_windows.append((hwnd, title))
+            return True
+            
+        EnumWindows(EnumWindowsProc(foreach_window), 0)
+        
+        if not found_windows:
+            self.write_log("   ⚠️ ไม่พบหน้าต่างโปรแกรม Emulator บน Windows เพื่อส่งปุ่มกด", "warning")
+            return
+            
+        selected_devices = self.get_selected_devices()
+        if not selected_devices:
+            selected_devices = self.controller.get_connected_devices()
+            
+        if not selected_devices:
+            return
+            
+        sorted_devices = sorted(selected_devices)
+        sorted_windows = sorted(found_windows, key=lambda w: w[1])
+        
+        target_hwnd = None
+        for i, dev in enumerate(sorted_devices):
+            if dev == device and i < len(sorted_windows):
+                target_hwnd = sorted_windows[i][0]
+                break
+                
+        if not target_hwnd:
+            target_hwnd = sorted_windows[0][0]
+            
+        VK_CODES = {
+            "w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44,
+            "space": 0x20, "enter": 0x0D, "escape": 0x1B,
+            "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+            "f": 0x46, "g": 0x47, "h": 0x48, "j": 0x4A, "k": 0x4B, "l": 0x4C,
+            "z": 0x5A, "x": 0x58, "c": 0x43, "v": 0x56, "b": 0x42, "n": 0x4E, "m": 0x4D,
+            "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34, "5": 0x35, "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39
+        }
+        
+        vk_code = VK_CODES.get(key_name)
+        if not vk_code:
+            if len(key_name) == 1:
+                vk_code = ord(key_name.upper())
+            else:
+                self.write_log(f"   ⚠️ ไม่พบรหัสจำลองของปุ่ม '{key_name}' กรุณาใช้ปุ่มมาตรฐาน", "warning")
+                return
+                
+        child_hwnds = []
+        def enum_child_proc(hwnd, lParam):
+            child_hwnds.append(hwnd)
+            return True
+        EnumChildWindows = ctypes.windll.user32.EnumChildWindows
+        EnumChildProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        EnumChildWindows(target_hwnd, EnumChildProc(enum_child_proc), 0)
+        
+        all_hwnds = [target_hwnd] + child_hwnds
+        
+        WM_KEYDOWN = 0x0100
+        WM_KEYUP = 0x0101
+        PostMessage = ctypes.windll.user32.PostMessageW
+        
+        if action == "down":
+            for h in all_hwnds:
+                PostMessage(h, WM_KEYDOWN, vk_code, 0)
+        elif action == "up":
+            for h in all_hwnds:
+                PostMessage(h, WM_KEYUP, vk_code, 0)
+        else: # "press"
+            for h in all_hwnds:
+                PostMessage(h, WM_KEYDOWN, vk_code, 0)
+            time.sleep(0.05)
+            for h in all_hwnds:
+                PostMessage(h, WM_KEYUP, vk_code, 0)
