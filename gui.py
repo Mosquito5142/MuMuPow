@@ -548,69 +548,59 @@ class MuMuGUI(tk.Tk):
         parent.configure(bg=BG_DARK)
         
         main_pane = tk.Frame(parent, bg=BG_DARK)
-        main_pane.pack(fill="both", expand=True, padx=10, pady=10)
+        main_pane.pack(fill="both", expand=True, padx=0, pady=0)
         
         # ฝั่งซ้าย: จัดการโปรไฟล์และรายการคำสั่ง (Left Panel)
-        left_panel = tk.Frame(main_pane, bg=BG_DARK, width=280)
-        left_panel.pack(side="left", fill="both", padx=(0, 10))
-        left_panel.pack_propagate(False)
+        left_panel = tk.Frame(main_pane, bg=BG_CARD, width=360, highlightthickness=1, highlightbackground=LINE_SOFT)
+        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 12))
         
         # กรอบเลือกโปรไฟล์
-        prof_lbl_frame = tk.Frame(left_panel, bg=BG_DARK)
+        prof_lbl_frame = tk.Frame(left_panel, bg=BG_CARD)
         prof_lbl_frame.pack(fill="x", pady=5)
         
-        tk.Label(prof_lbl_frame, text="เลือกโปรไฟล์มาโคร:", bg=BG_DARK, fg=FG_WHITE).pack(side="left", anchor="w")
+        tk.Label(prof_lbl_frame, text="เลือกโปรไฟล์มาโคร:", bg=BG_CARD, fg=FG_WHITE).pack(side="left", anchor="w")
         
         self.profile_cb = ttk.Combobox(prof_lbl_frame, state="readonly", width=20)
         self.profile_cb.pack(side="left", padx=5)
         self.profile_cb.bind("<<ComboboxSelected>>", self.on_profile_select)
         
         # ฟิลด์ป้อนชื่อบันทึกโปรไฟล์
-        prof_act_frame = tk.Frame(left_panel, bg=BG_DARK)
+        prof_act_frame = tk.Frame(left_panel, bg=BG_CARD)
         prof_act_frame.pack(fill="x", pady=2)
         
-        tk.Label(prof_act_frame, text="ชื่อโปรไฟล์:", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
+        tk.Label(prof_act_frame, text="ชื่อโปรไฟล์:", bg=BG_CARD, fg=FG_WHITE).pack(side="left")
         self.profile_name_entry = ModernEntry(prof_act_frame)
         self.profile_name_entry.pack(side="left", fill="x", expand=True, padx=5)
         self.profile_name_entry.insert(0, "default_login_ads")
         
         # ตารางปุ่มดำเนินการโปรไฟล์และแพ็คเกจ (2x2 Grid) เพื่อความเรียบร้อยและประหยัดพื้นที่
-        profile_actions_frame = tk.Frame(left_panel, bg=BG_DARK)
-        profile_actions_frame.pack(fill="x", pady=(2, 6))
-        
-        # แถวที่ 1: จัดการไฟล์โปรไฟล์
-        ModernButton(profile_actions_frame, text="💾 บันทึกโปรไฟล์", command=self.save_profile, bg=ACCENT_GREEN, activebg="#2ecc71").grid(row=0, column=0, sticky="ew", padx=1, pady=1)
-        ModernButton(profile_actions_frame, text="🗑️ ลบโปรไฟล์", command=self.delete_profile, bg=ACCENT_RED, activebg="#c0392b").grid(row=0, column=1, sticky="ew", padx=1, pady=1)
-        
-        # แถวที่ 2: นำเข้า/ส่งออกแพ็คเกจ
-        ModernButton(profile_actions_frame, text="📦 ส่งออก (Export)", command=self.export_profile_package, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).grid(row=1, column=0, sticky="ew", padx=1, pady=1)
-        ModernButton(profile_actions_frame, text="📥 นำเข้า (Import)", command=self.import_profile_package, bg=ACCENT_ORANGE, activebg="#d35400").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
-        
-        profile_actions_frame.columnconfigure(0, weight=1)
-        profile_actions_frame.columnconfigure(1, weight=1)
+        profile_actions_frame = self.make_toolbar(left_panel)
+        ModernButton(profile_actions_frame, text="บันทึก", command=self.save_profile, variant="primary").pack(side="left", padx=(0, 6))
+        ModernButton(profile_actions_frame, text="ลบ", command=self.delete_profile, variant="danger").pack(side="left", padx=(0, 6))
+        ModernButton(profile_actions_frame, text="Export", command=self.export_profile_package, variant="neutral").pack(side="left", padx=(0, 6))
+        ModernButton(profile_actions_frame, text="Import", command=self.import_profile_package, variant="neutral").pack(side="left", padx=(0, 6))
 
-        quick_builder_frame = tk.Frame(left_panel, bg=BG_DARK)
-        quick_builder_frame.pack(fill="x", pady=(4, 8))
-        ModernButton(
-            quick_builder_frame,
-            text="⚡ สร้างสคริปต์เร็ว",
-            command=self.open_quick_builder_dialog,
-            bg=ACCENT_ORANGE,
-            activebg="#d35400",
-        ).pack(side="left", fill="x", expand=True, padx=(0, 3))
-        ModernButton(
-            quick_builder_frame,
-            text="🧩 จัดการ Sets",
-            command=self.open_script_sets_dialog,
-            bg=ACCENT_BLUE,
-            activebg=ACCENT_HOVER,
-        ).pack(side="left", fill="x", expand=True, padx=(3, 0))
+        quick_builder_frame = self.make_toolbar(left_panel)
+        ModernButton(quick_builder_frame, text="สร้างสคริปต์เร็ว", command=self.open_quick_builder_dialog, variant="warning").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(quick_builder_frame, text="จัดการ Sets", command=self.open_script_sets_dialog, variant="accent").pack(side="left", fill="x", expand=True)
         
         # ลิสต์ขั้นตอนการทำงาน (Listbox) - ป้องกันการหลุดการเลือกด้วย exportselection=False
-        list_frame = tk.Frame(left_panel, bg=BG_DARK)
+        list_frame = tk.Frame(left_panel, bg=BG_CARD)
         list_frame.pack(fill="both", expand=True, pady=5)
         
-        self.step_listbox = tk.Listbox(list_frame, bg=BG_PANEL, fg=FG_WHITE, selectbackground=ACCENT_BLUE, selectforeground=FG_WHITE, bd=0, highlightthickness=0, font=("Consolas", 10), exportselection=False)
+        self.step_listbox = tk.Listbox(
+            list_frame,
+            bg=BG_INPUT,
+            fg=FG_WHITE,
+            selectbackground="#102F48",
+            selectforeground=FG_WHITE,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=LINE_SOFT,
+            font=("Consolas", 10),
+            activestyle="none",
+            exportselection=False,
+        )
         self.step_listbox.pack(side="left", fill="both", expand=True)
         self.step_listbox.bind("<<ListboxSelect>>", self.on_listbox_select)
         
@@ -619,86 +609,73 @@ class MuMuGUI(tk.Tk):
         scroll.pack(side="right", fill="y")
         
         # ปุ่มจัดลำดับย้ายขึ้น/ลง
-        reorder_frame = tk.Frame(left_panel, bg=BG_DARK)
+        reorder_frame = tk.Frame(left_panel, bg=BG_CARD)
         reorder_frame.pack(fill="x", pady=(5, 0))
         
-        ModernButton(reorder_frame, text="▲ เลื่อนขึ้น", command=lambda: self.move_step(-1), bg=BG_INPUT, activebg="#444444").pack(side="left", fill="x", expand=True, padx=2)
-        ModernButton(reorder_frame, text="▼ เลื่อนลง", command=lambda: self.move_step(1), bg=BG_INPUT, activebg="#444444").pack(side="left", fill="x", expand=True, padx=2)
-        ModernButton(reorder_frame, text="❌ ลบขั้นตอนนี้", command=self.delete_step, bg=ACCENT_RED, activebg="#c0392b").pack(side="right", padx=2)
+        ModernButton(reorder_frame, text="▲ ขึ้น", command=lambda: self.move_step(-1), variant="subtle").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(reorder_frame, text="▼ ลง", command=lambda: self.move_step(1), variant="subtle").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(reorder_frame, text="ลบขั้นตอน", command=self.delete_step, variant="danger").pack(side="right")
         
         # ฝั่งขวา: ฟอร์มป้อน/แก้ไขขั้นตอนคำสั่งการบอท (Right Panel)
-        right_panel = tk.Frame(main_pane, bg=BG_DARK, width=360)
+        right_panel = tk.Frame(main_pane, bg=BG_CARD, width=340, highlightthickness=1, highlightbackground=LINE_SOFT)
         right_panel.pack(side="right", fill="both")
         right_panel.pack_propagate(False)
         
         # ปุ่มสำหรับสั่งรันคำสั่งบอทมาโคร (ปักหมุดไว้ด้านล่างตลอด ไม่ต้องเลื่อนหา)
-        run_card = tk.Frame(right_panel, bg=BG_DARK, bd=1, relief="solid", highlightthickness=0, pady=5)
-        run_card.configure(highlightbackground="#333333")
-        run_card.pack(side="bottom", fill="x", padx=10, pady=(5, 10))
+        run_card = tk.Frame(right_panel, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT, padx=12, pady=12)
+        run_card.pack(side="bottom", fill="x", padx=0, pady=(12, 0))
         
         # ช่องตั้งค่าการดีเลย์ปล่อยรันแต่ละจอ
-        stagger_frame = tk.Frame(run_card, bg=BG_DARK)
+        stagger_frame = tk.Frame(run_card, bg=BG_PANEL)
         stagger_frame.pack(fill="x", pady=2)
         self.use_stagger_delay = tk.BooleanVar(value=False)
-        self.stagger_chk = tk.Checkbutton(
+        self.stagger_chk = self.make_checkbutton(
             stagger_frame,
-            text="⏳ หน่วงเริ่มแต่ละจอ (วิ):",
+            "⏳ หน่วงเริ่มแต่ละจอ (วิ):",
             variable=self.use_stagger_delay,
-            bg=BG_DARK,
-            fg=FG_WHITE,
-            activebackground=BG_DARK,
-            activeforeground=FG_WHITE,
-            selectcolor=BG_DARK,
-            relief="flat",
-            font=("Segoe UI", 10)
+            bg=BG_PANEL,
+            activebackground=BG_PANEL,
         )
         self.stagger_chk.pack(side="left")
         self.stagger_delay_entry = ModernEntry(stagger_frame, width=8)
         self.stagger_delay_entry.pack(side="left", padx=10)
         self.stagger_delay_entry.insert(0, "30.0")
         
-        self.pause_chk = tk.Checkbutton(
+        self.pause_chk = self.make_checkbutton(
             run_card,
-            text="⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
+            "⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
             variable=self.pause_between_sets,
-            bg=BG_DARK,
-            fg=FG_WHITE,
-            activebackground=BG_DARK,
-            activeforeground=FG_WHITE,
-            selectcolor=BG_DARK,
-            relief="flat",
-            font=("Segoe UI", 10)
+            bg=BG_PANEL,
+            activebackground=BG_PANEL,
         )
         self.pause_chk.pack(anchor="w", pady=5)
         
         self.run_macro_btn = ModernButton(
-            run_card, 
-            text="🚀 รันคำสั่งบอทมาโครที่เลือก", 
-            command=self.start_macro_flow, 
-            bg=ACCENT_GREEN, 
-            activebg="#2ecc71",
+            run_card,
+            text="รันมาโคร",
+            command=self.start_macro_flow,
+            variant="primary",
             font=("Segoe UI", 11, "bold"),
-            height=2
+            height=2,
         )
         self.run_macro_btn.pack(fill="x", pady=2)
         
         self.stop_macro_btn = ModernButton(
-            run_card, 
-            text="🛑 หยุดการทำงานของบอททันที", 
-            command=self.stop_macro_flow, 
-            bg=ACCENT_RED, 
-            activebg="#c0392b",
+            run_card,
+            text="หยุดทันที",
+            command=self.stop_macro_flow,
+            variant="danger",
             font=("Segoe UI", 11, "bold"),
-            height=2
+            height=2,
         )
         self.stop_macro_btn.pack(fill="x", pady=2)
         self.stop_macro_btn.configure(state="disabled")
         
         # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มได้
-        right_canvas = tk.Canvas(right_panel, bg=BG_DARK, highlightthickness=0)
+        right_canvas = tk.Canvas(right_panel, bg=BG_CARD, highlightthickness=0)
         right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
         
-        right_scroll_frame = tk.Frame(right_canvas, bg=BG_DARK)
+        right_scroll_frame = tk.Frame(right_canvas, bg=BG_CARD)
         right_scroll_frame.bind(
             "<Configure>",
             lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all"))
@@ -803,11 +780,11 @@ class MuMuGUI(tk.Tk):
         secondary_step_row = tk.Frame(form_btn_frame, bg=BG_DARK)
         secondary_step_row.pack(fill="x")
 
-        ModernButton(primary_step_row, text="➕ เพิ่มขั้นตอน", command=self.add_step, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", fill="x", expand=True, padx=(0, 3))
-        ModernButton(primary_step_row, text="✏️ อัปเดต", command=self.update_step, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", fill="x", expand=True, padx=(3, 0))
+        ModernButton(primary_step_row, text="เพิ่มขั้นตอน", command=self.add_step, variant="accent").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(primary_step_row, text="อัปเดต", command=self.update_step, variant="warning").pack(side="left", fill="x", expand=True)
         
-        ModernButton(secondary_step_row, text="🎯 บันทึกพิกัดด้วยภาพ (Visual Recorder)", command=self.open_visual_recorder, bg=ACCENT_GREEN, activebg="#2ecc71").pack(fill="x", pady=(5, 2))
-        ModernButton(secondary_step_row, text="🧹 ล้างฟอร์ม", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=2)
+        ModernButton(secondary_step_row, text="บันทึกพิกัดด้วยภาพ", command=self.open_visual_recorder, variant="primary").pack(fill="x", pady=(6, 4))
+        ModernButton(secondary_step_row, text="ล้างฟอร์ม", command=self.clear_form, variant="subtle").pack(fill="x", pady=2)
         
         form_panel.columnconfigure(0, weight=1)
         form_panel.columnconfigure(1, weight=2)
@@ -2859,75 +2836,12 @@ class MuMuGUI(tk.Tk):
 
     def refresh_listbox(self):
         """อัปเดตลิสต์ในกล่องสคริปต์ขั้นตอน (Listbox) ใหม่"""
+        self.refresh_step_list()
+
+    def refresh_step_list(self):
         self.step_listbox.delete(0, tk.END)
         for idx, step in enumerate(self.macro_steps):
-            t = step.get("type", "tap").upper()
-            desc = step.get("desc", "")
-            
-            # แปลงประเภทคำสั่งเป็นภาษาไทยเพื่อให้อ่านง่ายในลิสต์บล็อก
-            t_thai = "คลิก"
-            if t == "TAP":
-                t_thai = "คลิก"
-                details = f"({step.get('x')}, {step.get('y')})"
-            elif t == "SWIPE":
-                t_thai = "ลากจอ"
-                details = f"({step.get('x')},{step.get('y')} -> {step.get('x2')},{step.get('y2')})"
-            elif t == "TEXT":
-                t_thai = "พิมพ์"
-                details = f"'{step.get('text')}'"
-            elif t == "KEYEVENT":
-                t_thai = "ปุ่มกด"
-                details = f"รหัส {step.get('code')}"
-            elif t == "SLEEP":
-                t_thai = "รอเวลา"
-                details = f"{step.get('seconds')} วินาที"
-            elif t == "START_APP":
-                t_thai = "เปิดแอป"
-                details = f"'{step.get('text')}'"
-            elif t == "STOP_APP":
-                t_thai = "ปิดแอป"
-                details = f"'{step.get('text')}'"
-            elif t == "CLEAR_APP":
-                t_thai = "ล้างข้อมูล"
-                details = f"'{step.get('text')}'"
-            elif t == "DETECT_IMAGE":
-                t_thai = "รูปภาพ"
-                details = f"หา '{step.get('text')}'"
-            elif t == "CLEAR_ADS_LOOP":
-                t_thai = "ลูปปิดโฆษณา"
-                details = f"เคลียร์ '{step.get('text') or 'ทุกรูปในโฟลเดอร์'}'"
-            elif t == "FETCH_OTP":
-                t_thai = "ดึง OTP"
-                details = f"แพทเทิร์น '{step.get('text') or '\\d{6}'}'"
-            elif t == "RUN_SET":
-                t_thai = "ใช้ชุดคำสั่ง"
-                details = f"เซ็ต '{step.get('set') or step.get('text') or ''}'"
-            elif t == "SCREENSHOT":
-                t_thai = "แคปจอ"
-                details = f"ไฟล์ '{step.get('text') or 'screenshots/{DATE}/screenshot_{NAME}_{TIME}.png'}'"
-            elif t == "KEYBOARD":
-                t_thai = "คีย์บอร์ด"
-                details = f"ปุ่ม '{step.get('key')}' ({step.get('action')})"
-            else:
-                details = ""
-                
-            # ดึงค่าดีเลย์ถ้ามี
-            delay_info = ""
-            if t != "SLEEP":
-                delay_val = step.get("delay")
-                if delay_val is not None:
-                    delay_info = f" (หน่วง {delay_val} วิ)"
-                else:
-                    if t == "TAP" or t == "SWIPE":
-                        delay_info = " (หน่วง 0.5 วิ)"
-                    elif t == "TEXT":
-                        delay_info = " (หน่วง 0.5 วิ)"
-                    elif t == "KEYEVENT":
-                        delay_info = " (หน่วง 0.3 วิ)"
-                    else:
-                        delay_info = " (หน่วง 1.0 วิ)"
-                        
-            self.step_listbox.insert(tk.END, f"{idx+1:02d}. [{t_thai}] {details}{delay_info} - {desc}")
+            self.step_listbox.insert(tk.END, build_macro_step_summary(idx, step))
         self.update_status_summary()
 
     def save_profile(self):
@@ -3791,7 +3705,7 @@ class MuMuGUI(tk.Tk):
             self.remaining_accounts = []
             self.write_log("⚠️ ส่งสัญญาณยกเลิก! กำลังหยุดการทำงานมาโครโปรดรอสักครู่...", "warning")
             if was_paused:
-                self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="🚀 รันคำสั่งบอทมาโครที่เลือก")
+                self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร")
                 self.stop_macro_btn.configure(state="disabled")
                 self.write_log("⏹️ หยุดการทำงานของบอทและเคลียร์คิวเรียบร้อยแล้ว", "success")
 
@@ -3912,7 +3826,7 @@ class MuMuGUI(tk.Tk):
         finally:
             if not self.is_paused_waiting_for_next_set:
                 self.macro_running = False
-                self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="🚀 รันคำสั่งบอทมาโครที่เลือก"))
+                self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
                 self.after(0, self.update_status_summary)
 
@@ -3980,7 +3894,7 @@ class MuMuGUI(tk.Tk):
         finally:
             if not self.is_paused_waiting_for_next_set:
                 self.macro_running = False
-                self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="🚀 รันคำสั่งบอทมาโครที่เลือก"))
+                self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
                 self.after(0, self.update_status_summary)
  
