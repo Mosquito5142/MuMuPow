@@ -70,6 +70,63 @@ class GuiHelperTests(unittest.TestCase):
         self.assertIn("{EMAIL}", summary)
         self.assertIn("0.5s", summary)
 
+    def test_macro_step_summary_formats_sleep_seconds(self):
+        summary = build_macro_step_summary(
+            4,
+            {"type": "sleep", "seconds": 3, "delay": 0.25, "desc": "wait after login"},
+        )
+
+        self.assertIn("05", summary)
+        self.assertIn("Sleep", summary)
+        self.assertIn("wait 3", summary)
+        self.assertIn("0.25s", summary)
+        self.assertIn("wait after login", summary)
+
+    def test_macro_step_summary_formats_run_set_name(self):
+        summary = build_macro_step_summary(
+            5,
+            {"type": "run_set", "set": "Daily Quest", "delay": 1, "desc": "nested set"},
+        )
+
+        self.assertIn("06", summary)
+        self.assertIn("Run Set", summary)
+        self.assertIn("Daily Quest", summary)
+        self.assertIn("1s", summary)
+
+    def test_macro_step_summary_formats_keyboard_action(self):
+        summary = build_macro_step_summary(
+            6,
+            {"type": "keyboard", "key": "enter", "action": "press", "delay": 0.1},
+        )
+
+        self.assertIn("07", summary)
+        self.assertIn("Keyboard", summary)
+        self.assertIn("press enter", summary)
+        self.assertIn("0.1s", summary)
+
+    def test_macro_step_summary_formats_swipe_coordinates(self):
+        summary = build_macro_step_summary(
+            7,
+            {"type": "swipe", "x": 10, "y": 20, "x2": 300, "y2": 400, "delay": 0.75},
+        )
+
+        self.assertIn("08", summary)
+        self.assertIn("Swipe", summary)
+        self.assertIn("10,20 -> 300,400", summary)
+        self.assertIn("0.75s", summary)
+
+    def test_macro_step_summary_formats_keyevent_code(self):
+        summary = build_macro_step_summary(
+            8,
+            {"type": "keyevent", "code": 4, "delay": 0.2, "desc": "back"},
+        )
+
+        self.assertIn("09", summary)
+        self.assertIn("Key", summary)
+        self.assertIn("4", summary)
+        self.assertIn("0.2s", summary)
+        self.assertIn("back", summary)
+
     def test_account_summary_keeps_group_and_otp_signal(self):
         summary = build_account_summary(
             {"email": "player@example.com", "name": "Main", "group": "A", "refresh_token": "token"}
@@ -79,6 +136,13 @@ class GuiHelperTests(unittest.TestCase):
         self.assertIn("player@example.com", summary)
         self.assertIn("A", summary)
         self.assertIn("OTP", summary)
+
+    def test_account_summary_omits_otp_without_refresh_token(self):
+        summary = build_account_summary(
+            {"email": "player@example.com", "name": "Main", "group": "A", "client_id": "client"}
+        )
+
+        self.assertNotIn("OTP", summary)
 
 
 if __name__ == "__main__":

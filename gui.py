@@ -83,7 +83,13 @@ def build_macro_step_summary(idx, step):
     elif step_type == "keyevent":
         detail = str(step.get("code") or step.get("text") or "")
     elif step_type == "sleep":
-        detail = f"wait {step.get('duration', step.get('delay', ''))}"
+        detail = f"wait {step.get('seconds', step.get('duration', step.get('delay', '')))}"
+    elif step_type == "run_set":
+        detail = str(step.get("set") or step.get("set_name") or step.get("text") or "")
+    elif step_type == "keyboard":
+        action = step.get("action") or ""
+        key = step.get("key") or step.get("text") or ""
+        detail = " ".join(part for part in (action, key) if part)
     else:
         detail = str(step.get("text") or step.get("set_name") or "")
 
@@ -101,7 +107,7 @@ def build_account_summary(account):
     name = account.get("name") or "-"
     email = account.get("email") or "-"
     group = account.get("group") or "ทั่วไป"
-    otp = "OTP" if account.get("refresh_token") and account.get("client_id", "") is not None else ""
+    otp = "OTP" if account.get("refresh_token") else ""
     return f"{name:<16}  {email:<32}  {group:<12}  {otp}"
 
 def build_status_summary(total_devices, selected_devices, total_accounts, selected_accounts, macro_steps, profile_name, is_running):
