@@ -26,17 +26,83 @@ from script_sets import (
 )
 
 # จานสีสำหรับธีมมืดระดับพรีเมียม (Premium Dark Theme Color Palette)
-BG_DARK = "#121212"
-BG_PANEL = "#1c1c1c"
-BG_CARD = "#262626"
-BG_INPUT = "#333333"
-FG_WHITE = "#FFFFFF"
-FG_MUTED = "#AAAAAA"
-ACCENT_BLUE = "#007ACC"
-ACCENT_HOVER = "#0098FF"
-ACCENT_GREEN = "#2ECC71"
-ACCENT_RED = "#E74C3C"
-ACCENT_ORANGE = "#E67E22"
+BG_DARK = "#080D16"
+BG_PANEL = "#0C1422"
+BG_CARD = "#0D1523"
+BG_SURFACE = "#121D2E"
+BG_INPUT = "#0A111D"
+BG_HOVER = "#18243A"
+FG_WHITE = "#E6EDF7"
+FG_MUTED = "#8DA0B8"
+FG_DIM = "#64748B"
+LINE_SOFT = "#223046"
+ACCENT_BLUE = "#38BDF8"
+ACCENT_HOVER = "#0EA5E9"
+ACCENT_GREEN = "#0F766E"
+ACCENT_RED = "#7F1D1D"
+ACCENT_ORANGE = "#A16207"
+
+BUTTON_VARIANTS = {
+    "neutral": {"bg": "#18243A", "hover": "#24344B", "fg": FG_WHITE},
+    "primary": {"bg": ACCENT_GREEN, "hover": "#115E59", "fg": FG_WHITE},
+    "accent": {"bg": "#0F2F4A", "hover": "#164E72", "fg": FG_WHITE},
+    "danger": {"bg": ACCENT_RED, "hover": "#991B1B", "fg": FG_WHITE},
+    "warning": {"bg": ACCENT_ORANGE, "hover": "#854D0E", "fg": FG_WHITE},
+    "subtle": {"bg": BG_SURFACE, "hover": BG_HOVER, "fg": FG_WHITE},
+}
+
+
+def get_button_colors(variant="neutral"):
+    return BUTTON_VARIANTS.get(variant, BUTTON_VARIANTS["neutral"])
+
+
+def build_macro_step_summary(idx, step):
+    step_type = (step.get("type") or "").lower()
+    label_map = {
+        "tap": "Tap",
+        "text": "Text",
+        "keyevent": "Key",
+        "swipe": "Swipe",
+        "sleep": "Sleep",
+        "start_app": "Start App",
+        "stop_app": "Stop App",
+        "clear_app": "Clear App",
+        "detect_image": "Image Match",
+        "clear_ads_loop": "Ads Loop",
+        "fetch_otp": "Auto OTP",
+        "run_set": "Run Set",
+        "screenshot": "Screenshot",
+        "keyboard": "Keyboard",
+    }
+    label = label_map.get(step_type, step_type.title() or "Step")
+
+    if step_type == "tap":
+        detail = f"{step.get('x', '')}, {step.get('y', '')}"
+    elif step_type == "swipe":
+        detail = f"{step.get('x', '')},{step.get('y', '')} -> {step.get('x2', '')},{step.get('y2', '')}"
+    elif step_type == "keyevent":
+        detail = str(step.get("code") or step.get("text") or "")
+    elif step_type == "sleep":
+        detail = f"wait {step.get('duration', step.get('delay', ''))}"
+    else:
+        detail = str(step.get("text") or step.get("set_name") or "")
+
+    delay = step.get("delay")
+    if delay is None:
+        delay_text = ""
+    else:
+        delay_text = f"{delay:g}s" if isinstance(delay, (int, float)) else f"{delay}s"
+
+    desc = step.get("desc") or ""
+    return f"{idx + 1:02d}  {label:<12}  {detail:<28}  {delay_text:<6}  {desc}"
+
+
+def build_account_summary(account):
+    name = account.get("name") or "-"
+    email = account.get("email") or "-"
+    group = account.get("group") or "ทั่วไป"
+    otp = "OTP" if account.get("refresh_token") and account.get("client_id", "") is not None else ""
+    return f"{name:<16}  {email:<32}  {group:<12}  {otp}"
 
 def build_status_summary(total_devices, selected_devices, total_accounts, selected_accounts, macro_steps, profile_name, is_running):
     profile = profile_name.strip() if profile_name else "Custom"
@@ -51,10 +117,24 @@ def build_status_summary(total_devices, selected_devices, total_accounts, select
 
 class ModernButton(tk.Button):
     """ปุ่มกดสไตล์โมเดิร์นพร้อมแอนิเมชันตอนเอาเมาส์ชี้"""
-    def __init__(self, parent, text, command=None, bg=ACCENT_BLUE, fg=FG_WHITE, activebg=ACCENT_HOVER, **kwargs):
+    def __init__(
+        self,
+        parent,
+        text,
+        command=None,
+        bg=None,
+        fg=None,
+        activebg=None,
+        variant="neutral",
+        **kwargs,
+    ):
+        colors = get_button_colors(variant)
+        bg = bg or colors["bg"]
+        fg = fg or colors["fg"]
+        activebg = activebg or colors["hover"]
         button_font = kwargs.pop("font", ("Segoe UI", 10, "bold"))
-        px = kwargs.pop("padx", 10)
-        py = kwargs.pop("pady", 5)
+        px = kwargs.pop("padx", 12)
+        py = kwargs.pop("pady", 7)
         super().__init__(
             parent, 
             text=text, 
@@ -71,8 +151,10 @@ class ModernButton(tk.Button):
             pady=py,
             **kwargs
         )
-        self.bind("<Enter>", lambda e: self.configure(bg=activebg))
-        self.bind("<Leave>", lambda e: self.configure(bg=bg))
+        self._normal_bg = bg
+        self._hover_bg = activebg
+        self.bind("<Enter>", lambda e: self.configure(bg=self._hover_bg))
+        self.bind("<Leave>", lambda e: self.configure(bg=self._normal_bg))
 
 class ModernEntry(tk.Entry):
     """ช่องกรอกข้อความสไตล์โมเดิร์น"""
@@ -83,9 +165,9 @@ class ModernEntry(tk.Entry):
             fg=FG_WHITE,
             insertbackground=FG_WHITE,
             relief="flat",
-            bd=1,
+            bd=0,
             highlightthickness=1,
-            highlightbackground="#444444",
+            highlightbackground="#2B3C55",
             highlightcolor=ACCENT_BLUE,
             font=("Segoe UI", 10),
             **kwargs

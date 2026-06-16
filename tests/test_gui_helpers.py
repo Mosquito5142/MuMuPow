@@ -1,6 +1,12 @@
 import unittest
 
-from gui import build_status_summary
+from gui import (
+    BUTTON_VARIANTS,
+    build_account_summary,
+    build_macro_step_summary,
+    build_status_summary,
+    get_button_colors,
+)
 
 
 class GuiHelperTests(unittest.TestCase):
@@ -34,6 +40,45 @@ class GuiHelperTests(unittest.TestCase):
 
         self.assertIn("Running", summary)
         self.assertIn("Profile: Custom", summary)
+
+    def test_button_variants_define_operational_console_hierarchy(self):
+        self.assertIn("neutral", BUTTON_VARIANTS)
+        self.assertEqual(get_button_colors("primary")["bg"], "#0F766E")
+        self.assertEqual(get_button_colors("danger")["bg"], "#7F1D1D")
+        self.assertEqual(get_button_colors("unknown"), get_button_colors("neutral"))
+
+    def test_macro_step_summary_formats_tap_as_columns(self):
+        summary = build_macro_step_summary(
+            3,
+            {"type": "tap", "x": 450, "y": 320, "delay": 0.5, "desc": "click email"},
+        )
+
+        self.assertIn("04", summary)
+        self.assertIn("Tap", summary)
+        self.assertIn("450, 320", summary)
+        self.assertIn("0.5s", summary)
+        self.assertIn("click email", summary)
+
+    def test_macro_step_summary_formats_token_text(self):
+        summary = build_macro_step_summary(
+            1,
+            {"type": "text", "text": "{EMAIL}", "delay": 0.5, "desc": "email"},
+        )
+
+        self.assertIn("02", summary)
+        self.assertIn("Text", summary)
+        self.assertIn("{EMAIL}", summary)
+        self.assertIn("0.5s", summary)
+
+    def test_account_summary_keeps_group_and_otp_signal(self):
+        summary = build_account_summary(
+            {"email": "player@example.com", "name": "Main", "group": "A", "refresh_token": "token"}
+        )
+
+        self.assertIn("Main", summary)
+        self.assertIn("player@example.com", summary)
+        self.assertIn("A", summary)
+        self.assertIn("OTP", summary)
 
 
 if __name__ == "__main__":
