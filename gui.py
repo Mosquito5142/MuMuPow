@@ -484,13 +484,14 @@ class MuMuGUI(tk.Tk):
         main_pane = tk.Frame(parent, bg=BG_DARK)
         main_pane.pack(fill="both", expand=True, padx=10, pady=10)
         
-        # ฝั่งซ้าย: รายการขั้นตอนในโปรไฟล์บอท (Left Panel)
-        left_panel = tk.LabelFrame(main_pane, text=" 📜 ลำดับขั้นตอนคำสั่งมาโคร ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=10, pady=10)
-        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        # ฝั่งซ้าย: จัดการโปรไฟล์และรายการคำสั่ง (Left Panel)
+        left_panel = tk.Frame(main_pane, bg=BG_DARK, width=280)
+        left_panel.pack(side="left", fill="both", padx=(0, 10))
+        left_panel.pack_propagate(False)
         
-        # การเลือกโปรไฟล์เก็บข้อมูล
+        # กรอบเลือกโปรไฟล์
         prof_lbl_frame = tk.Frame(left_panel, bg=BG_DARK)
-        prof_lbl_frame.pack(fill="x", pady=(0, 5))
+        prof_lbl_frame.pack(fill="x", pady=5)
         
         tk.Label(prof_lbl_frame, text="เลือกโปรไฟล์มาโคร:", bg=BG_DARK, fg=FG_WHITE).pack(side="left", anchor="w")
         
@@ -500,15 +501,27 @@ class MuMuGUI(tk.Tk):
         
         # ฟิลด์ป้อนชื่อบันทึกโปรไฟล์
         prof_act_frame = tk.Frame(left_panel, bg=BG_DARK)
-        prof_act_frame.pack(fill="x", pady=5)
+        prof_act_frame.pack(fill="x", pady=2)
         
         tk.Label(prof_act_frame, text="ชื่อโปรไฟล์:", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
-        self.profile_name_entry = ModernEntry(prof_act_frame, width=15)
-        self.profile_name_entry.pack(side="left", padx=5)
+        self.profile_name_entry = ModernEntry(prof_act_frame)
+        self.profile_name_entry.pack(side="left", fill="x", expand=True, padx=5)
         self.profile_name_entry.insert(0, "default_login_ads")
         
-        ModernButton(prof_act_frame, text="💾 บันทึก", command=self.save_profile, bg=ACCENT_GREEN, activebg="#2ecc71").pack(side="left", padx=2)
-        ModernButton(prof_act_frame, text="🗑️ ลบไฟล์", command=self.delete_profile, bg=ACCENT_RED, activebg="#c0392b").pack(side="left", padx=2)
+        # ตารางปุ่มดำเนินการโปรไฟล์และแพ็คเกจ (2x2 Grid) เพื่อความเรียบร้อยและประหยัดพื้นที่
+        profile_actions_frame = tk.Frame(left_panel, bg=BG_DARK)
+        profile_actions_frame.pack(fill="x", pady=(2, 6))
+        
+        # แถวที่ 1: จัดการไฟล์โปรไฟล์
+        ModernButton(profile_actions_frame, text="💾 บันทึกโปรไฟล์", command=self.save_profile, bg=ACCENT_GREEN, activebg="#2ecc71").grid(row=0, column=0, sticky="ew", padx=1, pady=1)
+        ModernButton(profile_actions_frame, text="🗑️ ลบโปรไฟล์", command=self.delete_profile, bg=ACCENT_RED, activebg="#c0392b").grid(row=0, column=1, sticky="ew", padx=1, pady=1)
+        
+        # แถวที่ 2: นำเข้า/ส่งออกแพ็คเกจ
+        ModernButton(profile_actions_frame, text="📦 ส่งออก (Export)", command=self.export_profile_package, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).grid(row=1, column=0, sticky="ew", padx=1, pady=1)
+        ModernButton(profile_actions_frame, text="📥 นำเข้า (Import)", command=self.import_profile_package, bg=ACCENT_ORANGE, activebg="#d35400").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
+        
+        profile_actions_frame.columnconfigure(0, weight=1)
+        profile_actions_frame.columnconfigure(1, weight=1)
 
         quick_builder_frame = tk.Frame(left_panel, bg=BG_DARK)
         quick_builder_frame.pack(fill="x", pady=(4, 8))
@@ -527,11 +540,11 @@ class MuMuGUI(tk.Tk):
             activebg=ACCENT_HOVER,
         ).pack(side="left", fill="x", expand=True, padx=(3, 0))
         
-        # ลิสต์ขั้นตอนการทำงาน (Listbox)
+        # ลิสต์ขั้นตอนการทำงาน (Listbox) - ป้องกันการหลุดการเลือกด้วย exportselection=False
         list_frame = tk.Frame(left_panel, bg=BG_DARK)
         list_frame.pack(fill="both", expand=True, pady=5)
         
-        self.step_listbox = tk.Listbox(list_frame, bg=BG_PANEL, fg=FG_WHITE, selectbackground=ACCENT_BLUE, selectforeground=FG_WHITE, bd=0, highlightthickness=0, font=("Consolas", 10))
+        self.step_listbox = tk.Listbox(list_frame, bg=BG_PANEL, fg=FG_WHITE, selectbackground=ACCENT_BLUE, selectforeground=FG_WHITE, bd=0, highlightthickness=0, font=("Consolas", 10), exportselection=False)
         self.step_listbox.pack(side="left", fill="both", expand=True)
         self.step_listbox.bind("<<ListboxSelect>>", self.on_listbox_select)
         
@@ -548,11 +561,74 @@ class MuMuGUI(tk.Tk):
         ModernButton(reorder_frame, text="❌ ลบขั้นตอนนี้", command=self.delete_step, bg=ACCENT_RED, activebg="#c0392b").pack(side="right", padx=2)
         
         # ฝั่งขวา: ฟอร์มป้อน/แก้ไขขั้นตอนคำสั่งการบอท (Right Panel)
-        right_panel = tk.Frame(main_pane, bg=BG_DARK, width=340)
+        right_panel = tk.Frame(main_pane, bg=BG_DARK, width=360)
         right_panel.pack(side="right", fill="both")
         right_panel.pack_propagate(False)
         
-        # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มและปุ่มรันด้านล่างได้หากความสูงหน้าจอต่ำ
+        # ปุ่มสำหรับสั่งรันคำสั่งบอทมาโคร (ปักหมุดไว้ด้านล่างตลอด ไม่ต้องเลื่อนหา)
+        run_card = tk.Frame(right_panel, bg=BG_DARK, bd=1, relief="solid", highlightthickness=0, pady=5)
+        run_card.configure(highlightbackground="#333333")
+        run_card.pack(side="bottom", fill="x", padx=10, pady=(5, 10))
+        
+        # ช่องตั้งค่าการดีเลย์ปล่อยรันแต่ละจอ
+        stagger_frame = tk.Frame(run_card, bg=BG_DARK)
+        stagger_frame.pack(fill="x", pady=2)
+        self.use_stagger_delay = tk.BooleanVar(value=False)
+        self.stagger_chk = tk.Checkbutton(
+            stagger_frame,
+            text="⏳ หน่วงเริ่มแต่ละจอ (วิ):",
+            variable=self.use_stagger_delay,
+            bg=BG_DARK,
+            fg=FG_WHITE,
+            activebackground=BG_DARK,
+            activeforeground=FG_WHITE,
+            selectcolor=BG_DARK,
+            relief="flat",
+            font=("Segoe UI", 10)
+        )
+        self.stagger_chk.pack(side="left")
+        self.stagger_delay_entry = ModernEntry(stagger_frame, width=8)
+        self.stagger_delay_entry.pack(side="left", padx=10)
+        self.stagger_delay_entry.insert(0, "30.0")
+        
+        self.pause_chk = tk.Checkbutton(
+            run_card,
+            text="⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
+            variable=self.pause_between_sets,
+            bg=BG_DARK,
+            fg=FG_WHITE,
+            activebackground=BG_DARK,
+            activeforeground=FG_WHITE,
+            selectcolor=BG_DARK,
+            relief="flat",
+            font=("Segoe UI", 10)
+        )
+        self.pause_chk.pack(anchor="w", pady=5)
+        
+        self.run_macro_btn = ModernButton(
+            run_card, 
+            text="🚀 รันคำสั่งบอทมาโครที่เลือก", 
+            command=self.start_macro_flow, 
+            bg=ACCENT_GREEN, 
+            activebg="#2ecc71",
+            font=("Segoe UI", 11, "bold"),
+            height=2
+        )
+        self.run_macro_btn.pack(fill="x", pady=2)
+        
+        self.stop_macro_btn = ModernButton(
+            run_card, 
+            text="🛑 หยุดการทำงานของบอททันที", 
+            command=self.stop_macro_flow, 
+            bg=ACCENT_RED, 
+            activebg="#c0392b",
+            font=("Segoe UI", 11, "bold"),
+            height=2
+        )
+        self.stop_macro_btn.pack(fill="x", pady=2)
+        self.stop_macro_btn.configure(state="disabled")
+        
+        # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มได้
         right_canvas = tk.Canvas(right_panel, bg=BG_DARK, highlightthickness=0)
         right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
         
@@ -664,73 +740,11 @@ class MuMuGUI(tk.Tk):
         ModernButton(primary_step_row, text="➕ เพิ่มขั้นตอน", command=self.add_step, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", fill="x", expand=True, padx=(0, 3))
         ModernButton(primary_step_row, text="✏️ อัปเดต", command=self.update_step, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", fill="x", expand=True, padx=(3, 0))
         
-        ModernButton(secondary_step_row, text="🎯 บันทึกพิกัดด้วยภาพ (Visual Recorder)", command=self.open_visual_recorder, bg=ACCENT_GREEN, activebg="#2ecc71").pack(side="left", fill="x", expand=True, padx=(0, 3))
-        ModernButton(secondary_step_row, text="🧹 ล้างฟอร์ม", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(side="left", fill="x", expand=True, padx=(3, 0))
+        ModernButton(secondary_step_row, text="🎯 บันทึกพิกัดด้วยภาพ (Visual Recorder)", command=self.open_visual_recorder, bg=ACCENT_GREEN, activebg="#2ecc71").pack(fill="x", pady=(5, 2))
+        ModernButton(secondary_step_row, text="🧹 ล้างฟอร์ม", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=2)
         
         form_panel.columnconfigure(0, weight=1)
         form_panel.columnconfigure(1, weight=2)
-        
-        # ปุ่มสำหรับสั่งรันคำสั่งบอทมาโคร
-        run_card = tk.Frame(right_scroll_frame, bg=BG_DARK)
-        run_card.pack(fill="x")
-        
-        # ช่องตั้งค่าการดีเลย์ปล่อยรันแต่ละจอ
-        stagger_frame = tk.Frame(run_card, bg=BG_DARK)
-        stagger_frame.pack(fill="x", pady=2)
-        self.use_stagger_delay = tk.BooleanVar(value=False)
-        self.stagger_chk = tk.Checkbutton(
-            stagger_frame,
-            text="⏳ หน่วงเริ่มแต่ละจอ (วิ):",
-            variable=self.use_stagger_delay,
-            bg=BG_DARK,
-            fg=FG_WHITE,
-            activebackground=BG_DARK,
-            activeforeground=FG_WHITE,
-            selectcolor=BG_DARK,
-            relief="flat",
-            font=("Segoe UI", 10)
-        )
-        self.stagger_chk.pack(side="left")
-        self.stagger_delay_entry = ModernEntry(stagger_frame, width=8)
-        self.stagger_delay_entry.pack(side="left", padx=10)
-        self.stagger_delay_entry.insert(0, "30.0")
-        
-        self.pause_chk = tk.Checkbutton(
-            run_card,
-            text="⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
-            variable=self.pause_between_sets,
-            bg=BG_DARK,
-            fg=FG_WHITE,
-            activebackground=BG_DARK,
-            activeforeground=FG_WHITE,
-            selectcolor=BG_DARK,
-            relief="flat",
-            font=("Segoe UI", 10)
-        )
-        self.pause_chk.pack(anchor="w", pady=5)
-        
-        self.run_macro_btn = ModernButton(
-            run_card, 
-            text="🚀 รันคำสั่งบอทมาโครที่เลือก", 
-            command=self.start_macro_flow, 
-            bg=ACCENT_GREEN, 
-            activebg="#2ecc71",
-            font=("Segoe UI", 11, "bold"),
-            height=2
-        )
-        self.run_macro_btn.pack(fill="x", pady=2)
-        
-        self.stop_macro_btn = ModernButton(
-            run_card, 
-            text="🛑 หยุดการทำงานของบอททันที", 
-            command=self.stop_macro_flow, 
-            bg=ACCENT_RED, 
-            activebg="#c0392b",
-            font=("Segoe UI", 11, "bold"),
-            height=2
-        )
-        self.stop_macro_btn.pack(fill="x", pady=2)
-        self.stop_macro_btn.configure(state="disabled")
         
         # ปรับสถานะฟอร์มตามดร็อปดาวน์เริ่มต้น
         self.on_step_type_change()
@@ -748,6 +762,31 @@ class MuMuGUI(tk.Tk):
         # ฝั่งซ้าย: รายการบัญชีบอททั้งหมด (Left Panel)
         left_panel = tk.LabelFrame(main_pane, text=" 👥 รายการบัญชีบอททั้งหมด ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=10, pady=10)
         left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        
+        # แผงจัดการกลุ่มและค้นหา (Search & Batch Action Panel)
+        control_panel = tk.Frame(left_panel, bg=BG_DARK)
+        control_panel.pack(fill="x", pady=(0, 10))
+        
+        # 1. แถบค้นหา
+        search_frame = tk.Frame(control_panel, bg=BG_DARK)
+        search_frame.pack(fill="x", pady=(0, 5))
+        tk.Label(search_frame, text="🔍 ค้นหาบัญชี:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
+        self.acc_search_entry = ModernEntry(search_frame)
+        self.acc_search_entry.pack(side="left", fill="x", expand=True)
+        self.acc_search_entry.bind("<KeyRelease>", lambda e: self.refresh_accounts_ui())
+        
+        # 2. แถบจัดการแบบกลุ่ม (Batch Operations)
+        batch_frame = tk.Frame(control_panel, bg=BG_DARK)
+        batch_frame.pack(fill="x", pady=2)
+        
+        ModernButton(batch_frame, text="🗑️ ลบที่เลือก", command=self.delete_selected_accounts, bg=ACCENT_RED, activebg="#c0392b", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
+        
+        tk.Label(batch_frame, text="ย้ายกลุ่มไป:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).pack(side="left", padx=5)
+        self.batch_move_group_entry = ModernEntry(batch_frame, width=12)
+        self.batch_move_group_entry.pack(side="left", padx=2)
+        self.batch_move_group_entry.insert(0, "ทั่วไป")
+        
+        ModernButton(batch_frame, text="➡️ ย้ายกลุ่ม", command=self.move_selected_accounts, bg=ACCENT_BLUE, activebg=ACCENT_HOVER, font=("Segoe UI", 9)).pack(side="left", padx=5)
         
         # กล่องรายการบัญชีพร้อม Scrollbar
         list_container = tk.Frame(left_panel, bg=BG_DARK, bd=0)
@@ -1930,15 +1969,32 @@ class MuMuGUI(tk.Tk):
             self.update_status_summary()
             return
 
+        # 0. ค้นหา/กรองบัญชีตามช่องค้นหา
+        search_query = self.acc_search_entry.get().strip().lower() if hasattr(self, "acc_search_entry") else ""
+
         # 1. จัดกลุ่มบัญชี
         grouped_accounts = {}
         for acc in self.accounts:
+            email_lower = acc.get("email", "").lower()
+            name_lower = acc.get("name", "").lower()
+            group_lower = acc.get("group", "").lower()
+            
+            # ถ้ามีคำค้นหา ให้เช็คว่าคำค้นหาตรงกับ email, name หรือ group หรือไม่
+            if search_query and (search_query not in email_lower and search_query not in name_lower and search_query not in group_lower):
+                continue
+                
             grp = acc.get("group", "ทั่วไป").strip()
             if not grp:
                 grp = "ทั่วไป"
             if grp not in grouped_accounts:
                 grouped_accounts[grp] = []
             grouped_accounts[grp].append(acc)
+
+        if not grouped_accounts and search_query:
+            lbl = tk.Label(self.acc_scroll_frame, text="ไม่พบข้อมูลบัญชีที่ค้นหา", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="center")
+            lbl.pack(pady=30, fill="x")
+            self.update_status_summary()
+            return
 
         # 2. วาดแต่ละกลุ่ม
         for grp, acc_list in grouped_accounts.items():
@@ -1966,6 +2022,35 @@ class MuMuGUI(tk.Tk):
                         self.account_checkboxes[email].set(new_state)
                 self.save_accounts()
                 self.update_status_summary()
+
+            # ปุ่มลบกลุ่ม
+            def delete_group_func(g=grp, accs=acc_list):
+                confirm = messagebox.askyesno(
+                    "ยืนยันการลบกลุ่ม",
+                    f"คุณแน่ใจหรือไม่ที่จะลบบัญชีทั้งหมดในกลุ่ม '{g}' (จำนวน {len(accs)} บัญชี)?"
+                )
+                if confirm:
+                    emails_to_delete = [a.get("email") for a in accs]
+                    self.accounts = [a for a in self.accounts if a.get("email") not in emails_to_delete]
+                    self.save_accounts()
+                    self.refresh_accounts_ui()
+                    self.write_log(f"ลบกลุ่มบัญชี '{g}' เรียบร้อยแล้ว", "warning")
+            
+            del_grp_btn = tk.Button(
+                group_header,
+                text="🗑️ ลบกลุ่ม",
+                command=delete_group_func,
+                bg="#E74C3C",
+                fg=FG_WHITE,
+                activebackground="#c0392b",
+                activeforeground=FG_WHITE,
+                relief="flat",
+                bd=0,
+                font=("Segoe UI", 9),
+                padx=5,
+                pady=2
+            )
+            del_grp_btn.pack(side="right", padx=5, pady=5)
 
             chk_grp = tk.Checkbutton(
                 group_header, 
@@ -2010,34 +2095,6 @@ class MuMuGUI(tk.Tk):
                         self.group_checkboxes[g].set(all_grp_checked)
                     self.update_status_summary()
 
-                display_text = email
-                if acc.get("name"):
-                    display_text = f"{acc.get('name')} ({email})"
-                chk = tk.Checkbutton(
-                    frame,
-                    text=display_text,
-                    variable=var,
-                    command=on_single_click,
-                    bg=BG_CARD,
-                    fg=FG_WHITE,
-                    activebackground=BG_CARD,
-                    activeforeground=FG_WHITE,
-                    selectcolor=BG_DARK,
-                    relief="flat",
-                    font=("Segoe UI", 9)
-                )
-                chk.pack(side="left", padx=5, pady=5)
-
-                # พรางรหัสผ่านเพื่อความสวยงาม
-                masked_pwd = "*" * min(8, len(pwd))
-                lbl_pwd = tk.Label(frame, text=f"({masked_pwd})", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 8))
-                lbl_pwd.pack(side="left", padx=5)
-
-                # แสดงสัญลักษณ์สำหรับไอดีที่รองรับการรับ OTP ผ่าน Token
-                if acc.get("refresh_token"):
-                    lbl_otp = tk.Label(frame, text="[📨 OTP]", bg=BG_CARD, fg=ACCENT_GREEN, font=("Segoe UI", 8, "bold"))
-                    lbl_otp.pack(side="left", padx=5)
-
                 # ปุ่มลบบัญชี
                 del_btn = tk.Button(
                     frame,
@@ -2069,6 +2126,39 @@ class MuMuGUI(tk.Tk):
                     width=2
                 )
                 edit_btn.pack(side="right", padx=2, pady=5)
+
+                display_text = email
+                if acc.get("name"):
+                    display_text = f"{acc.get('name')} ({email})"
+                
+                # ตัดข้อความยาวไม่เกิน 26 ตัวอักษร เพื่อป้องกันปุ่มตกขอบ
+                if len(display_text) > 26:
+                    display_text = display_text[:23] + "..."
+                    
+                chk = tk.Checkbutton(
+                    frame,
+                    text=display_text,
+                    variable=var,
+                    command=on_single_click,
+                    bg=BG_CARD,
+                    fg=FG_WHITE,
+                    activebackground=BG_CARD,
+                    activeforeground=FG_WHITE,
+                    selectcolor=BG_DARK,
+                    relief="flat",
+                    font=("Segoe UI", 9)
+                )
+                chk.pack(side="left", padx=5, pady=5)
+
+                # พรางรหัสผ่านเพื่อความสวยงาม
+                masked_pwd = "*" * min(8, len(pwd))
+                lbl_pwd = tk.Label(frame, text=f"({masked_pwd})", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 8))
+                lbl_pwd.pack(side="left", padx=5)
+
+                # แสดงสัญลักษณ์สำหรับไอดีที่รองรับการรับ OTP ผ่าน Token
+                if acc.get("refresh_token"):
+                    lbl_otp = tk.Label(frame, text="[📨 OTP]", bg=BG_CARD, fg=ACCENT_GREEN, font=("Segoe UI", 8, "bold"))
+                    lbl_otp.pack(side="left", padx=5)
 
         self.update_status_summary()
 
@@ -2363,6 +2453,42 @@ class MuMuGUI(tk.Tk):
             self.refresh_accounts_ui()
             self.write_log(f"ลบบัญชี {email} เรียบร้อยแล้ว", "warning")
 
+    def delete_selected_accounts(self):
+        # นับบัญชีที่ถูกติ๊กเลือก
+        selected_emails = [acc.get("email") for acc in self.accounts if acc.get("checked", True)]
+        if not selected_emails:
+            messagebox.showwarning("คำเตือน", "กรุณาติ๊กเลือกบัญชีที่ต้องการลบก่อน!")
+            return
+            
+        confirm = messagebox.askyesno(
+            "ยืนยันการลบแบบกลุ่ม", 
+            f"คุณแน่ใจหรือไม่ที่จะลบบัญชีที่เลือกทั้งหมดจำนวน {len(selected_emails)} บัญชี?"
+        )
+        if confirm:
+            self.accounts = [acc for acc in self.accounts if acc.get("email") not in selected_emails]
+            self.save_accounts()
+            self.refresh_accounts_ui()
+            self.write_log(f"ลบบัญชีแบบกลุ่มเสร็จสิ้น (ลบออก {len(selected_emails)} บัญชี)", "warning")
+
+    def move_selected_accounts(self):
+        target_group = self.batch_move_group_entry.get().strip()
+        if not target_group:
+            messagebox.showwarning("คำเตือน", "กรุณาระบุชื่อกลุ่มเป้าหมาย!")
+            return
+            
+        selected_emails = [acc.get("email") for acc in self.accounts if acc.get("checked", True)]
+        if not selected_emails:
+            messagebox.showwarning("คำเตือน", "กรุณาติ๊กเลือกบัญชีที่ต้องการย้ายกลุ่มก่อน!")
+            return
+            
+        for acc in self.accounts:
+            if acc.get("email") in selected_emails:
+                acc["group"] = target_group
+                
+        self.save_accounts()
+        self.refresh_accounts_ui()
+        self.write_log(f"ย้ายกลุ่มบัญชีจำนวน {len(selected_emails)} บัญชี ไปยังกลุ่ม '{target_group}' เรียบร้อยแล้ว", "success")
+
     # --- ระบบจัดการโปรไฟล์มาโครบอท ---
     def load_profiles(self):
         """ค้นหาและโหลดไฟล์โปรไฟล์ JSON ในโฟลเดอร์ macros/"""
@@ -2482,6 +2608,7 @@ class MuMuGUI(tk.Tk):
             bd=0,
             highlightthickness=0,
             font=("Segoe UI", 10),
+            exportselection=False,
         )
         
         left_scroll = ttk.Scrollbar(left_box, orient="vertical", command=sets_list.yview)
@@ -2518,6 +2645,7 @@ class MuMuGUI(tk.Tk):
             highlightthickness=0,
             font=("Consolas", 9),
             height=10,
+            exportselection=False,
         )
         
         right_scroll = ttk.Scrollbar(steps_list_frame, orient="vertical", command=steps_list.yview)
@@ -2782,6 +2910,194 @@ class MuMuGUI(tk.Tk):
             except Exception as e:
                 self.write_log(f"ลบไฟล์ไม่สำเร็จ: {e}", "error")
 
+    def export_profile_package(self):
+        import zipfile
+        from tkinter import filedialog
+        
+        name = self.profile_cb.get()
+        filepath = self.profiles.get(name)
+        if not filepath or not os.path.exists(filepath):
+            messagebox.showerror("ข้อผิดพลาด", "ไม่พบข้อมูลโปรไฟล์ที่เลือก กรุณาเลือกหรือบันทึกโปรไฟล์ก่อนส่งออก!")
+            return
+            
+        # 1. อ่านข้อมูลโปรไฟล์
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                profile_data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถอ่านไฟล์โปรไฟล์ได้: {e}")
+            return
+            
+        steps = profile_data.get("steps", [])
+        
+        # 2. ค้นหารูปภาพและชุดคำสั่งย่อย (Script Sets) ที่เชื่อมโยง
+        referenced_images = set()
+        referenced_sets = set()
+        
+        # ฟังก์ชันค้นหาไฟล์เชื่อมโยงในรายการขั้นตอนแบบ recursive
+        def scan_steps(step_list):
+            for step in step_list:
+                t = step.get("type", "")
+                if t == "detect_image":
+                    img_name = step.get("text", "").strip()
+                    if img_name:
+                        referenced_images.add(img_name)
+                elif t == "clear_ads_loop":
+                    img_text = step.get("text", "").strip()
+                    if img_text:
+                        # ตัวอย่าง format: lobby.png | close_btn.png,back.png
+                        # หรือ close_btn.png,back.png
+                        parts = img_text.split("|")
+                        for part in parts:
+                            images = part.split(",")
+                            for img in images:
+                                img = img.strip()
+                                if img:
+                                    referenced_images.add(img)
+                elif t == "run_set":
+                    set_name = (step.get("set") or step.get("text") or "").strip()
+                    if set_name and set_name not in referenced_sets:
+                        referenced_sets.add(set_name)
+                        # โหลดสคริปต์ของ set นั้นมาค้นหาต่อแบบ recursive
+                        set_file = os.path.join(self.script_sets_dir, f"{safe_set_slug(set_name)}.json")
+                        if os.path.exists(set_file):
+                            try:
+                                with open(set_file, "r", encoding="utf-8") as sf:
+                                    set_data = json.load(sf)
+                                    scan_steps(set_data.get("steps", []))
+                            except Exception:
+                                pass
+                                
+        scan_steps(steps)
+        
+        # 3. ให้ผู้ใช้เลือกบันทึกไฟล์ปลายทาง (.mmpow หรือ .zip)
+        save_path = filedialog.asksaveasfilename(
+            title="📥 บันทึกไฟล์แพ็คเกจมาโคร",
+            defaultextension=".mmpow",
+            filetypes=[("MuMupow Package", "*.mmpow"), ("Zip File", "*.zip")],
+            initialfile=f"{name.lower().replace(' ', '_')}_package"
+        )
+        if not save_path:
+            return
+            
+        # 4. บีบอัดไฟล์ลงซิป
+        try:
+            # สร้างข้อมูล manifest.json เพื่อระบุชื่อไฟล์และรายการของในแพ็คเกจ
+            manifest = {
+                "profile_name": name,
+                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "profile_file": os.path.basename(filepath),
+                "script_sets": list(referenced_sets),
+                "templates": list(referenced_images)
+            }
+            
+            with zipfile.ZipFile(save_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                # เขียน manifest.json
+                zipf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+                
+                # เขียน profile.json
+                zipf.write(filepath, "profile.json")
+                
+                # เขียน script sets
+                for s_name in referenced_sets:
+                    s_file = os.path.join(self.script_sets_dir, f"{safe_set_slug(s_name)}.json")
+                    if os.path.exists(s_file):
+                        zipf.write(s_file, f"script_sets/{os.path.basename(s_file)}")
+                        
+                # เขียนรูปภาพใน templates
+                for img_name in referenced_images:
+                    img_file = os.path.join(self.templates_dir, img_name)
+                    if os.path.exists(img_file):
+                        zipf.write(img_file, f"templates/{img_name}")
+                        
+            self.write_log(f"📦 ส่งออกแพ็คเกจ '{name}' สำเร็จ -> {os.path.basename(save_path)}", "success")
+            messagebox.showinfo("สำเร็จ", f"ส่งออกแพ็คเกจมาโคร '{name}' เรียบร้อยแล้ว!\nไฟล์ปลายทาง: {os.path.basename(save_path)}")
+        except Exception as e:
+            self.write_log(f"❌ เกิดข้อผิดพลาดในการส่งออกแพ็คเกจ: {e}", "error")
+            messagebox.showerror("ข้อผิดพลาด", f"ส่งออกไม่สำเร็จ: {e}")
+
+    def import_profile_package(self):
+        import zipfile
+        from tkinter import filedialog
+        
+        # 1. ให้ผู้ใช้เลือกไฟล์แพ็คเกจที่จะนำเข้า
+        open_path = filedialog.askopenfilename(
+            title="📤 เลือกไฟล์แพ็คเกจมาโครเพื่อนำเข้า",
+            filetypes=[("MuMupow Package", "*.mmpow"), ("Zip File", "*.zip")]
+        )
+        if not open_path:
+            return
+            
+        try:
+            with zipfile.ZipFile(open_path, "r") as zipf:
+                # ตรวจสอบไฟล์ภายในซิป
+                namelist = zipf.namelist()
+                if "manifest.json" not in namelist or "profile.json" not in namelist:
+                    messagebox.showerror("ข้อผิดพลาด", "ไฟล์แพ็คเกจไม่ถูกต้อง (ไม่พบไฟล์ระบุข้อมูลหลัก)")
+                    return
+                    
+                # อ่าน manifest.json
+                manifest_data = json.loads(zipf.read("manifest.json").decode("utf-8"))
+                profile_name = manifest_data.get("profile_name", "Imported Profile")
+                
+                # ตรวจสอบว่าโปรไฟล์มีอยู่เดิมหรือไม่ หากมีอยู่แล้ว ให้ยืนยันเขียนทับ
+                if profile_name in self.profiles:
+                    confirm = messagebox.askyesno(
+                        "เขียนทับโปรไฟล์",
+                        f"โปรไฟล์ชื่อ '{profile_name}' มีอยู่แล้วในเครื่อง คุณต้องการเขียนทับหรือไม่?"
+                    )
+                    if not confirm:
+                        return
+                        
+                # 2. สกัดรูปภาพ templates
+                templates_imported = 0
+                for file_in_zip in namelist:
+                    if file_in_zip.startswith("templates/") and not file_in_zip.endswith("/"):
+                        img_name = os.path.basename(file_in_zip)
+                        target_img_path = os.path.join(self.templates_dir, img_name)
+                        # ดึงไฟล์และเขียนบันทึก
+                        with open(target_img_path, "wb") as f:
+                            f.write(zipf.read(file_in_zip))
+                        templates_imported += 1
+                        
+                # 3. สกัดชุดคำสั่งย่อย script_sets
+                sets_imported = 0
+                for file_in_zip in namelist:
+                    if file_in_zip.startswith("script_sets/") and not file_in_zip.endswith("/"):
+                        set_filename = os.path.basename(file_in_zip)
+                        target_set_path = os.path.join(self.script_sets_dir, set_filename)
+                        # ดึงไฟล์และเขียนบันทึก
+                        with open(target_set_path, "wb") as f:
+                            f.write(zipf.read(file_in_zip))
+                        sets_imported += 1
+                        
+                # 4. เขียนไฟล์โปรไฟล์หลัก
+                target_profile_filename = manifest_data.get("profile_file", f"{profile_name.lower().replace(' ', '_')}.json")
+                target_profile_path = os.path.join(self.macros_dir, target_profile_filename)
+                
+                with open(target_profile_path, "wb") as f:
+                    f.write(zipf.read("profile.json"))
+                    
+            # 5. โหลดข้อมูลกลับเข้าโปรแกรม
+            self.load_profiles()
+            self.load_script_sets()
+            self.profile_cb.set(profile_name)
+            self.on_profile_select()
+            
+            self.write_log(
+                f"📥 นำเข้าแพ็คเกจ '{profile_name}' สำเร็จ (นำเข้ารูปภาพ {templates_imported} รูป, ชุดคำสั่ง {sets_imported} ชุด)", 
+                "success"
+            )
+            messagebox.showinfo(
+                "นำเข้าสำเร็จ", 
+                f"นำเข้าโปรไฟล์ '{profile_name}' เรียบร้อยแล้ว!\n"
+                f"- นำเข้ารูปภาพสำหรับตรวจจับ: {templates_imported} รูป\n"
+                f"- นำเข้าชุดคำสั่งย่อย: {sets_imported} ชุด"
+            )
+        except Exception as e:
+            self.write_log(f"❌ เกิดข้อผิดพลาดในการนำเข้าแพ็คเกจ: {e}", "error")
+            messagebox.showerror("ข้อผิดพลาด", f"นำเข้าไม่สำเร็จ: {e}")
+
     # --- การโต้ตอบกับกล่องขั้นตอนมาโครด้านซ้าย ---
     def on_listbox_select(self, event):
         selection = self.step_listbox.curselection()
@@ -3030,6 +3346,7 @@ class MuMuGUI(tk.Tk):
             highlightthickness=0,
             font=("Segoe UI", 10),
             height=9,
+            exportselection=False,
         )
         preset_list.pack(fill="both", expand=True)
 
