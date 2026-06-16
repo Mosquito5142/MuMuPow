@@ -245,9 +245,13 @@ class MuMuGUI(tk.Tk):
         self.write_log(f"⚡ เริ่มต้นระบบควบคุม MuMupow แล้ว เส้นทาง ADB: {self.controller.adb_path}", "success")
         self.scan_devices()
 
-    def make_panel(self, parent, title=None, fill="both", expand=False, padx=0, pady=0):
+    def make_panel(self, parent, title=None, fill="both", expand=False, padx=0, pady=0, manager="pack"):
+        """Create a styled panel; use manager=None when the caller will grid/place/pack it."""
         panel = tk.Frame(parent, bg=BG_CARD, highlightthickness=1, highlightbackground=LINE_SOFT)
-        panel.pack(fill=fill, expand=expand, padx=padx, pady=pady)
+        if manager == "pack":
+            panel.pack(fill=fill, expand=expand, padx=padx, pady=pady)
+        elif manager is not None:
+            raise ValueError("Unsupported panel manager")
         if title:
             header = tk.Frame(panel, bg=BG_PANEL, height=38)
             header.pack(fill="x")
