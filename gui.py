@@ -556,7 +556,7 @@ class MuMuGUI(tk.Tk):
         self.form_sleep_label.grid(row=5, column=0, sticky="w", pady=5)
         self.form_sleep = ModernEntry(form_panel, width=10)
         self.form_sleep.grid(row=5, column=1, sticky="w", padx=10, pady=5)
-        self.form_sleep.insert(0, "0.5")
+        self.form_sleep.insert(0, "5.0")
         
         # คำอธิบายขั้นตอน
         tk.Label(form_panel, text="คำอธิบายขั้นตอน:", bg=BG_DARK, fg=FG_WHITE).grid(row=6, column=0, sticky="w", pady=5)
@@ -1635,7 +1635,7 @@ class MuMuGUI(tk.Tk):
         tk.Label(delay_frame, text="หน่วงเวลาหลังกด (วิ):", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
         delay_entry = ModernEntry(delay_frame, width=8)
         delay_entry.pack(side="right")
-        delay_entry.insert(0, "0.5")
+        delay_entry.insert(0, "5.0")
         
         desc_frame = tk.Frame(right_panel, bg=BG_DARK)
         desc_frame.pack(fill="x", pady=5)
@@ -1712,9 +1712,9 @@ class MuMuGUI(tk.Tk):
             real_end_x = int(release_x / scale)
             real_end_y = int(release_y / scale)
             
-            delay_val = 0.5
+            delay_val = 5.0
             try:
-                delay_val = float(delay_entry.get().strip() or "0.5")
+                delay_val = float(delay_entry.get().strip() or "5.0")
             except ValueError:
                 pass
                 
@@ -2750,16 +2750,16 @@ class MuMuGUI(tk.Tk):
         if t == "tap":
             self.form_x.insert(0, step.get("x", ""))
             self.form_y.insert(0, step.get("y", ""))
-            self.form_sleep.insert(0, step.get("delay", "0.5"))
+            self.form_sleep.insert(0, step.get("delay", "5.0"))
         elif t == "swipe":
             self.form_x.insert(0, step.get("x", ""))
             self.form_y.insert(0, step.get("y", ""))
             self.form_x2.insert(0, step.get("x2", ""))
             self.form_y2.insert(0, step.get("y2", ""))
-            self.form_sleep.insert(0, step.get("delay", "0.5"))
+            self.form_sleep.insert(0, step.get("delay", "5.0"))
         elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
             self.form_text.insert(0, step.get("text", ""))
-            self.form_sleep.insert(0, step.get("delay", "0.5" if t == "text" else "1.0"))
+            self.form_sleep.insert(0, step.get("delay", "5.0" if t == "text" else "1.0"))
         elif t == "run_set":
             self.form_text.insert(0, step.get("set", ""))
         elif t == "keyevent":
@@ -3102,7 +3102,7 @@ class MuMuGUI(tk.Tk):
                 step["x"] = self.form_x.get().strip()
                 step["y"] = self.form_y.get().strip()
                 if not step["x"] or not step["y"]: raise ValueError("พิกัดห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.5")
+                step["delay"] = float(self.form_sleep.get().strip() or "5.0")
             elif t == "swipe":
                 step["x"] = self.form_x.get().strip()
                 step["y"] = self.form_y.get().strip()
@@ -3110,12 +3110,12 @@ class MuMuGUI(tk.Tk):
                 step["y2"] = self.form_y2.get().strip()
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.5")
+                step["delay"] = float(self.form_sleep.get().strip() or "5.0")
             elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or ("0.5" if t == "text" else "1.0"))
+                step["delay"] = float(self.form_sleep.get().strip() or ("5.0" if t == "text" else "1.0"))
             elif t == "keyevent":
                 step["code"] = self.form_code.get().strip()
                 if not step["code"]: raise ValueError("รหัสปุ่มกดคีย์เวนท์ห้ามว่างเปล่า")
@@ -3180,7 +3180,7 @@ class MuMuGUI(tk.Tk):
                 step["x"] = self.form_x.get().strip()
                 step["y"] = self.form_y.get().strip()
                 if not step["x"] or not step["y"]: raise ValueError("พิกัดห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.5")
+                step["delay"] = float(self.form_sleep.get().strip() or "5.0")
             elif t == "swipe":
                 step["x"] = self.form_x.get().strip()
                 step["y"] = self.form_y.get().strip()
@@ -3188,12 +3188,12 @@ class MuMuGUI(tk.Tk):
                 step["y2"] = self.form_y2.get().strip()
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.5")
+                step["delay"] = float(self.form_sleep.get().strip() or "5.0")
             elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or ("0.5" if t == "text" else "1.0"))
+                step["delay"] = float(self.form_sleep.get().strip() or ("5.0" if t == "text" else "1.0"))
             elif t == "keyevent":
                 step["code"] = self.form_code.get().strip()
                 if not step["code"]: raise ValueError("รหัสปุ่มกดคีย์เวนท์ห้ามว่างเปล่า")
@@ -3693,9 +3693,9 @@ class MuMuGUI(tk.Tk):
             step_delay = step.get("delay")
             if step_delay is None:
                 if t == "tap" or t == "swipe":
-                    step_delay = 0.5
+                    step_delay = 5.0
                 elif t == "text":
-                    step_delay = 0.5
+                    step_delay = 5.0
                 elif t == "keyevent":
                     step_delay = 0.3
                 elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:

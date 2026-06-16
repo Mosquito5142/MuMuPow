@@ -45,7 +45,7 @@ def normalize_coordinate_presets(presets):
     return [normalize_coordinate_preset(preset) for preset in presets]
 
 
-def build_tap_step_from_preset(preset, delay=0.5):
+def build_tap_step_from_preset(preset, delay=5.0):
     normalized = normalize_coordinate_preset(preset)
     return {
         "type": "tap",
@@ -56,7 +56,7 @@ def build_tap_step_from_preset(preset, delay=0.5):
     }
 
 
-def build_text_step(text, delay=0.5):
+def build_text_step(text, delay=5.0):
     return {
         "type": "text",
         "text": str(text),
@@ -85,7 +85,7 @@ def build_key_step(key_name, delay=0.3):
     }
 
 
-def build_swipe_step(direction, delay=0.5):
+def build_swipe_step(direction, delay=5.0):
     direction_key = str(direction).lower()
     if direction_key == "up":
         return {
