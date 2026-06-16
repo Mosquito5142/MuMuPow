@@ -184,7 +184,7 @@ class MuMuGUI(tk.Tk):
         super().__init__()
         self.title("MuMupow - โปรแกรมควบคุมและบอทจำลองหน้าจอพร้อมกันหลายจอ")
         self.geometry("1280x760")
-        self.minsize(1100, 700)
+        self.minsize(1180, 720)
         self.configure(bg=BG_DARK)
 
         # เริ่มต้นโมดูลควบคุม
@@ -245,24 +245,73 @@ class MuMuGUI(tk.Tk):
         self.write_log(f"⚡ เริ่มต้นระบบควบคุม MuMupow แล้ว เส้นทาง ADB: {self.controller.adb_path}", "success")
         self.scan_devices()
 
+    def make_panel(self, parent, title=None, fill="both", expand=False, padx=0, pady=0):
+        panel = tk.Frame(parent, bg=BG_CARD, highlightthickness=1, highlightbackground=LINE_SOFT)
+        panel.pack(fill=fill, expand=expand, padx=padx, pady=pady)
+        if title:
+            header = tk.Frame(panel, bg=BG_PANEL, height=38)
+            header.pack(fill="x")
+            header.pack_propagate(False)
+            tk.Label(
+                header,
+                text=title,
+                bg=BG_PANEL,
+                fg=FG_WHITE,
+                font=("Segoe UI", 10, "bold"),
+            ).pack(side="left", padx=12)
+            body = tk.Frame(panel, bg=BG_CARD, padx=12, pady=12)
+            body.pack(fill="both", expand=True)
+            return panel, body
+        return panel, panel
+
+    def make_toolbar(self, parent):
+        toolbar = tk.Frame(parent, bg=BG_CARD)
+        toolbar.pack(fill="x", pady=(0, 10))
+        return toolbar
+
+    def make_checkbutton(self, parent, text, variable, **kwargs):
+        return tk.Checkbutton(
+            parent,
+            text=text,
+            variable=variable,
+            bg=kwargs.pop("bg", BG_CARD),
+            fg=kwargs.pop("fg", FG_WHITE),
+            activebackground=kwargs.pop("activebackground", BG_CARD),
+            activeforeground=kwargs.pop("activeforeground", FG_WHITE),
+            selectcolor=kwargs.pop("selectcolor", BG_INPUT),
+            relief="flat",
+            font=kwargs.pop("font", ("Segoe UI", 10)),
+            **kwargs,
+        )
+
     def setup_styles(self):
         style = ttk.Style()
         style.theme_use("default")
         
         # ปรับแต่งแถบแท็บ (Notebook)
         style.configure("TNotebook", background=BG_DARK, borderwidth=0)
-        style.configure("TNotebook.Tab", 
-                        background=BG_PANEL, 
-                        foreground=FG_MUTED, 
-                        padding=[15, 6], 
-                        font=("Segoe UI", 10, "bold"),
-                        borderwidth=0)
-        style.map("TNotebook.Tab", 
-                  background=[("selected", BG_DARK)], 
-                  foreground=[("selected", FG_WHITE)])
+        style.configure(
+            "TNotebook.Tab",
+            background=BG_PANEL,
+            foreground=FG_MUTED,
+            padding=[14, 8],
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", BG_CARD)],
+            foreground=[("selected", FG_WHITE)],
+        )
 
         # ปรับแต่งแถบเลื่อน (Scrollbar)
-        style.configure("TScrollbar", gripcount=0, background=BG_PANEL, troughcolor=BG_DARK, borderwidth=0)
+        style.configure(
+            "TScrollbar",
+            gripcount=0,
+            background=BG_PANEL,
+            troughcolor=BG_DARK,
+            borderwidth=0,
+            arrowcolor=FG_MUTED,
+        )
 
     def setup_thai_hotkeys(self):
         """แก้ไขปัญหาปุ่มลัด Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+X ไม่ทำงานเมื่อผู้ใช้เปลี่ยนเป็นคีย์บอร์ดภาษาไทย"""
@@ -323,20 +372,33 @@ class MuMuGUI(tk.Tk):
 
     def build_layout(self):
         # 1. แถบส่วนหัวโปรแกรม (Header)
-        header = tk.Frame(self, bg=BG_PANEL, height=60)
+        header = tk.Frame(self, bg=BG_PANEL, height=58)
         header.pack(fill="x", side="top")
-        
-        title_lbl = tk.Label(header, text="ระบบควบคุม Emulator หลายจอพร้อมกัน (MuMupow)", bg=BG_PANEL, fg=FG_WHITE, font=("Segoe UI", 16, "bold"))
-        title_lbl.pack(side="left", padx=20, pady=15)
-        
-        subtitle_lbl = tk.Label(header, text="พิกัดหน้าจอเป้าหมาย: กว้าง 960 / สูง 540 | DPI: 160", bg=BG_PANEL, fg=ACCENT_BLUE, font=("Segoe UI", 10, "italic"))
-        subtitle_lbl.pack(side="left", pady=22)
+        header.pack_propagate(False)
+
+        title_lbl = tk.Label(
+            header,
+            text="MuMupow",
+            bg=BG_PANEL,
+            fg=FG_WHITE,
+            font=("Segoe UI", 16, "bold"),
+        )
+        title_lbl.pack(side="left", padx=(20, 12), pady=14)
+
+        subtitle_lbl = tk.Label(
+            header,
+            text="Operational console for multi-emulator automation",
+            bg=BG_PANEL,
+            fg=FG_MUTED,
+            font=("Segoe UI", 10),
+        )
+        subtitle_lbl.pack(side="left", pady=18)
 
         self.build_status_bar()
 
         # 2. พื้นที่เนื้อหาหลัก (แบ่งเป็น แถบซ้ายมือ และ แผงฟังก์ชันหลักขวามือ)
         content_frame = tk.Frame(self, bg=BG_DARK)
-        content_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        content_frame.pack(fill="both", expand=True, padx=12, pady=12)
 
         # สร้างแถบด้านซ้ายจัดการอุปกรณ์
         self.build_sidebar(content_frame)
@@ -349,14 +411,14 @@ class MuMuGUI(tk.Tk):
         self.update_status_summary()
 
     def build_status_bar(self):
-        status_frame = tk.Frame(self, bg="#181818", height=36)
+        status_frame = tk.Frame(self, bg=BG_PANEL, height=34)
         status_frame.pack(fill="x", side="top")
         status_frame.pack_propagate(False)
 
         self.status_summary_lbl = tk.Label(
             status_frame,
             text="",
-            bg="#181818",
+            bg=BG_PANEL,
             fg=FG_WHITE,
             font=("Segoe UI", 10, "bold"),
             anchor="w",
@@ -366,7 +428,7 @@ class MuMuGUI(tk.Tk):
         self.status_hint_lbl = tk.Label(
             status_frame,
             text="เลือก Emulator + บัญชี + มาโคร แล้วกดรัน",
-            bg="#181818",
+            bg=BG_PANEL,
             fg=FG_MUTED,
             font=("Segoe UI", 9),
             anchor="e",
@@ -403,8 +465,8 @@ class MuMuGUI(tk.Tk):
         )
 
     def build_sidebar(self, parent):
-        sidebar = tk.Frame(parent, bg=BG_PANEL, width=280)
-        sidebar.pack(fill="y", side="left", padx=(0, 10))
+        sidebar = tk.Frame(parent, bg=BG_PANEL, width=260)
+        sidebar.pack(fill="y", side="left", padx=(0, 12))
         sidebar.pack_propagate(False)
 
         # หัวข้อแถบซ้าย
@@ -415,7 +477,7 @@ class MuMuGUI(tk.Tk):
         btn_frame = tk.Frame(sidebar, bg=BG_PANEL)
         btn_frame.pack(fill="x", padx=15, pady=5)
 
-        scan_btn = ModernButton(btn_frame, text="🔍 สแกนพอร์ตอัตโนมัติ", command=self.scan_devices, bg=ACCENT_BLUE, activebg=ACCENT_HOVER)
+        scan_btn = ModernButton(btn_frame, text="สแกนพอร์ต", command=self.scan_devices, variant="accent")
         scan_btn.pack(fill="x", side="top", pady=2)
 
         # กล่องสำหรับระบุพอร์ตเองแมนนวล
@@ -427,7 +489,7 @@ class MuMuGUI(tk.Tk):
         self.manual_port_entry.pack(fill="x", side="left", expand=True, pady=5, padx=(0, 5))
         self.manual_port_entry.insert(0, "127.0.0.1:7555")
 
-        connect_btn = ModernButton(conn_frame, text="เชื่อมต่อ", command=self.manual_connect, bg=ACCENT_GREEN, activebg="#2ecc71")
+        connect_btn = ModernButton(conn_frame, text="เชื่อมต่อ", command=self.manual_connect, variant="primary")
         connect_btn.pack(side="right")
 
         # กล่องเลือกจอที่จะควบคุม
