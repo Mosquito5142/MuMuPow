@@ -127,6 +127,7 @@ class MuMuGUI(tk.Tk):
         self.is_paused_waiting_for_next_set = False
         self.remaining_accounts = []
         self.active_devices_for_run = []
+        self.device_active_accounts = {}
 
         # ตัวแปรสำหรับการจัดการบัญชีผู้ใช้
         self.accounts = []
@@ -573,7 +574,9 @@ class MuMuGUI(tk.Tk):
 
         ModernButton(primary_step_row, text="➕ เพิ่มขั้นตอน", command=self.add_step, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", fill="x", expand=True, padx=(0, 3))
         ModernButton(primary_step_row, text="✏️ อัปเดต", command=self.update_step, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", fill="x", expand=True, padx=(3, 0))
-        ModernButton(secondary_step_row, text="🧹 ล้างฟอร์ม", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(fill="x")
+        
+        ModernButton(secondary_step_row, text="🎯 บันทึกพิกัดด้วยภาพ (Visual Recorder)", command=self.open_visual_recorder, bg=ACCENT_GREEN, activebg="#2ecc71").pack(side="left", fill="x", expand=True, padx=(0, 3))
+        ModernButton(secondary_step_row, text="🧹 ล้างฟอร์ม", command=self.clear_form, bg=BG_INPUT, activebg="#444444").pack(side="left", fill="x", expand=True, padx=(3, 0))
         
         form_panel.columnconfigure(0, weight=1)
         form_panel.columnconfigure(1, weight=2)
@@ -833,14 +836,14 @@ class MuMuGUI(tk.Tk):
         screenshot_box = tk.LabelFrame(control_grid, text=" 📸 ถ่ายภาพหน้าจอพร้อมกัน ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
         screenshot_box.grid(row=1, column=0, columnspan=3, sticky="ew", pady=10)
         
-        tk.Label(screenshot_box, text="ระบุชื่อไฟล์รูปภาพ (รองรับ {NAME}, {EMAIL}, {DEVICE}):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=2)
+        tk.Label(screenshot_box, text="ระบุชื่อไฟล์รูปภาพ (รองรับ {NAME}, {GROUP}, {EMAIL}, {DEVICE}, {DATE}, {TIME}):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=2)
         
         screenshot_input_frame = tk.Frame(screenshot_box, bg=BG_DARK)
         screenshot_input_frame.pack(fill="x", pady=5)
         
         self.manual_screenshot_entry = ModernEntry(screenshot_input_frame)
         self.manual_screenshot_entry.pack(fill="x", side="left", expand=True, padx=(0, 10))
-        self.manual_screenshot_entry.insert(0, "screenshot_{NAME}.png")
+        self.manual_screenshot_entry.insert(0, "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png")
         
         ModernButton(screenshot_input_frame, text="📸 ถ่ายภาพหน้าจอทุกเครื่อง", command=self.send_manual_screenshot).pack(side="right")
 
@@ -1493,13 +1496,17 @@ class MuMuGUI(tk.Tk):
             self.write_log("⚠️ ไม่สามารถถ่ายภาพหน้าจอได้: กรุณาเลือก Emulator ด้านซ้ายอย่างน้อย 1 เครื่อง!", "warning")
             return
             
-        filename_pattern = self.manual_screenshot_entry.get().strip() or "screenshot_{NAME}.png"
+        filename_pattern = self.manual_screenshot_entry.get().strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
         checked_accounts = [acc for acc in self.accounts if acc.get("checked", True)]
         
-        # ค้นหาคู่ของ emulator และบัญชีตามอันดับ (index) เช่นเดียวกับตอนรันปกติ
+        # ค้นหาคู่ของ emulator และบัญชี
         paired_list = []
         for idx, dev in enumerate(devices):
-            acc = checked_accounts[idx] if idx < len(checked_accounts) else None
+            acc = None
+            if hasattr(self, 'device_active_accounts') and dev in self.device_active_accounts:
+                acc = self.device_active_accounts[dev]
+            else:
+                acc = checked_accounts[idx] if idx < len(checked_accounts) else None
             paired_list.append((dev, acc))
             
         def worker():
@@ -1509,22 +1516,36 @@ class MuMuGUI(tk.Tk):
             def capture_single(pair):
                 dev, acc = pair
                 filename = filename_pattern
+                
+                # ดึงวันและเวลา ณ ปัจจุบัน
+                from datetime import datetime
+                now = datetime.now()
+                date_str = now.strftime("%Y-%m-%d")
+                time_str = now.strftime("%H-%M-%S")
+                
                 if acc:
                     filename = filename.replace("{EMAIL}", acc.get("email", "no_account"))
                     filename = filename.replace("{PASSWORD}", acc.get("password", "no_password"))
                     filename = filename.replace("{NAME}", acc.get("name", ""))
+                    filename = filename.replace("{GROUP}", acc.get("group", "no_group"))
                 else:
                     filename = filename.replace("{EMAIL}", "no_account")
                     filename = filename.replace("{PASSWORD}", "no_password")
                     filename = filename.replace("{NAME}", "no_name")
+                    filename = filename.replace("{GROUP}", "no_group")
                 
-                # ปรับแต่งเครื่องหมายและอักขระที่ปลอดภัยสำหรับ Windows
+                filename = filename.replace("{DATE}", date_str)
+                filename = filename.replace("{TIME}", time_str)
+                
+                # ปรับแต่งเครื่องหมายและอักขระที่ปลอดภัยสำหรับ Windows (รองรับภาษาไทย อังกฤษ ตัวเลข และสัญลักษณ์ที่ปลอดภัย)
                 import string
                 safe_device = dev.replace(":", "_").replace(".", "_")
                 filename = filename.replace("{DEVICE}", safe_device)
                 
-                valid_chars = f"-_.() {string.ascii_letters}{string.digits}\u0e00-\u0e7f"
-                filename = "".join(c for c in filename if c in valid_chars or c in "/\\")
+                def is_safe_char(c):
+                    return c.isalnum() or c in "-_.() /\\" or ('\u0e00' <= c <= '\u0e7f')
+                
+                filename = "".join(c for c in filename if is_safe_char(c))
                 
                 if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                     filename += ".png"
@@ -1547,6 +1568,240 @@ class MuMuGUI(tk.Tk):
                     self.write_log(f"   [{dev}] บันทึกภาพล้มเหลว: {err}", "error")
                     
         threading.Thread(target=worker, daemon=True).start()
+
+    def open_visual_recorder(self):
+        if self.macro_running:
+            messagebox.showwarning("คำเตือน", "ไม่สามารถเปิดระบบบันทึกพิกัดด้วยภาพได้ขณะที่บอทมาโครกำลังทำงานอยู่!", parent=self)
+            return
+
+        selected_devices = self.get_selected_devices()
+        if not selected_devices:
+            selected_devices = self.controller.get_connected_devices()
+            
+        if not selected_devices:
+            messagebox.showerror("ไม่พบอุปกรณ์", "ไม่พบ Emulator ที่เชื่อมต่ออยู่! กรุณาเปิดและเชื่อมต่อ Emulator ก่อนใช้งานระบบนี้", parent=self)
+            return
+            
+        import cv2
+        import numpy as np
+        
+        dialog = tk.Toplevel(self)
+        dialog.title("🎯 Visual Coordinate Recorder & Tap Simulator")
+        dialog.configure(bg=BG_DARK)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        canvas = None
+        orig_w, orig_h = 960, 540
+        scale = 1.0
+        disp_w, disp_h = 800, 450
+        temp_screenshot = os.path.join(self.templates_dir, "visual_recorder_temp.png")
+        temp_disp_path = os.path.join(self.templates_dir, "visual_recorder_disp.png")
+        dots_drawn = []
+        
+        def on_close():
+            try:
+                if os.path.exists(temp_screenshot):
+                    os.remove(temp_screenshot)
+                if os.path.exists(temp_disp_path):
+                    os.remove(temp_disp_path)
+            except Exception:
+                pass
+            dialog.grab_release()
+            dialog.destroy()
+            
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
+        canvas_frame = tk.Frame(dialog, bg=BG_DARK)
+        canvas_frame.pack(side="left", padx=15, pady=15)
+        
+        canvas = tk.Canvas(canvas_frame, width=800, height=450, bg="#000000", highlightthickness=1, highlightbackground=BG_PANEL)
+        canvas.pack()
+        
+        right_panel = tk.Frame(dialog, bg=BG_DARK, padx=15, pady=15)
+        right_panel.pack(side="right", fill="both", expand=True)
+        
+        tk.Label(right_panel, text="📱 เลือก Emulator เป้าหมาย:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 5))
+        dev_var = tk.StringVar(value=selected_devices[0])
+        dev_combo = ttk.Combobox(right_panel, textvariable=dev_var, values=selected_devices, state="readonly", font=("Segoe UI", 10))
+        dev_combo.pack(fill="x", pady=(0, 15))
+        
+        tk.Label(right_panel, text="⚙️ ตั้งค่าคำสั่งคลิก (Tap):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        delay_frame = tk.Frame(right_panel, bg=BG_DARK)
+        delay_frame.pack(fill="x", pady=2)
+        tk.Label(delay_frame, text="หน่วงเวลาหลังกด (วิ):", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
+        delay_entry = ModernEntry(delay_frame, width=8)
+        delay_entry.pack(side="right")
+        delay_entry.insert(0, "0.5")
+        
+        desc_frame = tk.Frame(right_panel, bg=BG_DARK)
+        desc_frame.pack(fill="x", pady=5)
+        tk.Label(desc_frame, text="คำอธิบายนำหน้า:", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
+        desc_entry = ModernEntry(desc_frame, width=15)
+        desc_entry.pack(side="right")
+        desc_entry.insert(0, "จิ้มเนื้อเรื่อง")
+        
+        send_tap_var = tk.BooleanVar(value=True)
+        send_tap_chk = tk.Checkbutton(right_panel, text="👉 ส่งคลิกเข้า Emulator จริงด้วย", variable=send_tap_var, bg=BG_DARK, fg=FG_WHITE, selectcolor=BG_DARK, activebackground=BG_DARK, activeforeground=FG_WHITE, relief="flat", font=("Segoe UI", 9))
+        send_tap_chk.pack(anchor="w", pady=(10, 2))
+        
+        auto_refresh_var = tk.BooleanVar(value=True)
+        auto_refresh_chk = tk.Checkbutton(right_panel, text="🔄 อัปเดตภาพจออัตโนมัติหลังกด", variable=auto_refresh_var, bg=BG_DARK, fg=FG_WHITE, selectcolor=BG_DARK, activebackground=BG_DARK, activeforeground=FG_WHITE, relief="flat", font=("Segoe UI", 9))
+        auto_refresh_chk.pack(anchor="w", pady=2)
+        
+        status_lbl = tk.Label(right_panel, text="กำลังโหลดหน้าจอเครื่องเป้าหมาย...", bg=BG_DARK, fg=ACCENT_ORANGE, font=("Segoe UI", 9, "italic"), wraplength=220, justify="left")
+        status_lbl.pack(fill="x", pady=15)
+        
+        def refresh_screen():
+            nonlocal scale, disp_w, disp_h, orig_w, orig_h
+            device = dev_var.get()
+            status_lbl.configure(text="⏳ กำลังจับภาพหน้าจอ...", fg=ACCENT_ORANGE)
+            dialog.update()
+            
+            if not os.path.exists(self.templates_dir):
+                os.makedirs(self.templates_dir, exist_ok=True)
+                
+            success, err = self.controller.take_screenshot(device, temp_screenshot)
+            if not success:
+                status_lbl.configure(text=f"❌ แคปจอล้มเหลว: {err}", fg=ACCENT_RED)
+                return
+                
+            img = cv2.imread(temp_screenshot)
+            if img is None:
+                status_lbl.configure(text="❌ ไม่สามารถเปิดไฟล์รูปภาพได้", fg=ACCENT_RED)
+                return
+                
+            orig_h, orig_w = img.shape[:2]
+            scale = min(800.0 / orig_w, 450.0 / orig_h)
+            disp_w = int(orig_w * scale)
+            disp_h = int(orig_h * scale)
+            
+            resized = cv2.resize(img, (disp_w, disp_h))
+            cv2.imwrite(temp_disp_path, resized)
+            
+            canvas.configure(width=disp_w, height=disp_h)
+            photo = tk.PhotoImage(file=temp_disp_path)
+            canvas.delete("all")
+            canvas.create_image(0, 0, image=photo, anchor="nw")
+            canvas.image = photo
+            
+            dots_drawn.clear()
+            status_lbl.configure(text=f"📸 อัปเดตหน้าจอสำเร็จ ({orig_w}x{orig_h})", fg=ACCENT_GREEN)
+            
+        press_x, press_y = 0, 0
+        
+        def on_press(event):
+            nonlocal press_x, press_y
+            press_x = event.x
+            press_y = event.y
+            
+        def on_release(event):
+            nonlocal scale
+            device = dev_var.get()
+            release_x = event.x
+            release_y = event.y
+            
+            import math
+            dist = math.sqrt((release_x - press_x)**2 + (release_y - press_y)**2)
+            
+            real_start_x = int(press_x / scale)
+            real_start_y = int(press_y / scale)
+            real_end_x = int(release_x / scale)
+            real_end_y = int(release_y / scale)
+            
+            delay_val = 0.5
+            try:
+                delay_val = float(delay_entry.get().strip() or "0.5")
+            except ValueError:
+                pass
+                
+            prefix = desc_entry.get().strip() or "จิ้มพิกัด"
+            
+            if dist < 10:
+                # ทำการ Tap (คลิกพิกัดเดียว)
+                desc = f"{prefix} ({real_start_x}, {real_start_y})"
+                step = {
+                    "type": "tap",
+                    "desc": desc,
+                    "x": str(real_start_x),
+                    "y": str(real_start_y),
+                    "delay": delay_val
+                }
+                self.macro_steps.append(step)
+                self.refresh_listbox()
+                
+                step_num = len(dots_drawn) + 1
+                dot = canvas.create_oval(press_x - 6, press_y - 6, press_x + 6, press_y + 6, fill="#E74C3C", outline="#FFFFFF", width=1.5)
+                text = canvas.create_text(press_x, press_y, text=str(step_num), fill="#FFFFFF", font=("Segoe UI", 7, "bold"))
+                dots_drawn.append((dot, text, step))
+                
+                status_lbl.configure(text=f"🎯 บันทึก Tap: ({real_start_x}, {real_start_y}) | ขั้นที่ {step_num}", fg=ACCENT_GREEN)
+                
+                if send_tap_var.get():
+                    def tap_worker():
+                        self.controller.tap(device, real_start_x, real_start_y)
+                        time.sleep(delay_val)
+                        if auto_refresh_var.get():
+                            self.after(0, lambda: refresh_screen())
+                    threading.Thread(target=tap_worker, daemon=True).start()
+            else:
+                # ทำการ Swipe (ลากเลื่อนหน้าจอ)
+                desc = f"ลากจอ ({real_start_x},{real_start_y} -> {real_end_x},{real_end_y})"
+                step = {
+                    "type": "swipe",
+                    "desc": desc,
+                    "x": str(real_start_x),
+                    "y": str(real_start_y),
+                    "x2": str(real_end_x),
+                    "y2": str(real_end_y),
+                    "delay": delay_val
+                }
+                self.macro_steps.append(step)
+                self.refresh_listbox()
+                
+                step_num = len(dots_drawn) + 1
+                dot = canvas.create_oval(press_x - 4, press_y - 4, press_x + 4, press_y + 4, fill="#2ECC71", outline="#FFFFFF", width=1)
+                arrow = canvas.create_line(press_x, press_y, release_x, release_y, arrow=tk.LAST, fill="#2ECC71", width=3)
+                text = canvas.create_text(press_x - 10, press_y - 10, text=str(step_num), fill="#2ECC71", font=("Segoe UI", 9, "bold"))
+                dots_drawn.append(((dot, arrow), text, step))
+                
+                status_lbl.configure(text=f"↕️ บันทึก Swipe: {real_start_x},{real_start_y}->{real_end_x},{real_end_y} | ขั้นที่ {step_num}", fg=ACCENT_GREEN)
+                
+                if send_tap_var.get():
+                    def swipe_worker():
+                        self.controller.swipe(device, real_start_x, real_start_y, real_end_x, real_end_y)
+                        time.sleep(delay_val)
+                        if auto_refresh_var.get():
+                            self.after(0, lambda: refresh_screen())
+                    threading.Thread(target=swipe_worker, daemon=True).start()
+                    
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<ButtonRelease-1>", on_release)
+        dev_combo.bind("<<ComboboxSelected>>", lambda e: refresh_screen())
+        
+        def undo_step():
+            if not dots_drawn:
+                status_lbl.configure(text="⚠️ ไม่มีขั้นตอนให้ย้อนกลับ", fg=ACCENT_ORANGE)
+                return
+            draw_objs, text, step = dots_drawn.pop()
+            if isinstance(draw_objs, (tuple, list)):
+                for obj in draw_objs:
+                    canvas.delete(obj)
+            else:
+                canvas.delete(draw_objs)
+            canvas.delete(text)
+            if self.macro_steps and self.macro_steps[-1] == step:
+                self.macro_steps.pop()
+                self.refresh_listbox()
+            status_lbl.configure(text="↩️ ยกเลิกขั้นตอนล่าสุดสำเร็จ", fg=ACCENT_ORANGE)
+            
+        ModernButton(right_panel, text="📸 ถ่ายรูปใหม่ (Refresh)", command=refresh_screen, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(fill="x", pady=5)
+        ModernButton(right_panel, text="↩️ ย้อนกลับขั้นตอนล่าสุด (Undo)", command=undo_step, bg=ACCENT_ORANGE, activebg="#d35400").pack(fill="x", pady=5)
+        ModernButton(right_panel, text="❌ ปิดหน้าต่างการบันทึก", command=on_close, bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=(15, 0))
+        
+        self.after(100, refresh_screen)
 
     # --- บัญชีผู้ใช้ (Accounts Manager Database) ---
     def load_accounts(self):
@@ -2366,7 +2621,7 @@ class MuMuGUI(tk.Tk):
                 details = f"เซ็ต '{step.get('set') or step.get('text') or ''}'"
             elif t == "SCREENSHOT":
                 t_thai = "แคปจอ"
-                details = f"ไฟล์ '{step.get('text') or 'screenshot_{NAME}.png'}'"
+                details = f"ไฟล์ '{step.get('text') or 'screenshots/{DATE}/screenshot_{NAME}_{TIME}.png'}'"
             else:
                 details = ""
                 
@@ -3373,6 +3628,10 @@ class MuMuGUI(tk.Tk):
 
     def execute_device_macro(self, device, account, highlight=True):
         """รันสคริปต์มาโครบน Emulator จอเดียวกับบัญชีที่กำหนด"""
+        if not hasattr(self, 'device_active_accounts'):
+            self.device_active_accounts = {}
+        self.device_active_accounts[device] = account
+        
         # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี
         resolver = lambda name: self.script_sets.get(name)
         try:
@@ -3478,27 +3737,39 @@ class MuMuGUI(tk.Tk):
                         else:
                             self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
             elif t == "screenshot":
-                filename_pattern = step.get("text", "").strip() or "screenshot_{NAME}.png"
+                filename_pattern = step.get("text", "").strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
                 
-                # แทนที่ตัวแปร {EMAIL}, {PASSWORD}, {NAME} ในชื่อไฟล์ภาพ
+                # แทนที่ตัวแปร {EMAIL}, {PASSWORD}, {NAME}, {GROUP}, {DATE}, {TIME} ในชื่อไฟล์ภาพ
                 filename = filename_pattern
+                
+                from datetime import datetime
+                now = datetime.now()
+                date_str = now.strftime("%Y-%m-%d")
+                time_str = now.strftime("%H-%M-%S")
+                
                 if account:
-                    filename = filename.replace("{EMAIL}", account["email"])
-                    filename = filename.replace("{PASSWORD}", account["password"])
+                    filename = filename.replace("{EMAIL}", account.get("email", "no_account"))
+                    filename = filename.replace("{PASSWORD}", account.get("password", "no_password"))
                     filename = filename.replace("{NAME}", account.get("name", ""))
+                    filename = filename.replace("{GROUP}", account.get("group", "no_group"))
                 else:
                     filename = filename.replace("{EMAIL}", "no_account")
                     filename = filename.replace("{PASSWORD}", "no_password")
                     filename = filename.replace("{NAME}", "no_name")
+                    filename = filename.replace("{GROUP}", "no_group")
                 
-                # ทำความสะอาดชื่อไฟล์ให้ปลอดภัยสำหรับ Windows
+                filename = filename.replace("{DATE}", date_str)
+                filename = filename.replace("{TIME}", time_str)
+                
+                # ทำความสะอาดชื่อไฟล์ให้ปลอดภัยสำหรับ Windows (รองรับภาษาไทย อังกฤษ ตัวเลข และสัญลักษณ์ที่ปลอดภัย)
                 import string
                 safe_device = device.replace(":", "_").replace(".", "_")
                 filename = filename.replace("{DEVICE}", safe_device)
                 
-                # จัดการแทนที่สัญลักษณ์พิเศษในชื่อไฟล์ไม่ให้มีปัญหากับ Windows
-                valid_chars = f"-_.() {string.ascii_letters}{string.digits}\u0e00-\u0e7f"
-                filename = "".join(c for c in filename if c in valid_chars or c in "/\\")
+                def is_safe_char(c):
+                    return c.isalnum() or c in "-_.() /\\" or ('\u0e00' <= c <= '\u0e7f')
+                
+                filename = "".join(c for c in filename if is_safe_char(c))
                 
                 # หากไม่มีนามสกุล .png หรือ .jpg ให้เติม .png
                 if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
