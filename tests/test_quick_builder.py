@@ -50,6 +50,7 @@ class QuickBuilderTests(unittest.TestCase):
                 "y": "420",
                 "x2": "450",
                 "y2": "160",
+                "duration": 800,
                 "delay": 0.5,
                 "desc": "เลื่อนขึ้น",
             },

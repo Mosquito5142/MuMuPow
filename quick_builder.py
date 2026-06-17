@@ -20,6 +20,7 @@ KEY_CODES = {
 }
 
 DEFAULT_ACTION_DELAY = 0.5
+DEFAULT_SWIPE_DURATION = 800
 
 
 def _parse_coordinate(value):
@@ -87,7 +88,7 @@ def build_key_step(key_name, delay=0.3):
     }
 
 
-def build_swipe_step(direction, delay=DEFAULT_ACTION_DELAY):
+def build_swipe_step(direction, delay=DEFAULT_ACTION_DELAY, duration=DEFAULT_SWIPE_DURATION):
     direction_key = str(direction).lower()
     if direction_key == "up":
         return {
@@ -96,6 +97,7 @@ def build_swipe_step(direction, delay=DEFAULT_ACTION_DELAY):
             "y": "420",
             "x2": "450",
             "y2": "160",
+            "duration": int(duration),
             "delay": float(delay),
             "desc": "เลื่อนขึ้น",
         }
@@ -106,6 +108,7 @@ def build_swipe_step(direction, delay=DEFAULT_ACTION_DELAY):
             "y": "160",
             "x2": "450",
             "y2": "420",
+            "duration": int(duration),
             "delay": float(delay),
             "desc": "เลื่อนลง",
         }

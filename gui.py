@@ -10,6 +10,7 @@ from mumu_controller import MuMuController
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
     DEFAULT_ACTION_DELAY,
+    DEFAULT_SWIPE_DURATION,
     build_key_step,
     build_sleep_step,
     build_swipe_step,
@@ -1799,6 +1800,13 @@ class MuMuGUI(tk.Tk):
         delay_entry = ModernEntry(delay_frame, width=8)
         delay_entry.pack(side="right")
         delay_entry.insert(0, str(DEFAULT_ACTION_DELAY))
+
+        swipe_duration_frame = tk.Frame(right_panel, bg=BG_DARK)
+        swipe_duration_frame.pack(fill="x", pady=2)
+        tk.Label(swipe_duration_frame, text="ระยะเวลาลาก (ms):", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
+        swipe_duration_entry = ModernEntry(swipe_duration_frame, width=8)
+        swipe_duration_entry.pack(side="right")
+        swipe_duration_entry.insert(0, str(DEFAULT_SWIPE_DURATION))
         
         desc_frame = tk.Frame(right_panel, bg=BG_DARK)
         desc_frame.pack(fill="x", pady=5)
@@ -1880,6 +1888,11 @@ class MuMuGUI(tk.Tk):
                 delay_val = float(delay_entry.get().strip() or str(DEFAULT_ACTION_DELAY))
             except ValueError:
                 pass
+            swipe_duration = DEFAULT_SWIPE_DURATION
+            try:
+                swipe_duration = int(float(swipe_duration_entry.get().strip() or str(DEFAULT_SWIPE_DURATION)))
+            except ValueError:
+                pass
                 
             prefix = desc_entry.get().strip() or "จิ้มพิกัด"
             
@@ -1920,6 +1933,7 @@ class MuMuGUI(tk.Tk):
                     "y": str(real_start_y),
                     "x2": str(real_end_x),
                     "y2": str(real_end_y),
+                    "duration": swipe_duration,
                     "delay": delay_val
                 }
                 self.macro_steps.append(step)
@@ -1935,7 +1949,7 @@ class MuMuGUI(tk.Tk):
                 
                 if send_tap_var.get():
                     def swipe_worker():
-                        self.controller.swipe(device, real_start_x, real_start_y, real_end_x, real_end_y)
+                        self.controller.swipe(device, real_start_x, real_start_y, real_end_x, real_end_y, swipe_duration)
                         time.sleep(delay_val)
                         if auto_refresh_var.get():
                             self.after(0, lambda: refresh_screen())
@@ -4097,7 +4111,8 @@ class MuMuGUI(tk.Tk):
                 self.controller.tap(device, step["x"], step["y"])
                 time.sleep(step_delay)  # หน่วงเวลาหลังคลิกเพื่อให้ระบบ Android ทำงานทัน
             elif t == "swipe":
-                self.controller.swipe(device, step["x"], step["y"], step["x2"], step["y2"])
+                swipe_duration = int(float(step.get("duration", DEFAULT_SWIPE_DURATION)))
+                self.controller.swipe(device, step["x"], step["y"], step["x2"], step["y2"], swipe_duration)
                 time.sleep(step_delay)  # หน่วงเวลาหลังลากจอ
             elif t == "text":
                 text_to_send = step["text"]
