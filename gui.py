@@ -951,10 +951,10 @@ class MuMuGUI(tk.Tk):
         self.bind_canvas_mousewheel(canvas)
 
         # รายละเอียดคำอธิบายแท็บ
-        desc_lbl = tk.Label(sync_frame, text="ควบคุมหน้าจอแบบแมนนวลพร้อมกัน", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold"))
+        desc_lbl = tk.Label(sync_frame, text="Manual Sync Console", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold"))
         desc_lbl.pack(anchor="w", pady=(0, 5))
         
-        info_lbl = tk.Label(sync_frame, text="คำสั่งด้านล่างนี้จะส่งไปทำงานพร้อมกันบน Emulator ทุกเครื่องที่คุณเลือกไว้ในแถบเช็คลิสต์ด้านซ้ายมือ", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 10))
+        info_lbl = tk.Label(sync_frame, text="ส่งคำสั่งเดียวกันไปยัง Emulator ที่เลือกไว้ทางซ้าย", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 10))
         info_lbl.pack(anchor="w", pady=(0, 20))
 
         # ส่วนของแผงดำเนินการ Grid
@@ -962,73 +962,72 @@ class MuMuGUI(tk.Tk):
         control_grid.pack(fill="x", pady=10)
 
         # 1. กล่องจำลองคลิกพิกัด
-        tap_box = tk.LabelFrame(control_grid, text=" 🎯 จำลองการคลิกพิกัด ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        tap_box.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
+        tap_outer, tap_box = self.make_panel(control_grid, "คลิกพิกัด", manager=None)
+        tap_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
         
-        tk.Label(tap_box, text="พิกัด X:", bg=BG_DARK, fg=FG_WHITE).grid(row=0, column=0, sticky="w", pady=5)
+        tk.Label(tap_box, text="พิกัด X:", bg=BG_CARD, fg=FG_WHITE).grid(row=0, column=0, sticky="w", pady=5)
         self.manual_x = ModernEntry(tap_box, width=10)
         self.manual_x.grid(row=0, column=1, padx=5, pady=5)
         self.manual_x.insert(0, "450")
 
-        tk.Label(tap_box, text="พิกัด Y:", bg=BG_DARK, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=5)
+        tk.Label(tap_box, text="พิกัด Y:", bg=BG_CARD, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=5)
         self.manual_y = ModernEntry(tap_box, width=10)
         self.manual_y.grid(row=1, column=1, padx=5, pady=5)
         self.manual_y.insert(0, "320")
 
-        ModernButton(tap_box, text="💥 ส่งคำสั่งคลิกหน้าจอ", command=self.send_manual_click).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ModernButton(tap_box, text="ส่งคลิก", command=self.send_manual_click, variant="primary").grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         # 2. กล่องจำลองการพิมพ์ข้อความ
-        txt_box = tk.LabelFrame(control_grid, text=" ⌨️ จำลองการพิมพ์ข้อความ ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        txt_box.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        txt_outer, txt_box = self.make_panel(control_grid, "พิมพ์ข้อความ", manager=None)
+        txt_outer.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         
-        tk.Label(txt_box, text="พิมพ์ข้อความภาษาอังกฤษ/ตัวเลข:", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=5)
+        tk.Label(txt_box, text="ข้อความ:", bg=BG_CARD, fg=FG_WHITE).pack(anchor="w", pady=5)
         self.manual_txt_entry = ModernEntry(txt_box, width=30)
         self.manual_txt_entry.pack(fill="x", pady=5)
         self.manual_txt_entry.insert(0, "Hello World")
         
-        ModernButton(txt_box, text="⌨️ ส่งคำสั่งพิมพ์ข้อความ", command=self.send_manual_text).pack(fill="x", pady=(18, 0))
+        ModernButton(txt_box, text="ส่งข้อความ", command=self.send_manual_text, variant="primary").pack(fill="x", pady=(18, 0))
 
         # 3. จำลองกดปุ่มระบบมือถือ
-        key_box = tk.LabelFrame(control_grid, text=" 🖱️ จำลองการกดปุ่มระบบ ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        key_box.grid(row=0, column=2, sticky="nsew", padx=(10, 0), pady=10)
+        key_outer, key_box = self.make_panel(control_grid, "ปุ่มระบบ", manager=None)
+        key_outer.grid(row=0, column=2, sticky="nsew", padx=(10, 0), pady=10)
 
-        ModernButton(key_box, text="⬅️ ปุ่มย้อนกลับ (BACK)", command=lambda: self.send_manual_key(4), bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=3)
-        ModernButton(key_box, text="🏠 ปุ่มหน้าแรก (HOME)", command=lambda: self.send_manual_key(3), bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=3)
-        ModernButton(key_box, text="📋 ปุ่มเมนู (MENU)", command=lambda: self.send_manual_key(82), bg=BG_INPUT, activebg="#444444").pack(fill="x", pady=3)
+        ModernButton(key_box, text="BACK", command=lambda: self.send_manual_key(4), variant="subtle").pack(fill="x", pady=3)
+        ModernButton(key_box, text="HOME", command=lambda: self.send_manual_key(3), variant="subtle").pack(fill="x", pady=3)
+        ModernButton(key_box, text="MENU", command=lambda: self.send_manual_key(82), variant="subtle").pack(fill="x", pady=3)
 
         control_grid.columnconfigure(0, weight=1)
         control_grid.columnconfigure(1, weight=1)
         control_grid.columnconfigure(2, weight=1)
 
         # 4. ถ่ายภาพหน้าจอพร้อมกัน
-        screenshot_box = tk.LabelFrame(control_grid, text=" 📸 ถ่ายภาพหน้าจอพร้อมกัน ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        screenshot_box.grid(row=1, column=0, columnspan=3, sticky="ew", pady=10)
+        screenshot_outer, screenshot_box = self.make_panel(control_grid, "ถ่ายภาพหน้าจอ", manager=None)
+        screenshot_outer.grid(row=1, column=0, columnspan=3, sticky="ew", pady=10)
         
-        tk.Label(screenshot_box, text="ระบุชื่อไฟล์รูปภาพ (รองรับ {NAME}, {GROUP}, {EMAIL}, {DEVICE}, {DATE}, {TIME}):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w", pady=2)
+        tk.Label(screenshot_box, text="ชื่อไฟล์ (รองรับ {NAME}, {GROUP}, {EMAIL}, {DEVICE}, {DATE}, {TIME}):", bg=BG_CARD, fg=FG_WHITE).pack(anchor="w", pady=2)
         
-        screenshot_input_frame = tk.Frame(screenshot_box, bg=BG_DARK)
+        screenshot_input_frame = tk.Frame(screenshot_box, bg=BG_CARD)
         screenshot_input_frame.pack(fill="x", pady=5)
         
         self.manual_screenshot_entry = ModernEntry(screenshot_input_frame)
         self.manual_screenshot_entry.pack(fill="x", side="left", expand=True, padx=(0, 10))
         self.manual_screenshot_entry.insert(0, "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png")
         
-        ModernButton(screenshot_input_frame, text="📸 ถ่ายภาพหน้าจอทุกเครื่อง", command=self.send_manual_screenshot).pack(side="right")
+        ModernButton(screenshot_input_frame, text="ถ่ายทุกเครื่อง", command=self.send_manual_screenshot, variant="accent").pack(side="right")
 
         # 5. กล่องรันคำสั่ง ADB แบบแมนนวลเอง
-        raw_box = tk.LabelFrame(sync_frame, text=" 💻 รันคำสั่ง ADB Shell เองแบบกำหนดเอง ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        raw_box.pack(fill="x", pady=10)
+        raw_outer, raw_box = self.make_panel(sync_frame, "ADB Shell", fill="x", pady=10)
 
-        tk.Label(raw_box, text="คำสั่งระบบ: adb -s [device_id] shell ... (ไม่ต้องใส่คำว่า adb -s [device_id] shell)", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic")).pack(anchor="w")
+        tk.Label(raw_box, text="ใส่เฉพาะคำสั่งหลัง shell เช่น wm size", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic")).pack(anchor="w")
         
-        cmd_input_frame = tk.Frame(raw_box, bg=BG_DARK)
+        cmd_input_frame = tk.Frame(raw_box, bg=BG_CARD)
         cmd_input_frame.pack(fill="x", pady=5)
 
         self.custom_cmd_entry = ModernEntry(cmd_input_frame)
         self.custom_cmd_entry.pack(fill="x", side="left", expand=True, padx=(0, 10))
         self.custom_cmd_entry.insert(0, "wm size")
 
-        ModernButton(cmd_input_frame, text="⚡ รันคำสั่งทันที", command=self.send_custom_cmd).pack(side="right")
+        ModernButton(cmd_input_frame, text="รัน", command=self.send_custom_cmd, variant="warning").pack(side="right")
 
     def build_settings_tab(self, parent):
         # สร้าง Canvas และ Scrollbar เพื่อให้หน้าต่างตั้งค่าเลื่อนขึ้น-ลงได้
@@ -1053,33 +1052,31 @@ class MuMuGUI(tk.Tk):
         scrollbar.pack(side="right", fill="y")
         self.bind_canvas_mousewheel(canvas)
 
-        tk.Label(settings_frame, text="ตั้งค่าโปรแกรมเพิ่มเติม", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 15))
+        tk.Label(settings_frame, text="Settings Console", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 15))
 
         # ที่อยู่ ADB.exe
-        path_box = tk.LabelFrame(settings_frame, text=" 💾 ตั้งค่าเส้นทางไฟล์ที่จำเป็น ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        path_box.pack(fill="x", pady=10)
+        path_outer, path_box = self.make_panel(settings_frame, "ไฟล์ระบบ", fill="x", pady=10)
 
-        tk.Label(path_box, text="ที่อยู่ไฟล์ ADB.exe (Path):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w")
+        tk.Label(path_box, text="ที่อยู่ไฟล์ ADB.exe (Path):", bg=BG_CARD, fg=FG_WHITE).pack(anchor="w")
         
-        adb_path_frame = tk.Frame(path_box, bg=BG_DARK)
+        adb_path_frame = tk.Frame(path_box, bg=BG_CARD)
         adb_path_frame.pack(fill="x", pady=5)
         
         self.adb_path_entry = ModernEntry(adb_path_frame)
         self.adb_path_entry.pack(fill="x", side="left", expand=True, padx=(0, 10))
         self.adb_path_entry.insert(0, self.controller.adb_path)
 
-        ModernButton(adb_path_frame, text="บันทึกและโหลดใหม่", command=self.save_adb_path).pack(side="right")
+        ModernButton(adb_path_frame, text="บันทึกและโหลดใหม่", command=self.save_adb_path, variant="primary").pack(side="right")
 
         # ตั้งค่าพอร์ต ADB (ADB Port Settings)
-        port_box = tk.LabelFrame(settings_frame, text=" 🔌 ตั้งค่าพอร์ต ADB (ADB Port Settings) ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        port_box.pack(fill="x", pady=10)
+        port_outer, port_box = self.make_panel(settings_frame, "พอร์ต ADB", fill="x", pady=10)
 
-        tk.Label(port_box, text="ระบุหรือนำเข้าข้อมูลพอร์ตของ Emulator สำหรับสแกนและควบคุม (ใช้เมื่อมีจำนวนจอเยอะหรือพอร์ตแปลก):", bg=BG_DARK, fg=FG_WHITE).pack(anchor="w")
+        tk.Label(port_box, text="นำเข้าหรือดูพอร์ต Emulator สำหรับสแกนและควบคุม", bg=BG_CARD, fg=FG_WHITE).pack(anchor="w")
 
-        port_btn_frame = tk.Frame(port_box, bg=BG_DARK)
+        port_btn_frame = tk.Frame(port_box, bg=BG_CARD)
         port_btn_frame.pack(fill="x", pady=5)
 
-        ModernButton(port_btn_frame, text="🔌 นำเข้าพอร์ตจาก JSON (AI)", command=self.open_port_config_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", padx=(0, 10))
+        ModernButton(port_btn_frame, text="นำเข้าพอร์ต JSON", command=self.open_port_config_dialog, variant="accent").pack(side="left", padx=(0, 10))
         
         def copy_ai_prompt():
             prompt_text = (
@@ -1098,25 +1095,24 @@ class MuMuGUI(tk.Tk):
             self.update()
             messagebox.showinfo("สำเร็จ", "คัดลอกพร้อมต์สำหรับส่งให้ AI ลง Clipboard เรียบร้อยแล้ว!\nสามารถนำไปวาง (Ctrl+V) ควบคู่กับรูปภาพในแชทบอท AI ได้ทันที")
 
-        ModernButton(port_btn_frame, text="📋 คัดลอกพร้อมต์ถาม AI", command=copy_ai_prompt, bg=ACCENT_ORANGE, activebg="#d35400").pack(side="left", padx=(0, 10))
+        ModernButton(port_btn_frame, text="คัดลอกพร้อมต์ AI", command=copy_ai_prompt, variant="warning").pack(side="left", padx=(0, 10))
 
         def show_current_ports():
             ports = self.controller.load_ports()
             msg = f"พอร์ตที่โปรแกรมกำลังสแกนอยู่ในปัจจุบัน:\n\n{ports}\n\nจำนวนทั้งหมด: {len(ports)} พอร์ต"
             messagebox.showinfo("พอร์ตที่ใช้สแกน", msg)
 
-        ModernButton(port_btn_frame, text="🔍 แสดงรายชื่อพอร์ตปัจจุบัน", command=show_current_ports, bg=BG_INPUT, activebg="#444444").pack(side="left")
+        ModernButton(port_btn_frame, text="ดูพอร์ตปัจจุบัน", command=show_current_ports, variant="subtle").pack(side="left")
 
         # ระบบตรวจสอบความเหมาะสมของขนาดจอและ DPI
-        diag_box = tk.LabelFrame(settings_frame, text=" 📊 ระบบตรวจสอบขนาดหน้าจอ Emulator ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        diag_box.pack(fill="x", pady=10)
+        diag_outer, diag_box = self.make_panel(settings_frame, "ตรวจสอบ Emulator", fill="x", pady=10)
 
-        ModernButton(diag_box, text="ตรวจสอบความละเอียดและค่า DPI ของ Emulator ที่เลือก", command=self.validate_resolutions, bg=ACCENT_GREEN, activebg="#2ecc71").pack(anchor="w")
+        ModernButton(diag_box, text="ตรวจสอบความละเอียดและ DPI", command=self.validate_resolutions, variant="primary").pack(anchor="w")
         
         diag_lbl = tk.Label(
             diag_box, 
             text="หมายเหตุ: พิกัดมาโครทั้งหมดถูกคำนวณบนขนาดหน้าจอเป้าหมาย กว้าง 960 / สูง 540 และค่า DPI 160 หากตั้งค่า Emulator ไม่ตรง คำสั่งคลิกอาจคลาดเคลื่อนไม่ตรงปุ่มจริง ปุ่มนี้จะช่วยสแกนขนาดหน้าจอปัจจุบันและรายงานให้ทราบความเข้ากันได้", 
-            bg=BG_DARK, 
+            bg=BG_CARD, 
             fg=FG_MUTED, 
             font=("Segoe UI", 9, "italic"),
             justify="left",
@@ -1125,19 +1121,18 @@ class MuMuGUI(tk.Tk):
         diag_lbl.pack(anchor="w", pady=(10, 0))
 
         # ตัวช่วยวิเคราะห์พิกัดมาโคร (Pointer Location Helper)
-        helper_box = tk.LabelFrame(settings_frame, text=" 🛠️ ตัวช่วยวิเคราะห์และหาพิกัดหน้าจอ (Pointer Location) ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        helper_box.pack(fill="x", pady=10)
+        helper_outer, helper_box = self.make_panel(settings_frame, "ตัวช่วยหาพิกัด", fill="x", pady=10)
 
-        btn_row = tk.Frame(helper_box, bg=BG_DARK)
+        btn_row = tk.Frame(helper_box, bg=BG_CARD)
         btn_row.pack(anchor="w", pady=5)
 
-        ModernButton(btn_row, text="🎯 เปิดแสดงเส้นพิกัดการจิ้ม", command=lambda: self.toggle_pointer_location(True), bg=ACCENT_BLUE, activebg=ACCENT_HOVER).pack(side="left", padx=(0, 10))
-        ModernButton(btn_row, text="❌ ปิดแสดงเส้นพิกัดการจิ้ม", command=lambda: self.toggle_pointer_location(False), bg=BG_INPUT, activebg="#444444").pack(side="left")
+        ModernButton(btn_row, text="เปิด Pointer", command=lambda: self.toggle_pointer_location(True), variant="accent").pack(side="left", padx=(0, 10))
+        ModernButton(btn_row, text="ปิด Pointer", command=lambda: self.toggle_pointer_location(False), variant="subtle").pack(side="left")
 
         helper_lbl = tk.Label(
             helper_box, 
             text="คำแนะนำ: เมื่อเปิดใช้งานแล้ว ให้ลองใช้เมาส์คลิกบนหน้าจอ Emulator จะมีแถบข้อความแสดงพิกัด X/Y จริงที่ด้านบนสุดของจอ Emulator ทันที! ช่วยให้หาพิกัดกรอกรหัสและปุ่มกดเกมได้แม่นยำ 100%", 
-            bg=BG_DARK, 
+            bg=BG_CARD, 
             fg=FG_MUTED, 
             font=("Segoe UI", 9, "italic"),
             justify="left",
