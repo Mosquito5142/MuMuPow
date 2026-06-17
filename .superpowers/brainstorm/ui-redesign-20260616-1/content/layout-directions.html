@@ -1,0 +1,249 @@
+<style>
+  .ui-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .ui-card {
+    background: #111827;
+    border: 1px solid #263244;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .ui-card:hover {
+    border-color: #38bdf8;
+    transform: translateY(-2px);
+  }
+  .ui-card.selected {
+    outline: 2px solid #38bdf8;
+    border-color: #38bdf8;
+  }
+  .mock-screen {
+    height: 330px;
+    background: #0b1120;
+    color: #e5edf7;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    padding: 12px;
+    box-sizing: border-box;
+  }
+  .topbar {
+    height: 36px;
+    border-bottom: 1px solid #263244;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #dbe7f5;
+    font-weight: 650;
+  }
+  .pill {
+    background: #172033;
+    border: 1px solid #2b3a52;
+    border-radius: 999px;
+    padding: 4px 9px;
+    color: #9fb2ca;
+    font-size: 11px;
+  }
+  .tiny {
+    font-size: 10px;
+    color: #7f93ad;
+  }
+  .button {
+    height: 24px;
+    border-radius: 6px;
+    background: #1e293b;
+    border: 1px solid #334155;
+  }
+  .button.primary {
+    background: #0f766e;
+    border-color: #14b8a6;
+  }
+  .button.danger {
+    background: #3f1d24;
+    border-color: #7f1d1d;
+  }
+  .panel {
+    background: #101827;
+    border: 1px solid #263244;
+    border-radius: 8px;
+  }
+  .line {
+    height: 10px;
+    border-radius: 99px;
+    background: #263244;
+    margin: 8px;
+  }
+  .line.short { width: 55%; }
+  .line.mid { width: 76%; }
+  .row {
+    height: 24px;
+    margin: 6px 8px;
+    border-radius: 6px;
+    background: #172033;
+    border: 1px solid #263244;
+  }
+  .row.active {
+    background: #0f2f4a;
+    border-color: #38bdf8;
+  }
+  .card-body {
+    padding: 14px;
+  }
+  .card-body h3 {
+    margin: 0 0 6px;
+    color: #f8fafc;
+  }
+  .card-body p {
+    margin: 0;
+    color: #a7b5c9;
+    line-height: 1.45;
+  }
+  .layout-a {
+    display: grid;
+    grid-template-columns: 78px 1fr 130px;
+    grid-template-rows: 36px 1fr 44px;
+    gap: 10px;
+    height: 100%;
+  }
+  .layout-a .topbar { grid-column: 1 / 4; }
+  .layout-a .runbar { grid-column: 2 / 4; display: grid; grid-template-columns: 1fr 1fr 90px; gap: 8px; align-items: center; padding: 8px; }
+  .layout-b {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    grid-template-rows: 36px 1fr;
+    gap: 10px;
+    height: 100%;
+  }
+  .layout-b .topbar { grid-column: 1 / 3; }
+  .layout-b .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .layout-c {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    grid-template-rows: 36px 60px 1fr;
+    gap: 10px;
+    height: 100%;
+  }
+  .layout-c .topbar { grid-column: 1 / 3; }
+  .layout-c .summary { grid-column: 2; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  @media (max-width: 1000px) {
+    .ui-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<h2>เลือกทิศทางออกแบบ UI ใหม่ของ MuMupow</h2>
+<p class="subtitle">ทั้งสามแบบเป็นธีมมืด ลดสีแสบตา เพิ่มระยะห่าง และจัด action สำคัญให้หาเจอง่ายขึ้น</p>
+
+<div class="ui-grid">
+  <div class="ui-card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="mock-screen">
+      <div class="layout-a">
+        <div class="topbar">MuMupow <span class="pill">Macro</span><span class="pill">Accounts</span><span class="pill">Manual</span></div>
+        <div class="panel">
+          <div class="line short"></div>
+          <div class="row active"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+        </div>
+        <div class="panel">
+          <div class="line mid"></div>
+          <div class="row active"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+        </div>
+        <div class="panel">
+          <div class="line"></div>
+          <div class="line short"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="button" style="margin:8px"></div>
+        </div>
+        <div class="panel runbar">
+          <div class="tiny">Delay 30s | Pause between sets</div>
+          <div class="button primary"></div>
+          <div class="button danger"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Operational Console</h3>
+      <p>แนะนำ: ซ้ายเลือกจอ, กลางทำงานหลัก, ขวาแก้รายละเอียด, แถบรันติดด้านล่าง เหมาะกับงานบอทที่ใช้ซ้ำทั้งวัน</p>
+    </div>
+  </div>
+
+  <div class="ui-card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="mock-screen">
+      <div class="layout-b">
+        <div class="topbar">MuMupow <span class="pill">Builder</span><span class="pill">Run</span></div>
+        <div class="panel">
+          <div class="line short"></div>
+          <div class="row active"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="button primary" style="margin:8px"></div>
+        </div>
+        <div class="main">
+          <div class="panel">
+            <div class="line mid"></div>
+            <div class="row active"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+            <div class="row"></div>
+          </div>
+          <div class="panel">
+            <div class="line"></div>
+            <div class="line short"></div>
+            <div class="button"></div>
+            <div class="button" style="margin-top:8px"></div>
+            <div class="button primary" style="margin-top:24px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Compact Builder</h3>
+      <p>คงความแน่นของเครื่องมือไว้ แต่ทำ spacing และกลุ่มปุ่มใหม่ ใช้พื้นที่น้อย เหมาะกับจอเล็กหรือคนชอบทุกอย่างอยู่หน้าเดียว</p>
+    </div>
+  </div>
+
+  <div class="ui-card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="mock-screen">
+      <div class="layout-c">
+        <div class="topbar">MuMupow <span class="pill">Overview</span><span class="pill">Automation</span></div>
+        <div class="panel">
+          <div class="line short"></div>
+          <div class="row active"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+        </div>
+        <div class="summary">
+          <div class="panel"><div class="line"></div><div class="line short"></div></div>
+          <div class="panel"><div class="line"></div><div class="line short"></div></div>
+          <div class="panel"><div class="line"></div><div class="line short"></div></div>
+        </div>
+        <div class="panel" style="grid-column:2">
+          <div class="line mid"></div>
+          <div class="row active"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+          <div class="button primary" style="margin:8px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Dashboard First</h3>
+      <p>เริ่มจากภาพรวมสถานะและสถิติ แล้วค่อยเข้าไปแก้ macro/account เหมาะถ้าอยากให้หน้าหลักดูโล่งและอ่านสถานะง่าย</p>
+    </div>
+  </div>
+</div>

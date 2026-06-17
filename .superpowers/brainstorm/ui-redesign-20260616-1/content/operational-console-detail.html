@@ -1,0 +1,321 @@
+<style>
+  .console-preview {
+    background: #080d16;
+    border: 1px solid #233044;
+    border-radius: 12px;
+    overflow: hidden;
+    color: #e6edf7;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    box-shadow: 0 18px 48px rgba(0,0,0,.35);
+  }
+  .appbar {
+    height: 54px;
+    background: #0c1422;
+    border-bottom: 1px solid #1f2b3d;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    box-sizing: border-box;
+  }
+  .brand {
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+  .status {
+    display: flex;
+    gap: 8px;
+    color: #9fb2ca;
+    font-size: 12px;
+  }
+  .status span {
+    border: 1px solid #2a384d;
+    background: #111b2b;
+    border-radius: 999px;
+    padding: 5px 10px;
+  }
+  .workspace {
+    height: 560px;
+    display: grid;
+    grid-template-columns: 250px minmax(380px, 1fr) 340px;
+    grid-template-rows: 1fr 74px;
+    gap: 12px;
+    padding: 12px;
+    box-sizing: border-box;
+  }
+  .surface {
+    background: #0d1523;
+    border: 1px solid #223046;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .surface-head {
+    height: 42px;
+    border-bottom: 1px solid #223046;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    box-sizing: border-box;
+    font-weight: 650;
+    font-size: 13px;
+  }
+  .muted {
+    color: #8da0b8;
+    font-weight: 500;
+  }
+  .device-card, .step-row, .field-row, .account-row {
+    background: #121d2e;
+    border: 1px solid #24344b;
+    border-radius: 7px;
+    margin: 8px;
+  }
+  .device-card {
+    height: 46px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    box-sizing: border-box;
+  }
+  .check {
+    width: 15px;
+    height: 15px;
+    border-radius: 4px;
+    background: #14b8a6;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
+    background: #22c55e;
+  }
+  .tabs {
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid #223046;
+  }
+  .tab {
+    padding: 7px 10px;
+    border-radius: 6px;
+    color: #8da0b8;
+    font-size: 12px;
+  }
+  .tab.active {
+    background: #12263c;
+    color: #e6f6ff;
+    border: 1px solid #1e5f89;
+  }
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid #223046;
+  }
+  .input {
+    background: #0a111d;
+    border: 1px solid #2b3c55;
+    border-radius: 6px;
+    height: 30px;
+    flex: 1;
+  }
+  .btn {
+    background: #18243a;
+    border: 1px solid #30435e;
+    border-radius: 6px;
+    height: 30px;
+    min-width: 74px;
+  }
+  .btn.primary {
+    background: #0f766e;
+    border-color: #14b8a6;
+  }
+  .btn.danger {
+    background: #4a1d27;
+    border-color: #7f1d1d;
+  }
+  .btn.warning {
+    background: #3a2b12;
+    border-color: #a16207;
+  }
+  .step-row {
+    height: 38px;
+    display: grid;
+    grid-template-columns: 34px 1fr 70px;
+    align-items: center;
+    padding: 0 10px;
+    box-sizing: border-box;
+    font-size: 12px;
+    color: #b8c7db;
+  }
+  .step-row.active {
+    background: #102f48;
+    border-color: #38bdf8;
+    color: #f8fbff;
+  }
+  .form-grid {
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .field-row {
+    height: 52px;
+    margin: 0;
+    padding: 8px;
+    box-sizing: border-box;
+  }
+  .label {
+    color: #8da0b8;
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .fake-input {
+    height: 18px;
+    border-radius: 4px;
+    background: #0a111d;
+    border: 1px solid #2b3c55;
+  }
+  .wide {
+    grid-column: 1 / 3;
+  }
+  .side-actions {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+  }
+  .runbar {
+    grid-column: 2 / 4;
+    display: grid;
+    grid-template-columns: 1fr 130px 130px;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    box-sizing: border-box;
+  }
+  .run-settings {
+    display: flex;
+    gap: 10px;
+    color: #9fb2ca;
+    font-size: 12px;
+  }
+  .run-settings span {
+    background: #121d2e;
+    border: 1px solid #24344b;
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .note {
+    background: #101827;
+    border: 1px solid #25344a;
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .note h3 {
+    margin: 0 0 6px;
+    color: #f8fafc;
+  }
+  .note p {
+    margin: 0;
+    color: #a7b5c9;
+    line-height: 1.45;
+  }
+  @media (max-width: 1000px) {
+    .workspace {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto;
+      height: auto;
+    }
+    .runbar { grid-column: 1; grid-template-columns: 1fr; }
+    .notes { grid-template-columns: 1fr; }
+  }
+</style>
+
+<h2>Operational Console: รายละเอียดหน้าหลัก</h2>
+<p class="subtitle">แนวนี้จะออกแบบทุกแท็บด้วยระบบเดียวกัน: พื้นหลังมืดนุ่ม, ขอบบาง, ปุ่มสีเทาเป็นหลัก, สีสดใช้เฉพาะ action สำคัญ</p>
+
+<div class="console-preview">
+  <div class="appbar">
+    <div class="brand">MuMupow</div>
+    <div class="status">
+      <span>4 devices selected</span>
+      <span>12 accounts ready</span>
+      <span>Target 960x540 / DPI 160</span>
+    </div>
+  </div>
+  <div class="workspace">
+    <div class="surface">
+      <div class="surface-head">Emulators <span class="muted">Scan</span></div>
+      <div class="device-card"><div class="check"></div><div><strong>MuMu-1</strong><div class="muted">127.0.0.1:7555</div></div><div class="dot"></div></div>
+      <div class="device-card"><div class="check"></div><div><strong>MuMu-2</strong><div class="muted">127.0.0.1:7556</div></div><div class="dot"></div></div>
+      <div class="device-card"><div class="check"></div><div><strong>MuMu-3</strong><div class="muted">127.0.0.1:7557</div></div><div class="dot"></div></div>
+      <div class="device-card"><div class="check"></div><div><strong>MuMu-4</strong><div class="muted">127.0.0.1:7558</div></div><div class="dot"></div></div>
+    </div>
+    <div class="surface">
+      <div class="tabs">
+        <div class="tab active">Macro</div>
+        <div class="tab">Accounts</div>
+        <div class="tab">Manual Sync</div>
+        <div class="tab">Settings</div>
+      </div>
+      <div class="toolbar">
+        <div class="input"></div>
+        <div class="btn"></div>
+        <div class="btn"></div>
+        <div class="btn warning"></div>
+      </div>
+      <div class="step-row"><span>01</span><strong>Tap</strong><span>0.5s</span></div>
+      <div class="step-row"><span>02</span><strong>Text {EMAIL}</strong><span>0.5s</span></div>
+      <div class="step-row"><span>03</span><strong>Text {PASSWORD}</strong><span>0.5s</span></div>
+      <div class="step-row active"><span>04</span><strong>Tap confirm</strong><span>0.5s</span></div>
+      <div class="step-row"><span>05</span><strong>Auto Fill OTP</strong><span>5.0s</span></div>
+      <div class="step-row"><span>06</span><strong>Screenshot</strong><span>1.0s</span></div>
+    </div>
+    <div class="surface">
+      <div class="surface-head">Step Editor <span class="muted">Tap</span></div>
+      <div class="form-grid">
+        <div class="field-row wide"><div class="label">Command type</div><div class="fake-input"></div></div>
+        <div class="field-row"><div class="label">X</div><div class="fake-input"></div></div>
+        <div class="field-row"><div class="label">Y</div><div class="fake-input"></div></div>
+        <div class="field-row"><div class="label">Delay after step</div><div class="fake-input"></div></div>
+        <div class="field-row"><div class="label">Description</div><div class="fake-input"></div></div>
+      </div>
+      <div class="side-actions">
+        <div class="btn primary"></div>
+        <div class="btn"></div>
+        <div class="btn"></div>
+      </div>
+    </div>
+    <div class="surface runbar">
+      <div class="run-settings">
+        <span>Stagger start: 30s</span>
+        <span>Pause between sets: off</span>
+      </div>
+      <div class="btn primary"></div>
+      <div class="btn danger"></div>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <div class="note">
+    <h3>ลดสีปุ่ม</h3>
+    <p>สีเขียวใช้เฉพาะ run/save สำคัญ, สีแดงเฉพาะ stop/delete, ปุ่มทั่วไปเป็นเทาน้ำเงินเข้มเพื่อไม่แย่งสายตา</p>
+  </div>
+  <div class="note">
+    <h3>อ่านลำดับง่าย</h3>
+    <p>รายการ macro แสดงเลขลำดับ ชนิดคำสั่ง และ delay เป็น column ชัดเจนแทนข้อความยาวแน่น ๆ แบบเดิม</p>
+  </div>
+  <div class="note">
+    <h3>แถบรันติดที่เดิม</h3>
+    <p>ตั้งค่า stagger/pause และปุ่ม Run/Stop อยู่แถบล่างของพื้นที่หลัก เพื่อกดได้เสมอโดยไม่ต้องเลื่อนหา</p>
+  </div>
+</div>
