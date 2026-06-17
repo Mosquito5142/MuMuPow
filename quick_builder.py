@@ -19,6 +19,8 @@ KEY_CODES = {
     "ENTER": "66",
 }
 
+DEFAULT_ACTION_DELAY = 0.5
+
 
 def _parse_coordinate(value):
     number = float(str(value).strip())
@@ -45,7 +47,7 @@ def normalize_coordinate_presets(presets):
     return [normalize_coordinate_preset(preset) for preset in presets]
 
 
-def build_tap_step_from_preset(preset, delay=5.0):
+def build_tap_step_from_preset(preset, delay=DEFAULT_ACTION_DELAY):
     normalized = normalize_coordinate_preset(preset)
     return {
         "type": "tap",
@@ -56,7 +58,7 @@ def build_tap_step_from_preset(preset, delay=5.0):
     }
 
 
-def build_text_step(text, delay=5.0):
+def build_text_step(text, delay=DEFAULT_ACTION_DELAY):
     return {
         "type": "text",
         "text": str(text),
@@ -85,7 +87,7 @@ def build_key_step(key_name, delay=0.3):
     }
 
 
-def build_swipe_step(direction, delay=5.0):
+def build_swipe_step(direction, delay=DEFAULT_ACTION_DELAY):
     direction_key = str(direction).lower()
     if direction_key == "up":
         return {

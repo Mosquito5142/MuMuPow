@@ -9,6 +9,7 @@ import sys
 from mumu_controller import MuMuController
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
+    DEFAULT_ACTION_DELAY,
     build_key_step,
     build_sleep_step,
     build_swipe_step,
@@ -1797,7 +1798,7 @@ class MuMuGUI(tk.Tk):
         tk.Label(delay_frame, text="หน่วงเวลาหลังกด (วิ):", bg=BG_DARK, fg=FG_WHITE).pack(side="left")
         delay_entry = ModernEntry(delay_frame, width=8)
         delay_entry.pack(side="right")
-        delay_entry.insert(0, "5.0")
+        delay_entry.insert(0, str(DEFAULT_ACTION_DELAY))
         
         desc_frame = tk.Frame(right_panel, bg=BG_DARK)
         desc_frame.pack(fill="x", pady=5)
@@ -1874,9 +1875,9 @@ class MuMuGUI(tk.Tk):
             real_end_x = int(release_x / scale)
             real_end_y = int(release_y / scale)
             
-            delay_val = 5.0
+            delay_val = DEFAULT_ACTION_DELAY
             try:
-                delay_val = float(delay_entry.get().strip() or "5.0")
+                delay_val = float(delay_entry.get().strip() or str(DEFAULT_ACTION_DELAY))
             except ValueError:
                 pass
                 
