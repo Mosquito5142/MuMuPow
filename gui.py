@@ -123,6 +123,21 @@ def build_status_summary(total_devices, selected_devices, total_accounts, select
         f"Status: {state}"
     )
 
+
+def build_sequential_macro_pairs(devices, accounts):
+    if not devices:
+        return []
+
+    if not accounts:
+        total = len(devices)
+        return [(device, None, idx, total) for idx, device in enumerate(devices)]
+
+    total = len(accounts)
+    return [
+        (devices[idx % len(devices)], account, idx, total)
+        for idx, account in enumerate(accounts)
+    ]
+
 class ModernButton(tk.Button):
     """ปุ่มกดสไตล์โมเดิร์นพร้อมแอนิเมชันตอนเอาเมาส์ชี้"""
     def __init__(

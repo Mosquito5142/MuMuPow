@@ -4,6 +4,7 @@ from gui import (
     BUTTON_VARIANTS,
     build_account_summary,
     build_macro_step_summary,
+    build_sequential_macro_pairs,
     build_status_summary,
     get_button_colors,
 )
@@ -143,6 +144,40 @@ class GuiHelperTests(unittest.TestCase):
         )
 
         self.assertNotIn("OTP", summary)
+
+    def test_sequential_pairs_cycle_devices_for_accounts(self):
+        accounts = [
+            {"email": "a1@example.com"},
+            {"email": "a2@example.com"},
+            {"email": "a3@example.com"},
+            {"email": "a4@example.com"},
+        ]
+
+        pairs = build_sequential_macro_pairs(["dev1", "dev2", "dev3"], accounts)
+
+        self.assertEqual(
+            pairs,
+            [
+                ("dev1", accounts[0], 0, 4),
+                ("dev2", accounts[1], 1, 4),
+                ("dev3", accounts[2], 2, 4),
+                ("dev1", accounts[3], 3, 4),
+            ],
+        )
+
+    def test_sequential_pairs_run_each_device_without_accounts(self):
+        pairs = build_sequential_macro_pairs(["dev1", "dev2"], [])
+
+        self.assertEqual(
+            pairs,
+            [
+                ("dev1", None, 0, 2),
+                ("dev2", None, 1, 2),
+            ],
+        )
+
+    def test_sequential_pairs_return_empty_without_devices(self):
+        self.assertEqual(build_sequential_macro_pairs([], [{"email": "a1@example.com"}]), [])
 
 
 if __name__ == "__main__":
