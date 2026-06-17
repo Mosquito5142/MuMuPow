@@ -229,6 +229,7 @@ class MuMuGUI(tk.Tk):
 
         # ตัวแปรสำหรับการรันแบบแบ่งเซ็ต
         self.pause_between_sets = tk.BooleanVar(value=False)
+        self.run_sequentially = tk.BooleanVar(value=False)
         self.is_paused_waiting_for_next_set = False
         self.remaining_accounts = []
         self.active_devices_for_run = []
@@ -666,6 +667,23 @@ class MuMuGUI(tk.Tk):
             activebackground=BG_PANEL,
         )
         self.pause_chk.pack(anchor="w", pady=5)
+
+        self.sequential_chk = self.make_checkbutton(
+            run_card,
+            "รันทีละจอจนจบ",
+            variable=self.run_sequentially,
+            bg=BG_PANEL,
+            activebackground=BG_PANEL,
+        )
+        self.sequential_chk.pack(anchor="w", pady=(0, 3))
+
+        tk.Label(
+            run_card,
+            text="เหมาะกับสมัครรหัส ลดการเริ่มหลายจอพร้อมกัน",
+            bg=BG_PANEL,
+            fg=FG_MUTED,
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(0, 6))
         
         self.run_macro_btn = ModernButton(
             run_card,
