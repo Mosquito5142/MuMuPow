@@ -3785,6 +3785,52 @@ class MuMuGUI(tk.Tk):
                         time.sleep(0.2)
                 return True
 
+            if self.run_sequentially.get():
+                pairs = build_sequential_macro_pairs(devices, checked_accounts)
+                self.write_log(
+                    f"Sequential: เริ่มรันทีละจอจนจบทั้งหมด {len(pairs)} งาน "
+                    f"(ไม่ใช้หน่วงเริ่มหลายจอและไม่รันคู่ขนาน)",
+                    "warning",
+                )
+
+                for dev, acc, pair_idx, pair_total in pairs:
+                    if not self.macro_running:
+                        break
+
+                    if acc:
+                        email = acc.get("email")
+                        self.write_log(
+                            f"Sequential: เริ่มบัญชี {pair_idx + 1}/{pair_total} บน {dev}: {email}",
+                            "warning",
+                        )
+                    else:
+                        self.write_log(
+                            f"Sequential: เริ่มจอ {pair_idx + 1}/{pair_total} บน {dev}",
+                            "warning",
+                        )
+
+                    self.execute_device_macro(dev, acc, highlight)
+
+                    if self.macro_running:
+                        if acc:
+                            self.write_log(
+                                f"Sequential: บัญชี {pair_idx + 1}/{pair_total} เสร็จแล้ว",
+                                "success",
+                            )
+                        else:
+                            self.write_log(
+                                f"Sequential: จอ {pair_idx + 1}/{pair_total} เสร็จแล้ว",
+                                "success",
+                            )
+
+                if self.macro_running:
+                    self.write_log("🎉 Sequential: รันครบทุกบัญชีและทุกหน้าจอแล้ว!", "success")
+                    messagebox.showinfo(
+                        "เสร็จสิ้นการทำงาน",
+                        "Sequential mode ทำงานตามสคริปต์มาโครครบแล้ว!",
+                    )
+                return
+
             if not checked_accounts:
                 self.write_log(f"🏁 เริ่มต้นการรันมาโคร 1 รอบพร้อมกันบน Emulator ทั้งหมด {len(devices)} จอ (ไม่มีบัญชีไอดี)...", "warning")
                 
