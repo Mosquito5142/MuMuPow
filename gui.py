@@ -803,42 +803,47 @@ class MuMuGUI(tk.Tk):
         main_pane.pack(fill="both", expand=True, padx=10, pady=10)
         
         # ฝั่งซ้าย: รายการบัญชีบอททั้งหมด (Left Panel)
-        left_panel = tk.LabelFrame(main_pane, text=" 👥 รายการบัญชีบอททั้งหมด ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=10, pady=10)
-        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        left_panel = tk.Frame(main_pane, bg=BG_CARD, highlightthickness=1, highlightbackground=LINE_SOFT)
+        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 12))
+
+        left_header = tk.Frame(left_panel, bg=BG_PANEL, height=40)
+        left_header.pack(fill="x")
+        left_header.pack_propagate(False)
+        tk.Label(left_header, text="บัญชีทั้งหมด", bg=BG_PANEL, fg=FG_WHITE, font=("Segoe UI", 10, "bold")).pack(side="left", padx=12)
         
         # แผงจัดการกลุ่มและค้นหา (Search & Batch Action Panel)
-        control_panel = tk.Frame(left_panel, bg=BG_DARK)
-        control_panel.pack(fill="x", pady=(0, 10))
+        control_panel = tk.Frame(left_panel, bg=BG_CARD, padx=12, pady=12)
+        control_panel.pack(fill="x")
         
         # 1. แถบค้นหา
-        search_frame = tk.Frame(control_panel, bg=BG_DARK)
-        search_frame.pack(fill="x", pady=(0, 5))
-        tk.Label(search_frame, text="🔍 ค้นหาบัญชี:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
+        search_frame = tk.Frame(control_panel, bg=BG_CARD)
+        search_frame.pack(fill="x", pady=(0, 8))
+        tk.Label(search_frame, text="ค้นหา", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 8))
         self.acc_search_entry = ModernEntry(search_frame)
         self.acc_search_entry.pack(side="left", fill="x", expand=True)
         self.acc_search_entry.bind("<KeyRelease>", lambda e: self.refresh_accounts_ui())
         
         # 2. แถบจัดการแบบกลุ่ม (Batch Operations)
-        batch_frame = tk.Frame(control_panel, bg=BG_DARK)
+        batch_frame = tk.Frame(control_panel, bg=BG_CARD)
         batch_frame.pack(fill="x", pady=2)
         
-        ModernButton(batch_frame, text="🗑️ ลบที่เลือก", command=self.delete_selected_accounts, bg=ACCENT_RED, activebg="#c0392b", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
+        ModernButton(batch_frame, text="ลบที่เลือก", command=self.delete_selected_accounts, variant="danger", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
         
-        tk.Label(batch_frame, text="ย้ายกลุ่มไป:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).pack(side="left", padx=5)
+        tk.Label(batch_frame, text="ย้ายกลุ่มไป:", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9)).pack(side="left", padx=5)
         self.batch_move_group_entry = ModernEntry(batch_frame, width=12)
         self.batch_move_group_entry.pack(side="left", padx=2)
         self.batch_move_group_entry.insert(0, "ทั่วไป")
         
-        ModernButton(batch_frame, text="➡️ ย้ายกลุ่ม", command=self.move_selected_accounts, bg=ACCENT_BLUE, activebg=ACCENT_HOVER, font=("Segoe UI", 9)).pack(side="left", padx=5)
+        ModernButton(batch_frame, text="ย้ายกลุ่ม", command=self.move_selected_accounts, variant="accent", font=("Segoe UI", 9, "bold")).pack(side="left", padx=6)
         
         # กล่องรายการบัญชีพร้อม Scrollbar
-        list_container = tk.Frame(left_panel, bg=BG_DARK, bd=0)
-        list_container.pack(fill="both", expand=True, pady=5)
+        list_container = tk.Frame(left_panel, bg=BG_CARD, bd=0)
+        list_container.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         
-        self.acc_canvas = tk.Canvas(list_container, bg=BG_DARK, highlightthickness=0)
+        self.acc_canvas = tk.Canvas(list_container, bg=BG_CARD, highlightthickness=0)
         scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=self.acc_canvas.yview)
         
-        self.acc_scroll_frame = tk.Frame(self.acc_canvas, bg=BG_DARK)
+        self.acc_scroll_frame = tk.Frame(self.acc_canvas, bg=BG_CARD)
         self.acc_scroll_frame.bind(
             "<Configure>", 
             lambda e: self.acc_canvas.configure(scrollregion=self.acc_canvas.bbox("all"))
@@ -852,15 +857,15 @@ class MuMuGUI(tk.Tk):
         self.bind_canvas_mousewheel(self.acc_canvas)
         
         # ฝั่งขวา: ฟอร์มเพิ่มบัญชีใหม่และคู่มือรันบอทวนลูป (Right Panel)
-        right_panel = tk.Frame(main_pane, bg=BG_DARK, width=340)
+        right_panel = tk.Frame(main_pane, bg=BG_CARD, width=340, highlightthickness=1, highlightbackground=LINE_SOFT)
         right_panel.pack(side="right", fill="both")
         right_panel.pack_propagate(False)
         
         # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มและคู่มือด้านล่างได้หากความสูงหน้าจอต่ำ
-        right_canvas = tk.Canvas(right_panel, bg=BG_DARK, highlightthickness=0)
+        right_canvas = tk.Canvas(right_panel, bg=BG_CARD, highlightthickness=0)
         right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
         
-        right_scroll_frame = tk.Frame(right_canvas, bg=BG_DARK)
+        right_scroll_frame = tk.Frame(right_canvas, bg=BG_CARD)
         right_scroll_frame.bind(
             "<Configure>",
             lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all"))
@@ -875,60 +880,52 @@ class MuMuGUI(tk.Tk):
         self.bind_canvas_mousewheel(right_canvas)
         
         # ฟอร์มเพิ่มบัญชี
-        add_box = tk.LabelFrame(right_scroll_frame, text=" ➕ เพิ่มบัญชีใหม่ ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        add_box.pack(fill="x", pady=(0, 15))
+        add_box_outer, add_box = self.make_panel(right_scroll_frame, "เพิ่ม / แก้ไขบัญชี", fill="x", pady=(0, 12))
         
-        tk.Label(add_box, text="อีเมล / ไอดีเกม:", bg=BG_DARK, fg=FG_WHITE).grid(row=0, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="อีเมล / ไอดีเกม:", bg=BG_CARD, fg=FG_WHITE).grid(row=0, column=0, sticky="w", pady=5)
         self.new_acc_email = ModernEntry(add_box, width=22)
         self.new_acc_email.grid(row=0, column=1, padx=10, pady=5)
         self.new_acc_email.insert(0, "test_user02@gmail.com")
 
-        tk.Label(add_box, text="ชื่อเรียกไอดี (Name):", bg=BG_DARK, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="ชื่อเรียกไอดี (Name):", bg=BG_CARD, fg=FG_WHITE).grid(row=1, column=0, sticky="w", pady=5)
         self.new_acc_name = ModernEntry(add_box, width=22)
         self.new_acc_name.grid(row=1, column=1, padx=10, pady=5)
         
-        tk.Label(add_box, text="รหัสผ่าน (Password):", bg=BG_DARK, fg=FG_WHITE).grid(row=2, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="รหัสผ่าน (Password):", bg=BG_CARD, fg=FG_WHITE).grid(row=2, column=0, sticky="w", pady=5)
         self.new_acc_pass = ModernEntry(add_box, width=22)
         self.new_acc_pass.grid(row=2, column=1, padx=10, pady=5)
         self.new_acc_pass.insert(0, "test_pass02")
 
-        tk.Label(add_box, text="กลุ่มบัญชี (Group):", bg=BG_DARK, fg=FG_WHITE).grid(row=3, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="กลุ่มบัญชี (Group):", bg=BG_CARD, fg=FG_WHITE).grid(row=3, column=0, sticky="w", pady=5)
         self.new_acc_group = ModernEntry(add_box, width=22)
         self.new_acc_group.grid(row=3, column=1, padx=10, pady=5)
         self.new_acc_group.insert(0, "ทั่วไป")
 
-        tk.Label(add_box, text="โทเคน (OAuth2 Token):", bg=BG_DARK, fg=FG_WHITE).grid(row=4, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="โทเคน (OAuth2 Token):", bg=BG_CARD, fg=FG_WHITE).grid(row=4, column=0, sticky="w", pady=5)
         self.new_acc_token = ModernEntry(add_box, width=22)
         self.new_acc_token.grid(row=4, column=1, padx=10, pady=5)
 
-        tk.Label(add_box, text="ไคลเอนต์ไอดี (Client ID):", bg=BG_DARK, fg=FG_WHITE).grid(row=5, column=0, sticky="w", pady=5)
+        tk.Label(add_box, text="ไคลเอนต์ไอดี (Client ID):", bg=BG_CARD, fg=FG_WHITE).grid(row=5, column=0, sticky="w", pady=5)
         self.new_acc_client_id = ModernEntry(add_box, width=22)
         self.new_acc_client_id.grid(row=5, column=1, padx=10, pady=5)
         
-        self.save_acc_btn = ModernButton(add_box, text="➕ เพิ่มบัญชีเข้าคิว", command=self.add_account, bg=ACCENT_GREEN, activebg="#2ecc71")
+        self.save_acc_btn = ModernButton(add_box, text="เพิ่มบัญชีเข้าคิว", command=self.add_account, variant="primary")
         self.save_acc_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(15, 0))
         
-        self.batch_import_btn = ModernButton(add_box, text="📥 นำเข้าบัญชีแบบกลุ่ม (Batch)", command=self.open_batch_import_dialog, bg=ACCENT_BLUE, activebg=ACCENT_HOVER)
+        self.batch_import_btn = ModernButton(add_box, text="นำเข้าบัญชีแบบกลุ่ม", command=self.open_batch_import_dialog, variant="accent")
         self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         add_box.columnconfigure(0, weight=1)
         add_box.columnconfigure(1, weight=2)
         
         # คู่มือการรันวนลูปหลายรหัส
-        info_box = tk.LabelFrame(right_scroll_frame, text=" 🔄 คู่มือการรันวนลูปหลายรหัส ", bg=BG_DARK, fg=ACCENT_BLUE, font=("Segoe UI", 10, "bold"), bd=1, padx=15, pady=15)
-        info_box.pack(fill="both", expand=True)
+        info_box_outer, info_box = self.make_panel(right_scroll_frame, "คู่มือบัญชี", fill="both", expand=True)
         
         info_text = (
-            "1. เพิ่มอีเมลและรหัสผ่านทั้งหมดที่คุณต้องการรันบอทในช่องด้านบน\n\n"
-            "2. ติ๊กเลือกที่เครื่องหมายถูกหน้าไอดีที่คุณต้องการสั่งให้บอทรันในรายการฝั่งซ้าย\n\n"
-            "3. ในสคริปต์มาโครของคุณ (หน้าแท็บแรก) ให้ใช้ข้อความแทนตัวแปรดังนี้:\n"
-            "   - ใช้คำว่า {EMAIL} ในขั้นตอนการกรอกอีเมล\n"
-            "   - ใช้คำว่า {PASSWORD} ในขั้นตอนการกรอกรหัสผ่าน\n"
-            "   *โปรแกรมจะดึงรหัสที่ติ๊กไว้มาสลับพิมพ์ให้ทีละรอบอัตโนมัติ*\n\n"
-            "4. แนะนำให้ใส่ขั้นตอน 'ล้างข้อมูลแอป' หรือ 'เปิดแอป' ในสคริปต์มาโคร เพื่อเป็นการรีเซ็ตหน้าจอเกมเตรียมตัวสำหรับการเข้าสู่ระบบรหัสถัดไปในรอบใหม่\n\n"
-            "5. ติ๊กหน้าจอ Emulator ด้านซ้ายสุดที่ต้องการควบคุม แล้วกดรันมาโครได้เลย!"
+            "ใช้ {EMAIL}, {PASSWORD}, {NAME}, {GROUP} ในมาโครเพื่อแทนค่าจากบัญชีที่เลือก "
+            "ระบบจะหยิบบัญชีตามคิวและกระจายลง Emulator ที่เลือกไว้"
         )
-        tk.Label(info_box, text=info_text, bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9), justify="left", wraplength=300).pack(anchor="w")
+        tk.Label(info_box, text=info_text, bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9), justify="left", wraplength=300).pack(anchor="w")
         
         # วาดรายการบัญชีที่มีอยู่
         self.refresh_accounts_ui()
@@ -1500,7 +1497,7 @@ class MuMuGUI(tk.Tk):
                 frame, 
                 text="X", 
                 command=lambda d=dev: self.disconnect_one(d), 
-                bg="#E74C3C", 
+                bg="#E74C3C",
                 fg=FG_WHITE, 
                 activebackground="#c0392b",
                 activeforeground=FG_WHITE,
@@ -2042,12 +2039,11 @@ class MuMuGUI(tk.Tk):
         # 2. วาดแต่ละกลุ่ม
         for grp, acc_list in grouped_accounts.items():
             # สร้างกล่องจัดกลุ่ม
-            group_box = tk.Frame(self.acc_scroll_frame, bg=BG_DARK, bd=0)
+            group_box = tk.Frame(self.acc_scroll_frame, bg=BG_CARD, bd=0)
             group_box.pack(fill="x", pady=(10, 5), padx=2)
 
             # หัวข้อกลุ่ม
-            group_header = tk.Frame(group_box, bg=BG_PANEL, bd=1, relief="solid", highlightthickness=0)
-            group_header.configure(highlightbackground="#444444")
+            group_header = tk.Frame(group_box, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT)
             group_header.pack(fill="x")
 
             # เช็คว่าทั้งหมดในกลุ่มถูกเลือกหรือไม่
@@ -2083,9 +2079,9 @@ class MuMuGUI(tk.Tk):
                 group_header,
                 text="🗑️ ลบกลุ่ม",
                 command=delete_group_func,
-                bg="#E74C3C",
+                bg=ACCENT_RED,
                 fg=FG_WHITE,
-                activebackground="#c0392b",
+                activebackground="#991B1B",
                 activeforeground=FG_WHITE,
                 relief="flat",
                 bd=0,
@@ -2113,11 +2109,9 @@ class MuMuGUI(tk.Tk):
             # บัญชีลูกภายใต้กลุ่มนี้
             for acc in acc_list:
                 email = acc.get("email")
-                pwd = acc.get("password")
                 checked = acc.get("checked", True)
 
-                frame = tk.Frame(group_box, bg=BG_CARD, bd=1, relief="solid", highlightthickness=0)
-                frame.configure(highlightbackground="#333333")
+                frame = tk.Frame(group_box, bg=BG_SURFACE, highlightthickness=1, highlightbackground=LINE_SOFT)
                 frame.pack(fill="x", pady=2, padx=(15, 2))
 
                 var = tk.BooleanVar(value=checked)
@@ -2143,9 +2137,9 @@ class MuMuGUI(tk.Tk):
                     frame,
                     text="X",
                     command=lambda e=email: self.delete_account(e),
-                    bg="#E74C3C",
+                    bg=ACCENT_RED,
                     fg=FG_WHITE,
-                    activebackground="#c0392b",
+                    activebackground="#991B1B",
                     activeforeground=FG_WHITE,
                     relief="flat",
                     bd=0,
@@ -2159,9 +2153,9 @@ class MuMuGUI(tk.Tk):
                     frame,
                     text="📝",
                     command=lambda acc=acc: self.start_edit_account(acc),
-                    bg=ACCENT_BLUE,
+                    bg="#0F2F4A",
                     fg=FG_WHITE,
-                    activebackground=ACCENT_HOVER,
+                    activebackground="#164E72",
                     activeforeground=FG_WHITE,
                     relief="flat",
                     bd=0,
@@ -2170,38 +2164,30 @@ class MuMuGUI(tk.Tk):
                 )
                 edit_btn.pack(side="right", padx=2, pady=5)
 
-                display_text = email
-                if acc.get("name"):
-                    display_text = f"{acc.get('name')} ({email})"
-                
-                # ตัดข้อความยาวไม่เกิน 26 ตัวอักษร เพื่อป้องกันปุ่มตกขอบ
-                if len(display_text) > 26:
-                    display_text = display_text[:23] + "..."
-                    
                 chk = tk.Checkbutton(
                     frame,
-                    text=display_text,
+                    text="",
                     variable=var,
                     command=on_single_click,
-                    bg=BG_CARD,
+                    bg=BG_SURFACE,
                     fg=FG_WHITE,
-                    activebackground=BG_CARD,
+                    activebackground=BG_SURFACE,
                     activeforeground=FG_WHITE,
-                    selectcolor=BG_DARK,
+                    selectcolor=BG_INPUT,
                     relief="flat",
                     font=("Segoe UI", 9)
                 )
                 chk.pack(side="left", padx=5, pady=5)
 
-                # พรางรหัสผ่านเพื่อความสวยงาม
-                masked_pwd = "*" * min(8, len(pwd))
-                lbl_pwd = tk.Label(frame, text=f"({masked_pwd})", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 8))
-                lbl_pwd.pack(side="left", padx=5)
-
-                # แสดงสัญลักษณ์สำหรับไอดีที่รองรับการรับ OTP ผ่าน Token
-                if acc.get("refresh_token"):
-                    lbl_otp = tk.Label(frame, text="[📨 OTP]", bg=BG_CARD, fg=ACCENT_GREEN, font=("Segoe UI", 8, "bold"))
-                    lbl_otp.pack(side="left", padx=5)
+                summary_lbl = tk.Label(
+                    frame,
+                    text=build_account_summary(acc),
+                    bg=BG_SURFACE,
+                    fg=FG_WHITE,
+                    font=("Consolas", 9),
+                    anchor="w",
+                )
+                summary_lbl.pack(side="left", fill="x", expand=True, padx=8)
 
         self.update_status_summary()
 
@@ -2235,7 +2221,14 @@ class MuMuGUI(tk.Tk):
                     break
             
             self.editing_email = None
-            self.save_acc_btn.configure(text="➕ เพิ่มบัญชีเข้าคิว", bg=ACCENT_GREEN, activebackground="#2ecc71")
+            primary_colors = get_button_colors("primary")
+            self.save_acc_btn.configure(
+                text="เพิ่มบัญชีเข้าคิว",
+                bg=primary_colors["bg"],
+                activebackground=primary_colors["hover"],
+            )
+            self.save_acc_btn._normal_bg = primary_colors["bg"]
+            self.save_acc_btn._hover_bg = primary_colors["hover"]
             if hasattr(self, 'cancel_edit_btn'):
                 self.cancel_edit_btn.grid_remove()
                 
@@ -2293,16 +2286,22 @@ class MuMuGUI(tk.Tk):
         self.editing_email = acc.get("email")
         
         # เปลี่ยนปุ่มหลักเป็นบันทึกการแก้ไข
-        self.save_acc_btn.configure(text="💾 บันทึกการแก้ไข", bg=ACCENT_ORANGE, activebackground="#d35400")
+        warning_colors = get_button_colors("warning")
+        self.save_acc_btn.configure(
+            text="บันทึกการแก้ไข",
+            bg=warning_colors["bg"],
+            activebackground=warning_colors["hover"],
+        )
+        self.save_acc_btn._normal_bg = warning_colors["bg"]
+        self.save_acc_btn._hover_bg = warning_colors["hover"]
         
         # แสดงปุ่มยกเลิกการแก้ไข
         if not hasattr(self, 'cancel_edit_btn'):
             self.cancel_edit_btn = ModernButton(
                 self.save_acc_btn.master, 
-                text="❌ ยกเลิกการแก้ไข", 
+                text="ยกเลิกการแก้ไข", 
                 command=self.cancel_edit_account, 
-                bg=ACCENT_RED, 
-                activebg="#c0392b"
+                variant="danger"
             )
         self.cancel_edit_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         
@@ -2311,7 +2310,14 @@ class MuMuGUI(tk.Tk):
 
     def cancel_edit_account(self):
         self.editing_email = None
-        self.save_acc_btn.configure(text="➕ เพิ่มบัญชีเข้าคิว", bg=ACCENT_GREEN, activebackground="#2ecc71")
+        primary_colors = get_button_colors("primary")
+        self.save_acc_btn.configure(
+            text="เพิ่มบัญชีเข้าคิว",
+            bg=primary_colors["bg"],
+            activebackground=primary_colors["hover"],
+        )
+        self.save_acc_btn._normal_bg = primary_colors["bg"]
+        self.save_acc_btn._hover_bg = primary_colors["hover"]
         if hasattr(self, 'cancel_edit_btn'):
             self.cancel_edit_btn.grid_remove()
             
