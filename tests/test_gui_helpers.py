@@ -145,6 +145,22 @@ class GuiHelperTests(unittest.TestCase):
 
         self.assertNotIn("OTP", summary)
 
+    def test_account_summary_prefers_save_web_game_character_metadata(self):
+        summary = build_account_summary(
+            {
+                "email": "player@example.com",
+                "name": "Fallback",
+                "ingamename": "Ace",
+                "group": "Owner A",
+                "card_count": 6,
+            }
+        )
+
+        self.assertIn("Ace", summary)
+        self.assertNotIn("Fallback", summary)
+        self.assertIn("Owner A", summary)
+        self.assertIn("Cards:6", summary)
+
     def test_sequential_pairs_cycle_devices_for_accounts(self):
         accounts = [
             {"email": "a1@example.com"},

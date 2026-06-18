@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import threading
 import time
 import json
@@ -26,6 +26,7 @@ from script_sets import (
     safe_set_slug,
     save_script_set,
 )
+from save_web_game_import import import_save_web_game_accounts
 
 # จานสีสำหรับธีมมืดระดับพรีเมียม (Premium Dark Theme Color Palette)
 BG_DARK = "#080D16"
@@ -106,11 +107,13 @@ def build_macro_step_summary(idx, step):
 
 
 def build_account_summary(account):
-    name = account.get("name") or "-"
+    name = account.get("ingamename") or account.get("name") or account.get("save_web_game_title") or "-"
     email = account.get("email") or "-"
     group = account.get("group") or "ทั่วไป"
     otp = "OTP" if account.get("refresh_token") else ""
-    return f"{name:<16}  {email:<32}  {group:<12}  {otp}"
+    card_count = account.get("card_count")
+    cards = f"Cards:{card_count}" if isinstance(card_count, int) and card_count > 0 else ""
+    return f"{name:<16}  {email:<32}  {group:<12}  {cards:<9}  {otp}"
 
 def build_status_summary(total_devices, selected_devices, total_accounts, selected_accounts, macro_steps, profile_name, is_running):
     profile = profile_name.strip() if profile_name else "Custom"
@@ -949,6 +952,8 @@ class MuMuGUI(tk.Tk):
         
         self.batch_import_btn = ModernButton(add_box, text="นำเข้าบัญชีแบบกลุ่ม", command=self.open_batch_import_dialog, variant="accent")
         self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.save_web_game_import_btn = ModernButton(add_box, text="Import Save Web Game JSON", command=self.import_save_web_game_file, variant="subtle")
+        self.save_web_game_import_btn.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         add_box.columnconfigure(0, weight=1)
         add_box.columnconfigure(1, weight=2)
@@ -2276,6 +2281,7 @@ class MuMuGUI(tk.Tk):
                 self.cancel_edit_btn.grid_remove()
                 
             self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            self.save_web_game_import_btn.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
             self.write_log(f"แก้ไขบัญชี {email} สำเร็จ", "success")
         else:
             # โหมดเพิ่มบัญชีใหม่
@@ -2350,6 +2356,7 @@ class MuMuGUI(tk.Tk):
         
         # เลื่อนปุ่มนำเข้าแบบกลุ่มลงไปแถว 8
         self.batch_import_btn.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.save_web_game_import_btn.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def cancel_edit_account(self):
         self.editing_email = None
@@ -2366,6 +2373,7 @@ class MuMuGUI(tk.Tk):
             
         # เลื่อนปุ่มนำเข้าแบบกลุ่มกลับมาแถว 7
         self.batch_import_btn.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.save_web_game_import_btn.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         
         # ล้างค่าในฟอร์ม
         self.new_acc_email.delete(0, tk.END)
@@ -2375,6 +2383,39 @@ class MuMuGUI(tk.Tk):
         self.new_acc_group.insert(0, "ทั่วไป")
         self.new_acc_token.delete(0, tk.END)
         self.new_acc_client_id.delete(0, tk.END)
+
+    def import_save_web_game_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Import Save Web Game JSON",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not file_path:
+            return
+
+        try:
+            stats = import_save_web_game_accounts(file_path, self.accounts_file)
+            self.load_accounts()
+            self.refresh_accounts_ui()
+            self.write_log(
+                (
+                    "Save Web Game import: "
+                    f"{stats.get('imported', 0)} imported, "
+                    f"{stats.get('updated', 0)} updated, "
+                    f"{stats.get('skipped', 0)} skipped"
+                ),
+                "success",
+            )
+            messagebox.showinfo(
+                "Save Web Game Import",
+                (
+                    f"Imported: {stats.get('imported', 0)}\n"
+                    f"Updated: {stats.get('updated', 0)}\n"
+                    f"Skipped: {stats.get('skipped', 0)}"
+                ),
+            )
+        except Exception as exc:
+            self.write_log(f"Save Web Game import failed: {exc}", "error")
+            messagebox.showerror("Save Web Game Import", str(exc))
 
     def open_batch_import_dialog(self):
         """เปิดหน้าต่างป๊อปอัปสำหรับป้อนบัญชีแบบกลุ่มและทำการจัดเรียงพาร์สข้อมูล"""
