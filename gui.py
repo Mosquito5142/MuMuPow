@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import time
+import random
 import json
 import os
 import glob
@@ -69,8 +70,8 @@ def build_macro_step_summary(idx, step):
         "sleep": "Sleep",
         "start_app": "Start App",
         "stop_app": "Stop App",
-        "clear_app": "Clear App",
         "detect_image": "Image Match",
+        "wait_for_image": "Wait Image",
         "clear_ads_loop": "Ads Loop",
         "fetch_otp": "Auto OTP",
         "run_set": "Run Set",
@@ -140,6 +141,48 @@ def build_sequential_macro_pairs(devices, accounts):
         (devices[idx % len(devices)], account, idx, total)
         for idx, account in enumerate(accounts)
     ]
+
+
+# จับคู่ข้อความบางส่วนใน dropdown -> ชนิด step ภายใน (ตรวจตามลำดับ)
+STEP_LABEL_MATCHERS = [
+    ("Text", "text"),
+    ("Keyevent", "keyevent"),
+    ("Swipe", "swipe"),
+    ("Sleep", "sleep"),
+    ("Start App", "start_app"),
+    ("Stop App", "stop_app"),
+    ("Wait Image", "wait_for_image"),
+    ("Image Match", "detect_image"),
+    ("Clear Ads Loop", "clear_ads_loop"),
+    ("Auto Fill OTP", "fetch_otp"),
+    ("Run Set", "run_set"),
+    ("ใช้ชุดคำสั่ง", "run_set"),
+]
+
+
+def label_to_step_type(label):
+    """แปลง label จาก dropdown -> ชนิด step (ค่าเริ่มต้น tap)"""
+    for needle, step_type in STEP_LABEL_MATCHERS:
+        if needle in label:
+            return step_type
+    return "tap"
+
+
+# ค่าหน่วงเวลาเริ่มต้น (วินาที) ต่อชนิด step เมื่อ step ไม่ได้ระบุ delay เอง
+DEFAULT_STEP_DELAYS = {
+    "tap": 5.0,
+    "swipe": 5.0,
+    "text": 5.0,
+    "keyevent": 0.3,
+    "start_app": 1.0,
+    "stop_app": 1.0,
+    "detect_image": 1.0,
+    "wait_for_image": 1.0,
+    "clear_ads_loop": 1.0,
+    "fetch_otp": 1.0,
+    "screenshot": 1.0,
+}
+
 
 class ModernButton(tk.Button):
     """ปุ่มกดสไตล์โมเดิร์นพร้อมแอนิเมชันตอนเอาเมาส์ชี้"""
@@ -743,8 +786,8 @@ class MuMuGUI(tk.Tk):
                 "รอเวลา (Sleep)",
                 "เปิดแอป (Start App)",
                 "ปิดแอป (Stop App)",
-                "ล้างข้อมูลแอป (Clear App Data)",
                 "ตรวจจับรูปภาพ (Image Match)",
+                "รอจนเจอรูป (Wait Image)",
                 "ลูปปิดโฆษณา (Clear Ads Loop)",
                 "กรอก OTP อัตโนมัติ (Auto Fill OTP)",
                 "ใช้ชุดคำสั่ง (Run Set)",
@@ -3192,10 +3235,10 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("เปิดแอป (Start App)")
         elif t == "stop_app":
             self.form_type.set("ปิดแอป (Stop App)")
-        elif t == "clear_app":
-            self.form_type.set("ล้างข้อมูลแอป (Clear App Data)")
         elif t == "detect_image":
             self.form_type.set("ตรวจจับรูปภาพ (Image Match)")
+        elif t == "wait_for_image":
+            self.form_type.set("รอจนเจอรูป (Wait Image)")
         elif t == "clear_ads_loop":
             self.form_type.set("ลูปปิดโฆษณา (Clear Ads Loop)")
         elif t == "fetch_otp":
@@ -3231,7 +3274,10 @@ class MuMuGUI(tk.Tk):
             self.form_x2.insert(0, step.get("x2", ""))
             self.form_y2.insert(0, step.get("y2", ""))
             self.form_sleep.insert(0, step.get("delay", "5.0"))
-        elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
+        elif t == "wait_for_image":
+            self.form_text.insert(0, step.get("text", ""))
+            self.form_sleep.insert(0, step.get("timeout", "30"))
+        elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "5.0" if t == "text" else "1.0"))
         elif t == "run_set":
@@ -3299,6 +3345,15 @@ class MuMuGUI(tk.Tk):
             self.form_text.configure(state="disabled")
             self.form_code.configure(state="disabled")
         elif "Start App" in t or "Stop App" in t or "Clear App Data" in t:
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_code.configure(state="disabled")
+        elif "Wait Image" in t:
+            self.form_sleep_label.configure(text="ระยะเวลารอสูงสุด (วินาที):")
             self.form_x_label.configure(fg=FG_MUTED)
             self.form_x.configure(state="disabled")
             self.form_y.configure(state="disabled")
@@ -3543,35 +3598,15 @@ class MuMuGUI(tk.Tk):
         refresh_preset_list(0)
         fill_selected_preset()
 
-    def add_step(self):
-        t_label = self.form_type.get()
-        t = "tap"
-        if "Text" in t_label:
-            t = "text"
-        elif "Keyevent" in t_label:
-            t = "keyevent"
-        elif "Swipe" in t_label:
-            t = "swipe"
-        elif "Sleep" in t_label:
-            t = "sleep"
-        elif "Start App" in t_label:
-            t = "start_app"
-        elif "Stop App" in t_label:
-            t = "stop_app"
-        elif "Clear App Data" in t_label:
-            t = "clear_app"
-        elif "Image Match" in t_label:
-            t = "detect_image"
-        elif "Clear Ads Loop" in t_label:
-            t = "clear_ads_loop"
-        elif "Auto Fill OTP" in t_label:
-            t = "fetch_otp"
-        elif "Run Set" in t_label or "ใช้ชุดคำสั่ง" in t_label:
-            t = "run_set"
-            
+    def _build_step_from_form(self):
+        """อ่านค่าจากฟอร์มสร้าง step dict (ใช้ร่วมกันระหว่างเพิ่ม/อัปเดต)
+
+        คืน step dict ถ้าถูกต้อง หรือ None ถ้าข้อมูลไม่ผ่าน (แสดง error แล้ว)
+        """
+        t = label_to_step_type(self.form_type.get())
         desc = self.form_desc.get().strip()
         step = {"type": t, "desc": desc}
-        
+
         try:
             if t == "tap":
                 step["x"] = self.form_x.get().strip()
@@ -3586,9 +3621,15 @@ class MuMuGUI(tk.Tk):
                 if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
                     raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or "5.0")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
+            elif t == "wait_for_image":
+                step["text"] = self.form_text.get().strip()
+                if not step["text"]:
+                    raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า")
+                # ช่อง "หน่วงเวลา" ใช้เป็นระยะเวลารอสูงสุด (timeout) สำหรับ step นี้
+                step["timeout"] = float(self.form_sleep.get().strip() or "30")
+            elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
-                if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
+                if t in ["start_app", "stop_app", "detect_image"] and not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
                 step["delay"] = float(self.form_sleep.get().strip() or ("5.0" if t == "text" else "1.0"))
             elif t == "keyevent":
@@ -3609,11 +3650,18 @@ class MuMuGUI(tk.Tk):
                 step["delay"] = float(self.form_sleep.get().strip() or "0.1")
         except ValueError as e:
             messagebox.showerror("ข้อมูลไม่ถูกต้อง", f"การตรวจสอบความถูกต้องการป้อนข้อมูลล้มเหลว: {e}")
+            return None
+
+        return step
+
+    def add_step(self):
+        step = self._build_step_from_form()
+        if step is None:
             return
-            
+
         self.macro_steps.append(step)
         self.refresh_listbox()
-        self.write_log(f"เพิ่มขั้นตอนสำเร็จ: {desc}", "info")
+        self.write_log(f"เพิ่มขั้นตอนสำเร็จ: {step['desc']}", "info")
 
     def update_step(self):
         selection = self.step_listbox.curselection()
@@ -3621,74 +3669,11 @@ class MuMuGUI(tk.Tk):
             messagebox.showwarning("คำเตือน", "กรุณาคลิกเลือกขั้นตอนในรายการฝั่งซ้ายที่ต้องการอัปเดตก่อน!")
             return
         idx = selection[0]
-        
-        t_label = self.form_type.get()
-        t = "tap"
-        if "Text" in t_label:
-            t = "text"
-        elif "Keyevent" in t_label:
-            t = "keyevent"
-        elif "Swipe" in t_label:
-            t = "swipe"
-        elif "Sleep" in t_label:
-            t = "sleep"
-        elif "Start App" in t_label:
-            t = "start_app"
-        elif "Stop App" in t_label:
-            t = "stop_app"
-        elif "Clear App Data" in t_label:
-            t = "clear_app"
-        elif "Image Match" in t_label:
-            t = "detect_image"
-        elif "Clear Ads Loop" in t_label:
-            t = "clear_ads_loop"
-        elif "Auto Fill OTP" in t_label:
-            t = "fetch_otp"
-        elif "Run Set" in t_label or "ใช้ชุดคำสั่ง" in t_label:
-            t = "run_set"
-            
-        desc = self.form_desc.get().strip()
-        step = {"type": t, "desc": desc}
-        
-        try:
-            if t == "tap":
-                step["x"] = self.form_x.get().strip()
-                step["y"] = self.form_y.get().strip()
-                if not step["x"] or not step["y"]: raise ValueError("พิกัดห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "5.0")
-            elif t == "swipe":
-                step["x"] = self.form_x.get().strip()
-                step["y"] = self.form_y.get().strip()
-                step["x2"] = self.form_x2.get().strip()
-                step["y2"] = self.form_y2.get().strip()
-                if not step["x"] or not step["y"] or not step["x2"] or not step["y2"]:
-                    raise ValueError("พิกัดจุดเริ่มหรือจุดปลายห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "5.0")
-            elif t in ["text", "start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
-                step["text"] = self.form_text.get()
-                if t in ["start_app", "stop_app", "clear_app", "detect_image"] and not step["text"]:
-                    raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า" if t == "detect_image" else "ชื่อสัญลักษณ์แพ็คเกจ/แอปห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or ("5.0" if t == "text" else "1.0"))
-            elif t == "keyevent":
-                step["code"] = self.form_code.get().strip()
-                if not step["code"]: raise ValueError("รหัสปุ่มกดคีย์เวนท์ห้ามว่างเปล่า")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.3")
-            elif t == "sleep":
-                step["seconds"] = float(self.form_sleep.get().strip())
-            elif t == "run_set":
-                step["set"] = self.form_text.get().strip()
-                if not step["set"]: raise ValueError("ชื่อชุดคำสั่งย่อยห้ามว่างเปล่า")
-            elif t == "keyboard":
-                step["key"] = self.form_text.get().strip().lower()
-                step["action"] = self.form_code.get().strip().lower()
-                if not step["key"] or not step["action"]: raise ValueError("คีย์และสถานะคีย์บอร์ดห้ามว่างเปล่า")
-                if step["action"] not in ["down", "up", "press"]:
-                    raise ValueError("สถานะคีย์บอร์ดต้องเป็น down, up หรือ press")
-                step["delay"] = float(self.form_sleep.get().strip() or "0.1")
-        except ValueError as e:
-            messagebox.showerror("ข้อมูลไม่ถูกต้อง", f"การตรวจสอบความถูกต้องการป้อนข้อมูลล้มเหลว: {e}")
+
+        step = self._build_step_from_form()
+        if step is None:
             return
-            
+
         self.macro_steps[idx] = step
         self.refresh_listbox()
         self.step_listbox.selection_set(idx)
@@ -3772,6 +3757,10 @@ class MuMuGUI(tk.Tk):
         self.remaining_accounts = checked_accounts.copy()
         self.active_devices_for_run = devices.copy()
 
+        # เริ่มเก็บผลลัพธ์การรันรอบใหม่ (สำหรับสรุปผล + export + รันซ้ำที่พลาด)
+        self.run_results = []
+        self.run_results_lock = threading.Lock()
+
         # ล็อคปุ่มสับเปลี่ยนสถานะ
         self.macro_running = True
         self.run_macro_btn.configure(state="disabled", bg=BG_INPUT)
@@ -3850,7 +3839,7 @@ class MuMuGUI(tk.Tk):
                             "warning",
                         )
 
-                    self.execute_device_macro(dev, acc, highlight)
+                    self._collect_result(self.execute_device_macro(dev, acc, highlight))
 
                     if self.macro_running:
                         if acc:
@@ -3863,6 +3852,13 @@ class MuMuGUI(tk.Tk):
                                 f"Sequential: จอ {pair_idx + 1}/{pair_total} เสร็จแล้ว",
                                 "success",
                             )
+
+                        if pair_idx < pair_total - 1:
+                            between_pause = random.uniform(8, 20)
+                            self.write_log(f"⏸️ พักก่อน account ถัดไป {between_pause:.1f} วินาที...", "info")
+                            pause_start = time.time()
+                            while time.time() - pause_start < between_pause and self.macro_running:
+                                time.sleep(0.2)
 
                 if self.macro_running:
                     self.write_log("🎉 Sequential: รันครบทุกบัญชีและทุกหน้าจอแล้ว!", "success")
@@ -3879,7 +3875,7 @@ class MuMuGUI(tk.Tk):
                 def worker(dev):
                     idx = devices.index(dev)
                     if sleep_stagger(dev, idx):
-                        self.execute_device_macro(dev, None, highlight)
+                        self._collect_result(self.execute_device_macro(dev, None, highlight))
 
                 with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                     executor.map(worker, devices)
@@ -3907,7 +3903,7 @@ class MuMuGUI(tk.Tk):
                         if sleep_stagger(dev, idx):
                             if self.macro_running:
                                 self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
-                                self.execute_device_macro(dev, acc, highlight)
+                                self._collect_result(self.execute_device_macro(dev, acc, highlight))
 
                     with ThreadPoolExecutor(max_workers=len(paired)) as executor:
                         executor.map(batch_worker, paired)
@@ -3946,7 +3942,7 @@ class MuMuGUI(tk.Tk):
                             
                             email = acc.get("email")
                             self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
-                            self.execute_device_macro(dev, acc, highlight)
+                            self._collect_result(self.execute_device_macro(dev, acc, highlight))
                             account_queue.task_done()
 
                     with ThreadPoolExecutor(max_workers=len(devices)) as executor:
@@ -3965,6 +3961,7 @@ class MuMuGUI(tk.Tk):
                 self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
                 self.after(0, self.update_status_summary)
+                self.after(0, self.finalize_run_results)
 
     def run_macro_task_resume(self):
         from concurrent.futures import ThreadPoolExecutor
@@ -4006,11 +4003,11 @@ class MuMuGUI(tk.Tk):
                 if sleep_stagger(dev, idx):
                     if self.macro_running:
                         self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
-                        self.execute_device_macro(dev, acc, highlight)
+                        self._collect_result(self.execute_device_macro(dev, acc, highlight))
 
             with ThreadPoolExecutor(max_workers=len(paired)) as executor:
                 executor.map(batch_worker, paired)
-                
+
             if self.macro_running:
                 if self.remaining_accounts:
                     self.is_paused_waiting_for_next_set = True
@@ -4033,7 +4030,176 @@ class MuMuGUI(tk.Tk):
                 self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร"))
                 self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
                 self.after(0, self.update_status_summary)
- 
+                self.after(0, self.finalize_run_results)
+
+    # ===== ระบบสรุปผลการรัน (Run Report) =====
+    STATUS_META = {
+        "completed": ("เสร็จสมบูรณ์", ACCENT_GREEN),
+        "device_error": ("คำสั่งผิดพลาด", ACCENT_RED),
+        "macro_error": ("สคริปต์ผิดพลาด", ACCENT_RED),
+        "stopped": ("ถูกหยุดกลางคัน", ACCENT_ORANGE),
+    }
+    FAILED_STATUSES = ("device_error", "macro_error", "stopped")
+
+    def _collect_result(self, res):
+        """เก็บผลลัพธ์ของบัญชี/จอหนึ่งเข้ารายการรวม (thread-safe)"""
+        if not res:
+            return
+        lock = getattr(self, "run_results_lock", None)
+        if not hasattr(self, "run_results"):
+            self.run_results = []
+        if lock is not None:
+            with lock:
+                self.run_results.append(res)
+        else:
+            self.run_results.append(res)
+
+    def finalize_run_results(self):
+        """บันทึกสถานะล่าสุดลงบัญชี + เปิดหน้าต่างสรุปผลหลังรันจบ"""
+        results = list(getattr(self, "run_results", []))
+        if not results:
+            return
+
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # เก็บผลล่าสุดต่ออีเมล (กรณีไอดีเดียวรันหลายครั้ง ใช้ผลล่าสุด)
+        by_email = {}
+        for res in results:
+            em = (res.get("email") or "").strip().lower()
+            if em:
+                by_email[em] = res
+
+        changed = False
+        for acc in self.accounts:
+            em = (acc.get("email") or "").strip().lower()
+            if em in by_email:
+                res = by_email[em]
+                acc["last_status"] = res.get("status", "")
+                acc["last_error"] = res.get("error", "")
+                acc["last_device"] = res.get("device", "")
+                acc["last_run"] = stamp
+                changed = True
+
+        if changed:
+            self.save_accounts()
+            self.refresh_accounts_ui()
+
+        self.show_run_summary(results)
+
+    def show_run_summary(self, results):
+        """หน้าต่างสรุปผล: นับผ่าน/พลาด + ตารางรายละเอียด + export + เลือกที่พลาด"""
+        total = len(results)
+        failed = [r for r in results if r.get("status") in self.FAILED_STATUSES]
+        ok = total - len(failed)
+
+        win = tk.Toplevel(self)
+        win.title("สรุปผลการรันมาโคร")
+        win.configure(bg=BG_DARK)
+        win.geometry("760x520")
+        win.transient(self)
+
+        header = tk.Frame(win, bg=BG_DARK)
+        header.pack(fill="x", padx=20, pady=(18, 8))
+        tk.Label(header, text="สรุปผลการรัน", bg=BG_DARK, fg=FG_WHITE,
+                 font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        summary_txt = f"ทั้งหมด {total} รายการ   ·   ✅ สำเร็จ {ok}   ·   ❌ พลาด {len(failed)}"
+        tk.Label(header, text=summary_txt, bg=BG_DARK, fg=FG_MUTED,
+                 font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 0))
+
+        # ตารางผลลัพธ์
+        table_frame = tk.Frame(win, bg=BG_DARK)
+        table_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        cols = ("email", "device", "status", "duration", "error")
+        tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=12)
+        headings = {
+            "email": ("บัญชี / ไอดี", 220),
+            "device": ("จอ", 110),
+            "status": ("สถานะ", 110),
+            "duration": ("เวลา (วิ)", 70),
+            "error": ("ข้อผิดพลาด", 220),
+        }
+        for col, (label, width) in headings.items():
+            tree.heading(col, text=label)
+            tree.column(col, width=width, anchor="w")
+
+        tree.tag_configure("fail", foreground="#F87171")
+        tree.tag_configure("ok", foreground="#34D399")
+        tree.tag_configure("warn", foreground="#FBBF24")
+
+        for r in results:
+            status = r.get("status", "")
+            label, _ = self.STATUS_META.get(status, (status, FG_WHITE))
+            if status in ("device_error", "macro_error"):
+                tag = "fail"
+            elif status == "stopped":
+                tag = "warn"
+            else:
+                tag = "ok"
+            tree.insert("", "end", tags=(tag,), values=(
+                r.get("email") or "(ไม่มีบัญชี)",
+                r.get("device", ""),
+                label,
+                r.get("duration", ""),
+                (r.get("error", "") or "")[:80],
+            ))
+
+        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        # ปุ่มจัดการ
+        btns = tk.Frame(win, bg=BG_DARK)
+        btns.pack(fill="x", padx=20, pady=(6, 16))
+
+        def export_csv():
+            from tkinter import filedialog
+            import csv
+            from datetime import datetime
+            default_name = f"run_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            path = filedialog.asksaveasfilename(
+                parent=win, defaultextension=".csv", initialfile=default_name,
+                filetypes=[("CSV", "*.csv"), ("ทั้งหมด", "*.*")],
+            )
+            if not path:
+                return
+            try:
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["email", "name", "device", "status", "error", "duration"])
+                    for r in results:
+                        writer.writerow([
+                            r.get("email", ""), r.get("name", ""), r.get("device", ""),
+                            r.get("status", ""), r.get("error", ""), r.get("duration", ""),
+                        ])
+                messagebox.showinfo("สำเร็จ", f"บันทึกรายงานเรียบร้อย:\n{path}", parent=win)
+            except Exception as e:
+                messagebox.showerror("ผิดพลาด", f"บันทึกไฟล์ไม่สำเร็จ: {e}", parent=win)
+
+        def select_failed():
+            failed_emails = {(r.get("email") or "").strip().lower() for r in failed if r.get("email")}
+            run_emails = {(r.get("email") or "").strip().lower() for r in results if r.get("email")}
+            if not failed_emails:
+                messagebox.showinfo("ไม่มีไอดีที่พลาด", "รอบนี้ไม่มีไอดีที่ต้องรันซ้ำ", parent=win)
+                return
+            # ติ๊กเฉพาะไอดีที่พลาด ส่วนไอดีที่รันรอบนี้และผ่านแล้วให้เอาเครื่องหมายออก
+            for acc in self.accounts:
+                em = (acc.get("email") or "").strip().lower()
+                if em in failed_emails:
+                    acc["checked"] = True
+                elif em in run_emails:
+                    acc["checked"] = False
+            self.save_accounts()
+            self.refresh_accounts_ui()
+            self.update_status_summary()
+            messagebox.showinfo("เลือกแล้ว", f"ติ๊กไอดีที่พลาด {len(failed_emails)} รายการเพื่อรันซ้ำ\nกดปิดหน้าต่างนี้แล้วกด 'รันมาโคร' ได้เลย", parent=win)
+
+        ModernButton(btns, text="📄 Export CSV", command=export_csv, variant="accent").pack(side="left", padx=(0, 10))
+        ModernButton(btns, text="🔁 เลือกเฉพาะที่พลาด", command=select_failed, variant="warning").pack(side="left", padx=(0, 10))
+        ModernButton(btns, text="ปิด", command=win.destroy, variant="subtle").pack(side="right")
+
     def fetch_otp_via_readmail_api(self, mail_address, refresh_token, client_id, pattern_str=None):
         """ดึงข้อความอีเมลผ่าน API ของ read-mail.me โดยใช้ OAuth2 Token"""
         import urllib.request
@@ -4179,23 +4345,65 @@ class MuMuGUI(tk.Tk):
         return None
 
     def execute_device_macro(self, device, account, highlight=True):
-        """รันสคริปต์มาโครบน Emulator จอเดียวกับบัญชีที่กำหนด"""
+        """รันสคริปต์มาโครบน Emulator จอเดียวกับบัญชีที่กำหนด
+
+        คืนค่า dict สรุปผลของบัญชี/จอนี้: status, error, errors, duration
+        เพื่อให้ระบบนำไปสรุปผลรวมและบันทึกสถานะลงบัญชีได้
+        """
         if not hasattr(self, 'device_active_accounts'):
             self.device_active_accounts = {}
         self.device_active_accounts[device] = account
-        
+
+        run_start = time.time()
+        result = {
+            "email": (account.get("email") if account else "") or "",
+            "name": (account.get("name") if account else "") or "",
+            "device": device,
+            "status": "completed",  # completed | device_error | stopped | macro_error
+            "error": "",
+            "errors": 0,
+            "duration": 0.0,
+        }
+
+        def record(ret, label):
+            """รับผลลัพธ์ (success, output) จาก controller — ถ้า fail ให้ log + นับ"""
+            try:
+                ok, out = ret
+            except (TypeError, ValueError):
+                ok, out = True, ""
+            if not ok:
+                result["errors"] += 1
+                if not result["error"]:
+                    result["error"] = f"{label}: {out}"
+                self.write_log(f"   ❌ [{device}] คำสั่ง {label} ล้มเหลว: {out}", "error")
+            return ok
+
+        def finish():
+            result["duration"] = round(time.time() - run_start, 1)
+            if result["errors"] and result["status"] == "completed":
+                result["status"] = "device_error"
+            return result
+
         # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี
         resolver = lambda name: self.script_sets.get(name)
         try:
             steps_to_run = expand_steps_with_sets(self.macro_steps, resolver)
         except Exception as e:
             self.write_log(f"❌ เกิดข้อผิดพลาดในการขยายชุดคำสั่ง (Script Sets): {e}", "error")
-            return
+            result["status"] = "macro_error"
+            result["error"] = f"script_sets: {e}"
+            return finish()
+
+        # บริบทที่ส่งให้ handler แต่ละชนิด (device/account คงที่, step_delay อัปเดตทุก step)
+        import types
+        ctx = types.SimpleNamespace(device=device, account=account, record=record, step_delay=0.0)
+        handlers = self._get_step_handlers()
 
         for idx, step in enumerate(steps_to_run):
             if not self.macro_running:
-                return
-            
+                result["status"] = "stopped"
+                return finish()
+
             t = step.get("type", "tap")
             desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
             email_log = ""
@@ -4213,274 +4421,375 @@ class MuMuGUI(tk.Tk):
             # ดึงค่าหน่วงเวลาเฉพาะของขั้นตอนนี้ (ถ้าไม่มีให้ดึงค่าดีฟอลต์มาใช้)
             step_delay = step.get("delay")
             if step_delay is None:
-                if t == "tap" or t == "swipe":
-                    step_delay = 5.0
-                elif t == "text":
-                    step_delay = 5.0
-                elif t == "keyevent":
-                    step_delay = 0.3
-                elif t in ["start_app", "stop_app", "clear_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
-                    step_delay = 1.0
-                else:
-                    step_delay = 0.0
+                step_delay = DEFAULT_STEP_DELAYS.get(t, 0.0)
             else:
                 step_delay = float(step_delay)
+            if step_delay > 0:
+                step_delay = step_delay * random.uniform(0.8, 1.4)
 
-            # ประมวลผลคำสั่งมาโคร
-            if t == "tap":
-                self.controller.tap(device, step["x"], step["y"])
-                time.sleep(step_delay)  # หน่วงเวลาหลังคลิกเพื่อให้ระบบ Android ทำงานทัน
-            elif t == "swipe":
-                swipe_duration = int(float(step.get("duration", DEFAULT_SWIPE_DURATION)))
-                self.controller.swipe(device, step["x"], step["y"], step["x2"], step["y2"], swipe_duration)
-                time.sleep(step_delay)  # หน่วงเวลาหลังลากจอ
-            elif t == "text":
-                text_to_send = step["text"]
-                if account:
-                    # แทนที่ตัวแปร {EMAIL}, {PASSWORD} และ {NAME} ด้วยไอดีรอบนี้
-                    text_to_send = text_to_send.replace("{EMAIL}", account["email"])
-                    text_to_send = text_to_send.replace("{PASSWORD}", account["password"])
-                    text_to_send = text_to_send.replace("{NAME}", account.get("name", ""))
-                self.controller.input_text(device, text_to_send)
-                time.sleep(step_delay)  # หน่วงเวลาหลังพิมพ์ข้อความ
-            elif t == "keyevent":
-                self.controller.keyevent(device, step["code"])
-                time.sleep(step_delay)  # หน่วงเวลาหลังคีย์อีเวนท์
-            elif t == "start_app":
-                self.controller.start_app(device, step["text"])
-                if step_delay > 0:
-                    time.sleep(step_delay)
-            elif t == "stop_app":
-                self.controller.stop_app(device, step["text"])
-                if step_delay > 0:
-                    time.sleep(step_delay)
-            elif t == "clear_app":
-                self.controller.clear_app(device, step["text"])
-                if step_delay > 0:
-                    time.sleep(step_delay)
-            elif t == "detect_image":
-                template_file = step["text"]
+            # ประมวลผลคำสั่งมาโคร ผ่านตาราง dispatch (handler ต่อชนิด step)
+            ctx.step_delay = step_delay
+            handler = handlers.get(t)
+            if handler is None:
+                self.write_log(f"   ⚠️ [{device}] ไม่รู้จักชนิดขั้นตอน '{t}' -> ข้าม", "warning")
+                continue
+            signal = handler(ctx, step)
+            if signal == "stop":
+                result["status"] = "stopped"
+                return finish()
+
+        return finish()
+
+    # ===== Macro step handlers (dispatch table) =====
+    def _get_step_handlers(self):
+        """ตารางจับคู่ชนิด step -> เมธอด handler (สร้างครั้งเดียวแล้วแคชไว้)"""
+        if not hasattr(self, "_step_handlers"):
+            self._step_handlers = {
+                "tap": self._step_tap,
+                "swipe": self._step_swipe,
+                "text": self._step_text,
+                "keyevent": self._step_keyevent,
+                "start_app": self._step_start_app,
+                "stop_app": self._step_stop_app,
+                "detect_image": self._step_detect_image,
+                "wait_for_image": self._step_wait_for_image,
+                "screenshot": self._step_screenshot,
+                "clear_ads_loop": self._step_clear_ads_loop,
+                "fetch_otp": self._step_fetch_otp,
+                "sleep": self._step_sleep,
+                "keyboard": self._step_keyboard,
+            }
+        return self._step_handlers
+
+    def _step_tap(self, ctx, step):
+        ctx.record(self.controller.tap(ctx.device, step["x"], step["y"]), "tap")
+        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังคลิกเพื่อให้ระบบ Android ทำงานทัน
+
+    def _step_swipe(self, ctx, step):
+        swipe_duration = int(float(step.get("duration", DEFAULT_SWIPE_DURATION)))
+        ctx.record(self.controller.swipe(ctx.device, step["x"], step["y"], step["x2"], step["y2"], swipe_duration), "swipe")
+        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังลากจอ
+
+    def _step_text(self, ctx, step):
+        text_to_send = step["text"]
+        if ctx.account:
+            # แทนที่ตัวแปร {EMAIL}, {PASSWORD} และ {NAME} ด้วยไอดีรอบนี้
+            text_to_send = text_to_send.replace("{EMAIL}", ctx.account["email"])
+            text_to_send = text_to_send.replace("{PASSWORD}", ctx.account["password"])
+            text_to_send = text_to_send.replace("{NAME}", ctx.account.get("name", ""))
+        ctx.record(self.controller.input_text(ctx.device, text_to_send), "text")
+        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังพิมพ์ข้อความ
+
+    def _step_keyevent(self, ctx, step):
+        ctx.record(self.controller.keyevent(ctx.device, step["code"]), "keyevent")
+        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังคีย์อีเวนท์
+
+    def _step_start_app(self, ctx, step):
+        ctx.record(self.controller.start_app(ctx.device, step["text"]), "start_app")
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
+
+    def _step_stop_app(self, ctx, step):
+        ctx.record(self.controller.stop_app(ctx.device, step["text"]), "stop_app")
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
+
+    def _step_detect_image(self, ctx, step):
+        device = ctx.device
+        template_file = step["text"]
+        template_path = os.path.join(self.templates_dir, template_file)
+        if not os.path.exists(template_path):
+            self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file}", "warning")
+            return
+        safe_device = device.replace(":", "_").replace(".", "_")
+        temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
+
+        # ถ่ายภาพหน้าจอของจอนี้
+        success, err = self.controller.take_screenshot(device, temp_screenshot)
+        if not success:
+            self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+            return
+
+        # ค้นหาตำแหน่งภาพ
+        found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.8)
+
+        # ลบภาพแคปหน้าจอชั่วคราวทิ้งทันที
+        if os.path.exists(temp_screenshot):
+            try:
+                os.remove(temp_screenshot)
+            except Exception:
+                pass
+
+        if found:
+            self.write_log(f"   🎯 [{device}] พบรูป '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
+            self.controller.tap(device, match_x, match_y)
+            if ctx.step_delay > 0:
+                time.sleep(ctx.step_delay)
+        else:
+            self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
+
+    def _step_wait_for_image(self, ctx, step):
+        """รอจนกว่าจะเจอรูปบนหน้าจอ (มี timeout) แล้วค่อยทำต่อ — แทน sleep แบบตายตัว
+
+        params ใน step: text=ชื่อไฟล์เทมเพลต, timeout=วินาทีรอสูงสุด,
+        interval=ช่วงเช็ค (ดีฟอลต์ 1.0), threshold=ความเหมือน (ดีฟอลต์ 0.8),
+        click=คลิกเมื่อเจอ (ดีฟอลต์ True), on_timeout='continue'|'fail'
+        """
+        device = ctx.device
+        template_file = (step.get("text") or "").strip()
+        if not template_file:
+            self.write_log(f"   ⚠️ [{device}] wait_for_image: ไม่ได้ระบุไฟล์รูปภาพต้นแบบ -> ข้าม", "warning")
+            return
+        template_path = os.path.join(self.templates_dir, template_file)
+        if not os.path.exists(template_path):
+            self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file} -> ข้าม", "warning")
+            return
+
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = float(step.get("interval", 1.0) or 1.0)
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        click = step.get("click", True)
+        on_timeout = (step.get("on_timeout") or "continue").lower()
+
+        self.write_log(f"   ⏳ [{device}] รอจนกว่าจะเจอรูป '{template_file}' (สูงสุด {timeout:g} วิ)...", "info")
+        safe_device = device.replace(":", "_").replace(".", "_")
+        temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            if not self.macro_running:
+                return "stop"
+
+            success, err = self.controller.take_screenshot(device, temp_screenshot)
+            if success:
+                found, mx, my, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=threshold)
+                if os.path.exists(temp_screenshot):
+                    try: os.remove(temp_screenshot)
+                    except Exception: pass
+                if found:
+                    self.write_log(f"   🎯 [{device}] เจอรูป '{template_file}' พิกัด ({mx}, {my})", "success")
+                    if click:
+                        self.controller.tap(device, mx, my)
+                    if ctx.step_delay > 0:
+                        time.sleep(ctx.step_delay)
+                    return
+            else:
+                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+
+            # รอช่วง interval ก่อนเช็คอีกครั้ง (ตรวจสถานะหยุดถี่ๆ เพื่อยกเลิกได้ทันที)
+            waited = 0.0
+            while waited < interval:
+                if not self.macro_running:
+                    return "stop"
+                time.sleep(0.1)
+                waited += 0.1
+
+        # หมดเวลาแล้วยังไม่เจอ
+        self.write_log(f"   ⌛ [{device}] รอครบ {timeout:g} วิ แล้วยังไม่เจอรูป '{template_file}'", "warning")
+        if on_timeout == "fail":
+            ctx.record((False, f"wait_for_image timeout: {template_file}"), "wait_for_image")
+
+    def _step_screenshot(self, ctx, step):
+        device = ctx.device
+        account = ctx.account
+        filename_pattern = step.get("text", "").strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
+
+        # แทนที่ตัวแปร {EMAIL}, {PASSWORD}, {NAME}, {GROUP}, {DATE}, {TIME} ในชื่อไฟล์ภาพ
+        filename = filename_pattern
+
+        from datetime import datetime
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H-%M-%S")
+
+        if account:
+            filename = filename.replace("{EMAIL}", account.get("email", "no_account"))
+            filename = filename.replace("{PASSWORD}", account.get("password", "no_password"))
+            filename = filename.replace("{NAME}", account.get("name", ""))
+            filename = filename.replace("{GROUP}", account.get("group", "no_group"))
+        else:
+            filename = filename.replace("{EMAIL}", "no_account")
+            filename = filename.replace("{PASSWORD}", "no_password")
+            filename = filename.replace("{NAME}", "no_name")
+            filename = filename.replace("{GROUP}", "no_group")
+
+        filename = filename.replace("{DATE}", date_str)
+        filename = filename.replace("{TIME}", time_str)
+
+        # ทำความสะอาดชื่อไฟล์ให้ปลอดภัยสำหรับ Windows (รองรับภาษาไทย อังกฤษ ตัวเลข และสัญลักษณ์ที่ปลอดภัย)
+        safe_device = device.replace(":", "_").replace(".", "_")
+        filename = filename.replace("{DEVICE}", safe_device)
+
+        def is_safe_char(c):
+            return c.isalnum() or c in "-_.() /\\" or ('฀' <= c <= '๿')
+
+        filename = "".join(c for c in filename if is_safe_char(c))
+
+        # หากไม่มีนามสกุล .png หรือ .jpg ให้เติม .png
+        if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            filename += ".png"
+
+        # สร้างโฟลเดอร์สำหรับเก็บภาพสกรีนช็อต
+        screenshots_dir = os.path.dirname(os.path.abspath(filename))
+        if screenshots_dir and not os.path.exists(screenshots_dir):
+            os.makedirs(screenshots_dir, exist_ok=True)
+
+        # ถ่ายภาพหน้าจอ
+        self.write_log(f"   📸 [{device}] กำลังบันทึกภาพหน้าจอเป็น '{filename}'...", "info")
+        success, err = self.controller.take_screenshot(device, filename)
+        if success:
+            self.write_log(f"   ✅ [{device}] บันทึกภาพหน้าจอสำเร็จ: '{filename}'", "success")
+        else:
+            self.write_log(f"   ❌ [{device}] บันทึกภาพหน้าจอล้มเหลว: {err}", "error")
+
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
+
+    def _step_clear_ads_loop(self, ctx, step):
+        device = ctx.device
+        step_delay = ctx.step_delay
+        step_text = step.get("text", "").strip()
+        lobby_template = ""
+        ad_templates = []
+
+        if "|" in step_text:
+            parts = step_text.split("|")
+            lobby_template = parts[0].strip()
+            ad_templates = [p.strip() for p in parts[1].split(",") if p.strip()]
+        else:
+            if step_text.endswith(".png"):
+                lobby_template = step_text
+            elif step_text:
+                ad_templates = [p.strip() for p in step_text.split(",") if p.strip()]
+
+        # ถ้าไม่ระบุรูปภาพปุ่มปิดโฆษณา ให้ดึงไฟล์ .png ทั้งหมดในโฟลเดอร์ยกเว้นรูปหน้าหลัก รูปชั่วคราว และรูปที่มีคีย์เวิร์ดบ่งบอกว่าเป็นหน้าหลัก
+        if not ad_templates:
+            import glob
+            all_pngs = [os.path.basename(f) for f in glob.glob(os.path.join(self.templates_dir, "*.png"))]
+            ad_templates = [
+                f for f in all_pngs
+                if f != lobby_template
+                and not f.startswith("temp_")
+                and not any(k in f.lower() for k in ["lobby", "home", "main", "start"])
+            ]
+
+        self.write_log(f"   🔄 [{device}] เริ่มรันลูปเคลียร์โฆษณา (หน้าจอหลักเป้าหมาย: '{lobby_template or 'ไม่ได้ตั้งค่า'}')", "info")
+        if ad_templates:
+            self.write_log(f"   🔍 [{device}] รายการรูปปุ่มปิดที่จะตรวจจับ: {', '.join(ad_templates)}", "info")
+
+        max_attempts = 15
+        for attempt in range(max_attempts):
+            if not self.macro_running:
+                break
+
+            safe_device = device.replace(":", "_").replace(".", "_")
+            temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
+
+            success, err = self.controller.take_screenshot(device, temp_screenshot)
+            if not success:
+                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+                break
+
+            # 1. ตรวจสอบว่ามาถึงหน้าจอหลัก/เริ่มต้น (Lobby) หรือยัง
+            reached_lobby = False
+            lobby_msg = ""
+            if lobby_template:
+                lobby_path = os.path.join(self.templates_dir, lobby_template)
+                if os.path.exists(lobby_path):
+                    found_lobby, lx, ly, lmsg = self.controller.find_image_on_screen(temp_screenshot, lobby_path, threshold=0.7)
+                    lobby_msg = lmsg
+                    if found_lobby:
+                        self.write_log(f"   🎉 [{device}] รอบที่ {attempt+1}: ตรวจพบหน้าจอหลัก/เริ่มต้น '{lobby_template}' -> โฆษณาเคลียร์หมดแล้ว!", "success")
+                        reached_lobby = True
+
+            if reached_lobby:
+                if os.path.exists(temp_screenshot):
+                    try: os.remove(temp_screenshot)
+                    except Exception: pass
+                break
+
+            # 2. ตรวจสอบปุ่มปิดโฆษณาเพื่อกดปิด
+            found_ad = False
+            for template_file in ad_templates:
                 template_path = os.path.join(self.templates_dir, template_file)
                 if not os.path.exists(template_path):
-                    self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file}", "warning")
-                else:
-                    safe_device = device.replace(":", "_").replace(".", "_")
-                    temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
-                    
-                    # ถ่ายภาพหน้าจอของจอนี้
-                    success, err = self.controller.take_screenshot(device, temp_screenshot)
-                    if not success:
-                        self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
-                    else:
-                        # ค้นหาตำแหน่งภาพ
-                        found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.8)
-                        
-                        # ลบภาพแคปหน้าจอชั่วคราวทิ้งทันที
-                        if os.path.exists(temp_screenshot):
-                            try:
-                                os.remove(temp_screenshot)
-                            except Exception:
-                                pass
-                        
-                        if found:
-                            self.write_log(f"   🎯 [{device}] พบรูป '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
-                            self.controller.tap(device, match_x, match_y)
-                            if step_delay > 0:
-                                time.sleep(step_delay)
-                        else:
-                            self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
-            elif t == "screenshot":
-                filename_pattern = step.get("text", "").strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
-                
-                # แทนที่ตัวแปร {EMAIL}, {PASSWORD}, {NAME}, {GROUP}, {DATE}, {TIME} ในชื่อไฟล์ภาพ
-                filename = filename_pattern
-                
-                from datetime import datetime
-                now = datetime.now()
-                date_str = now.strftime("%Y-%m-%d")
-                time_str = now.strftime("%H-%M-%S")
-                
-                if account:
-                    filename = filename.replace("{EMAIL}", account.get("email", "no_account"))
-                    filename = filename.replace("{PASSWORD}", account.get("password", "no_password"))
-                    filename = filename.replace("{NAME}", account.get("name", ""))
-                    filename = filename.replace("{GROUP}", account.get("group", "no_group"))
-                else:
-                    filename = filename.replace("{EMAIL}", "no_account")
-                    filename = filename.replace("{PASSWORD}", "no_password")
-                    filename = filename.replace("{NAME}", "no_name")
-                    filename = filename.replace("{GROUP}", "no_group")
-                
-                filename = filename.replace("{DATE}", date_str)
-                filename = filename.replace("{TIME}", time_str)
-                
-                # ทำความสะอาดชื่อไฟล์ให้ปลอดภัยสำหรับ Windows (รองรับภาษาไทย อังกฤษ ตัวเลข และสัญลักษณ์ที่ปลอดภัย)
-                import string
-                safe_device = device.replace(":", "_").replace(".", "_")
-                filename = filename.replace("{DEVICE}", safe_device)
-                
-                def is_safe_char(c):
-                    return c.isalnum() or c in "-_.() /\\" or ('\u0e00' <= c <= '\u0e7f')
-                
-                filename = "".join(c for c in filename if is_safe_char(c))
-                
-                # หากไม่มีนามสกุล .png หรือ .jpg ให้เติม .png
-                if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    filename += ".png"
-                
-                # สร้างโฟลเดอร์สำหรับเก็บภาพสกรีนช็อต
-                screenshots_dir = os.path.dirname(os.path.abspath(filename))
-                if screenshots_dir and not os.path.exists(screenshots_dir):
-                    os.makedirs(screenshots_dir, exist_ok=True)
-                
-                # ถ่ายภาพหน้าจอ
-                self.write_log(f"   📸 [{device}] กำลังบันทึกภาพหน้าจอเป็น '{filename}'...", "info")
-                success, err = self.controller.take_screenshot(device, filename)
-                if success:
-                    self.write_log(f"   ✅ [{device}] บันทึกภาพหน้าจอสำเร็จ: '{filename}'", "success")
-                else:
-                    self.write_log(f"   ❌ [{device}] บันทึกภาพหน้าจอล้มเหลว: {err}", "error")
-                
-                if step_delay > 0:
-                    time.sleep(step_delay)
-            elif t == "clear_ads_loop":
-                step_text = step.get("text", "").strip()
-                lobby_template = ""
-                ad_templates = []
-                
-                if "|" in step_text:
-                    parts = step_text.split("|")
-                    lobby_template = parts[0].strip()
-                    ad_templates = [p.strip() for p in parts[1].split(",") if p.strip()]
-                else:
-                    if step_text.endswith(".png"):
-                        lobby_template = step_text
-                    elif step_text:
-                        ad_templates = [p.strip() for p in step_text.split(",") if p.strip()]
-                
-                # ถ้าไม่ระบุรูปภาพปุ่มปิดโฆษณา ให้ดึงไฟล์ .png ทั้งหมดในโฟลเดอร์ยกเว้นรูปหน้าหลัก รูปชั่วคราว และรูปที่มีคีย์เวิร์ดบ่งบอกว่าเป็นหน้าหลัก
-                if not ad_templates:
-                    import glob
-                    all_pngs = [os.path.basename(f) for f in glob.glob(os.path.join(self.templates_dir, "*.png"))]
-                    ad_templates = [
-                        f for f in all_pngs 
-                        if f != lobby_template 
-                        and not f.startswith("temp_")
-                        and not any(k in f.lower() for k in ["lobby", "home", "main", "start"])
-                    ]
+                    continue
 
-                self.write_log(f"   🔄 [{device}] เริ่มรันลูปเคลียร์โฆษณา (หน้าจอหลักเป้าหมาย: '{lobby_template or 'ไม่ได้ตั้งค่า'}')", "info")
-                if ad_templates:
-                    self.write_log(f"   🔍 [{device}] รายการรูปปุ่มปิดที่จะตรวจจับ: {', '.join(ad_templates)}", "info")
+                found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.7)
+                if found:
+                    self.write_log(f"   🎯 [{device}] รอบที่ {attempt+1}: พบรูปปุ่มปิด '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
+                    self.controller.tap(device, match_x, match_y)
+                    found_ad = True
+                    if step_delay > 0:
+                        time.sleep(step_delay)
+                    break
 
-                max_attempts = 15
-                for attempt in range(max_attempts):
-                    if not self.macro_running:
-                        break
-                        
-                    safe_device = device.replace(":", "_").replace(".", "_")
-                    temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
-                    
-                    success, err = self.controller.take_screenshot(device, temp_screenshot)
-                    if not success:
-                        self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
-                        break
-                    
-                    # 1. ตรวจสอบว่ามาถึงหน้าจอหลัก/เริ่มต้น (Lobby) หรือยัง
-                    reached_lobby = False
-                    lobby_msg = ""
-                    if lobby_template:
-                        lobby_path = os.path.join(self.templates_dir, lobby_template)
-                        if os.path.exists(lobby_path):
-                            found_lobby, lx, ly, lmsg = self.controller.find_image_on_screen(temp_screenshot, lobby_path, threshold=0.7)
-                            lobby_msg = lmsg
-                            if found_lobby:
-                                self.write_log(f"   🎉 [{device}] รอบที่ {attempt+1}: ตรวจพบหน้าจอหลัก/เริ่มต้น '{lobby_template}' -> โฆษณาเคลียร์หมดแล้ว!", "success")
-                                reached_lobby = True
-                    
-                    if reached_lobby:
-                        if os.path.exists(temp_screenshot):
-                            try: os.remove(temp_screenshot)
-                            except Exception: pass
-                        break
-                        
-                    # 2. ตรวจสอบปุ่มปิดโฆษณาเพื่อกดปิด
-                    found_ad = False
-                    for template_file in ad_templates:
-                        template_path = os.path.join(self.templates_dir, template_file)
-                        if not os.path.exists(template_path):
-                            continue
-                            
-                        found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.7)
-                        if found:
-                            self.write_log(f"   🎯 [{device}] รอบที่ {attempt+1}: พบรูปปุ่มปิด '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
-                            self.controller.tap(device, match_x, match_y)
-                            found_ad = True
-                            if step_delay > 0:
-                                time.sleep(step_delay)
-                            break
-                    
-                    if os.path.exists(temp_screenshot):
-                        try: os.remove(temp_screenshot)
-                        except Exception: pass
-                        
-                    # 3. หากไม่พบปุ่มปิดใดๆ และยังไม่ถึงหน้าหลัก ให้ส่งปุ่ม BACK ย้อนกลับเป็นทางเลือกสำรอง
-                    if not found_ad:
-                        if lobby_template:
-                            conf_info = ""
-                            if "confidence:" in lobby_msg:
-                                try:
-                                    conf_val = lobby_msg.split("confidence:")[1].strip().replace(")", "")
-                                    conf_info = f" (ความเหมือนสูงสุด: {conf_val})"
-                                except Exception:
-                                    pass
-                            self.write_log(f"   🔍 [{device}] รอบที่ {attempt+1}: ไม่พบหน้าหลัก '{lobby_template}'{conf_info} และไม่พบปุ่มปิด -> ส่งปุ่มย้อนกลับ (BACK)", "warning")
-                            self.controller.keyevent(device, 4)
-                            if step_delay > 0:
-                                time.sleep(step_delay)
-                        else:
-                            # ถ้าไม่ได้ตั้งรูปหน้าจอหลัก และไม่เจอปุ่มปิดใดๆ อีก ให้ถือว่าเคลียร์เสร็จสิ้น
-                            self.write_log(f"   ✅ [{device}] เคลียร์โฆษณาเรียบร้อยแล้ว (ไม่พบโฆษณาบนจอ)", "success")
-                            break
-                else:
-                    self.write_log(f"   ⚠️ [{device}] ทำงานลูปเคลียร์โฆษณาครบ {max_attempts} รอบแล้ว (สิ้นสุดลูป)", "warning")
-            elif t == "fetch_otp":
-                if not account:
-                    self.write_log(f"   ⚠️ [{device}] ข้ามขั้นตอนดึง OTP เนื่องจากรันแบบไม่มีบัญชีไอดี", "warning")
-                else:
-                    email_addr = account.get("email", "").strip()
-                    email_pass = account.get("password", "").strip()
-                    ref_token = account.get("refresh_token", "").strip()
-                    cli_id = account.get("client_id", "").strip()
-                    
-                    self.write_log(f"   📥 [{device}] กำลังเชื่อมต่อดึงรหัส OTP ของบัญชี {email_addr}...", "info")
-                    
-                    pattern_str = step.get("text", "").strip()
-                    otp_code = self.fetch_otp_from_mail(email_addr, email_pass, pattern_str, refresh_token=ref_token, client_id=cli_id)
-                    
-                    if otp_code:
-                        self.write_log(f"   ✅ [{device}] ดึงรหัส OTP สำเร็จ: {otp_code} -> กำลังกรอกรหัสลงบนจอ", "success")
-                        self.controller.input_text(device, otp_code)
-                        if step_delay > 0:
-                            time.sleep(step_delay)
-                    else:
-                        self.write_log(f"   ❌ [{device}] ไม่สามารถดึงรหัส OTP ได้หลังจากสแกนกล่องข้อความ", "error")
-            elif t == "sleep":
-                sleep_time = float(step["seconds"])
-                slices = int(sleep_time / 0.1)
-                for _ in range(slices):
-                    if not self.macro_running:
-                        return
-                    time.sleep(0.1)
-                time.sleep(sleep_time % 0.1)
-            elif t == "keyboard":
-                key_name = step.get("key", "").strip().lower()
-                action = step.get("action", "").strip().lower()
-                self.write_log(f"   ⌨️ [{device}] ส่งปุ่มคีย์บอร์ด: '{key_name}' ({action})", "info")
-                self.execute_keyboard_input(device, key_name, action)
-                if step_delay > 0:
-                    time.sleep(step_delay)
+            if os.path.exists(temp_screenshot):
+                try: os.remove(temp_screenshot)
+                except Exception: pass
 
+            # 3. หากไม่พบปุ่มปิดใดๆ และยังไม่ถึงหน้าหลัก ให้ส่งปุ่ม BACK ย้อนกลับเป็นทางเลือกสำรอง
+            if not found_ad:
+                if lobby_template:
+                    conf_info = ""
+                    if "confidence:" in lobby_msg:
+                        try:
+                            conf_val = lobby_msg.split("confidence:")[1].strip().replace(")", "")
+                            conf_info = f" (ความเหมือนสูงสุด: {conf_val})"
+                        except Exception:
+                            pass
+                    self.write_log(f"   🔍 [{device}] รอบที่ {attempt+1}: ไม่พบหน้าหลัก '{lobby_template}'{conf_info} และไม่พบปุ่มปิด -> ส่งปุ่มย้อนกลับ (BACK)", "warning")
+                    self.controller.keyevent(device, 4)
+                    if step_delay > 0:
+                        time.sleep(step_delay)
+                else:
+                    # ถ้าไม่ได้ตั้งรูปหน้าจอหลัก และไม่เจอปุ่มปิดใดๆ อีก ให้ถือว่าเคลียร์เสร็จสิ้น
+                    self.write_log(f"   ✅ [{device}] เคลียร์โฆษณาเรียบร้อยแล้ว (ไม่พบโฆษณาบนจอ)", "success")
+                    break
+        else:
+            self.write_log(f"   ⚠️ [{device}] ทำงานลูปเคลียร์โฆษณาครบ {max_attempts} รอบแล้ว (สิ้นสุดลูป)", "warning")
+
+    def _step_fetch_otp(self, ctx, step):
+        device = ctx.device
+        account = ctx.account
+        if not account:
+            self.write_log(f"   ⚠️ [{device}] ข้ามขั้นตอนดึง OTP เนื่องจากรันแบบไม่มีบัญชีไอดี", "warning")
+            return
+
+        email_addr = account.get("email", "").strip()
+        email_pass = account.get("password", "").strip()
+        ref_token = account.get("refresh_token", "").strip()
+        cli_id = account.get("client_id", "").strip()
+
+        self.write_log(f"   📥 [{device}] กำลังเชื่อมต่อดึงรหัส OTP ของบัญชี {email_addr}...", "info")
+
+        pattern_str = step.get("text", "").strip()
+        otp_code = self.fetch_otp_from_mail(email_addr, email_pass, pattern_str, refresh_token=ref_token, client_id=cli_id)
+
+        if otp_code:
+            self.write_log(f"   ✅ [{device}] ดึงรหัส OTP สำเร็จ: {otp_code} -> กำลังกรอกรหัสลงบนจอ", "success")
+            ctx.record(self.controller.input_text(device, otp_code), "fetch_otp")
+            if ctx.step_delay > 0:
+                time.sleep(ctx.step_delay)
+        else:
+            self.write_log(f"   ❌ [{device}] ไม่สามารถดึงรหัส OTP ได้หลังจากสแกนกล่องข้อความ", "error")
+
+    def _step_sleep(self, ctx, step):
+        sleep_time = float(step["seconds"]) * random.uniform(0.85, 1.2)
+        slices = int(sleep_time / 0.1)
+        for _ in range(slices):
+            if not self.macro_running:
+                return "stop"
+            time.sleep(0.1)
+        time.sleep(sleep_time % 0.1)
+
+    def _step_keyboard(self, ctx, step):
+        key_name = step.get("key", "").strip().lower()
+        action = step.get("action", "").strip().lower()
+        self.write_log(f"   ⌨️ [{ctx.device}] ส่งปุ่มคีย์บอร์ด: '{key_name}' ({action})", "info")
+        self.execute_keyboard_input(ctx.device, key_name, action)
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
 
     def execute_keyboard_input(self, device, key_name, action):
         import ctypes
