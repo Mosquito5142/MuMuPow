@@ -3,8 +3,10 @@ import os
 import re
 import time
 import json
+import base64
 import cv2
 import numpy as np
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -30,6 +32,77 @@ def escape_adb_text(text):
         else:
             out.append(ch)
     return "".join(out)
+
+
+def _parse_bounds(bounds):
+    """Parses a uiautomator bounds string '[l,t][r,b]' into a center (x, y) point."""
+    m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", bounds or "")
+    if not m:
+        return None
+    left, top, right, bottom = (int(v) for v in m.groups())
+    return (left + right) // 2, (top + bottom) // 2
+
+
+def find_element_center(xml_text, text=None, resource_id=None, partial=True):
+    """Finds a UI element by visible text or resource-id in a uiautomator XML dump.
+
+    Returns (found, center_x, center_y, info). Searches `text` against the node's
+    text and content-desc; `resource_id` against resource-id (exact or, if partial,
+    substring). resource_id takes precedence when both are given.
+    """
+    if not xml_text:
+        return False, 0, 0, "empty UI dump"
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        return False, 0, 0, f"XML parse error: {e}"
+
+    want_text = (text or "").strip()
+    want_id = (resource_id or "").strip()
+    if not want_text and not want_id:
+        return False, 0, 0, "no search text/id given"
+
+    for node in root.iter("node"):
+        rid = node.get("resource-id", "")
+        ntext = node.get("text", "")
+        ndesc = node.get("content-desc", "")
+        if want_id:
+            matched = (rid == want_id) or (partial and bool(rid) and want_id in rid)
+        else:
+            candidates = [h for h in (ntext, ndesc) if h]
+            matched = any(want_text in h for h in candidates) if partial else any(want_text == h for h in candidates)
+        if matched:
+            center = _parse_bounds(node.get("bounds", ""))
+            if center:
+                label = rid or ntext or ndesc
+                return True, center[0], center[1], f"matched '{label}'"
+
+    return False, 0, 0, f"no element matching '{want_id or want_text}'"
+
+
+def list_ui_elements(xml_text):
+    """Returns labelled/interactable elements from a uiautomator dump (for inspection)."""
+    items = []
+    if not xml_text:
+        return items
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return items
+    for node in root.iter("node"):
+        text = node.get("text", "").strip()
+        rid = node.get("resource-id", "").strip()
+        desc = node.get("content-desc", "").strip()
+        if not (text or rid or desc):
+            continue
+        items.append({
+            "text": text,
+            "resource_id": rid,
+            "content_desc": desc,
+            "clickable": node.get("clickable") == "true",
+            "center": _parse_bounds(node.get("bounds", "")),
+        })
+    return items
 
 
 class MuMuController:
@@ -84,6 +157,35 @@ class MuMuController:
                 errors='ignore'
             )
             return (res.returncode == 0, res.stdout.strip() if res.returncode == 0 else res.stderr.strip())
+        except subprocess.TimeoutExpired:
+            return False, "Command timed out"
+        except Exception as e:
+            return False, str(e)
+
+    def run_adb_bytes(self, args, timeout=15):
+        """Like run_adb_cmd but returns raw bytes (for binary output such as exec-out screencap).
+
+        Returns (success, stdout_bytes) on success, or (False, error_string) on failure.
+        """
+        if not self.adb_path:
+            return False, "ADB path not specified"
+
+        cmd = [self.adb_path] + args
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            # No text/encoding -> stdout stays raw bytes (binary-safe)
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                startupinfo=startupinfo,
+                timeout=timeout,
+            )
+            if res.returncode == 0:
+                return True, res.stdout
+            return False, res.stderr.decode("utf-8", errors="ignore").strip()
         except subprocess.TimeoutExpired:
             return False, "Command timed out"
         except Exception as e:
@@ -230,9 +332,52 @@ class MuMuController:
 
         See escape_adb_text(): emails/passwords with characters like
         & ( ) < > | ; ' " $ ` would otherwise be mangled by the device shell.
+        Note: `input text` is ASCII-only — for Thai/Unicode use input_text_unicode().
         """
         escaped_text = escape_adb_text(text)
         return self.run_adb_cmd(["-s", device_id, "shell", "input", "text", escaped_text])
+
+    # --- Unicode / Thai text input via ADBKeyboard ---
+    ADB_KEYBOARD_PKG = "com.android.adbkeyboard"
+    ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
+
+    def current_ime(self, device_id):
+        """Returns (success, current_default_input_method_id)."""
+        return self.run_adb_cmd(["-s", device_id, "shell", "settings", "get", "secure", "default_input_method"])
+
+    def input_text_unicode(self, device_id, text):
+        """Inputs text that may contain Unicode/Thai.
+
+        ASCII text goes through the normal `input text`. Non-ASCII text requires
+        ADBKeyboard to be the active IME and is sent as base64 via broadcast.
+        Returns (success, message).
+        """
+        text = str(text)
+        if text.isascii():
+            return self.input_text(device_id, text)
+
+        ok, ime = self.current_ime(device_id)
+        if not ok or "adbkeyboard" not in (ime or "").lower():
+            return False, "ต้องเปิดใช้ ADBKeyboard ก่อนถึงจะพิมพ์ภาษาไทย/Unicode ได้ (ปุ่มในแท็บตั้งค่า)"
+
+        b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        return self.run_adb_cmd(["-s", device_id, "shell", "am", "broadcast", "-a", "ADB_INPUT_B64", "--es", "msg", b64])
+
+    def is_adb_keyboard_installed(self, device_id):
+        ok, out = self.run_adb_cmd(["-s", device_id, "shell", "pm", "list", "packages", self.ADB_KEYBOARD_PKG])
+        return bool(ok and self.ADB_KEYBOARD_PKG in (out or ""))
+
+    def install_adb_keyboard(self, device_id, apk_path):
+        return self.run_adb_cmd(["-s", device_id, "install", "-r", apk_path], timeout=60)
+
+    def enable_adb_keyboard(self, device_id):
+        """Enables and activates ADBKeyboard as the current IME. Returns (success, msg)."""
+        self.run_adb_cmd(["-s", device_id, "shell", "ime", "enable", self.ADB_KEYBOARD_IME])
+        return self.run_adb_cmd(["-s", device_id, "shell", "ime", "set", self.ADB_KEYBOARD_IME])
+
+    def reset_ime(self, device_id):
+        """Restores the device's default keyboard (so manual play works normally again)."""
+        return self.run_adb_cmd(["-s", device_id, "shell", "ime", "reset"])
 
     def keyevent(self, device_id, code):
         """Sends keyevent code (e.g. 4 for Back, 3 for Home)."""
@@ -282,50 +427,95 @@ class MuMuController:
             results[device_id] = (success, output)
         return results
 
+    def capture_screenshot_bytes(self, device_id):
+        """Captures a screenshot straight to memory via `exec-out screencap -p`.
+
+        Faster than take_screenshot(): one command, no on-device temp file, no pull.
+        Returns (True, png_bytes) or (False, error_string).
+        """
+        success, data = self.run_adb_bytes(["-s", device_id, "exec-out", "screencap", "-p"])
+        if not success:
+            return False, data
+        if not data:
+            return False, "Empty screenshot output"
+        return True, data
+
+    def dump_ui(self, device_id):
+        """Dumps the current screen's UI hierarchy as XML via uiautomator.
+
+        Returns (True, xml_str) or (False, error_string). Returns a friendly error
+        for game canvases (Unity/Cocos) where uiautomator sees no elements.
+        """
+        # Write the dump on-device, then read it back (more reliable than /dev/tty)
+        self.run_adb_cmd(["-s", device_id, "shell", "uiautomator", "dump", "/sdcard/window_dump.xml"], timeout=15)
+        ok, data = self.run_adb_bytes(["-s", device_id, "exec-out", "cat", "/sdcard/window_dump.xml"])
+        if not ok:
+            return False, data
+        xml_text = data.decode("utf-8", errors="ignore") if isinstance(data, (bytes, bytearray)) else str(data)
+        if "<hierarchy" not in xml_text and "<node" not in xml_text:
+            return False, "ไม่พบ element บนหน้าจอนี้ (อาจเป็นหน้าจอเกมที่ uiautomator อ่านไม่ได้)"
+        return True, xml_text
+
     def take_screenshot(self, device_id, local_path):
-        """Takes a screenshot of the specified device and saves it to local_path."""
+        """Saves a screenshot to local_path. Prefers in-memory exec-out, falls back to screencap+pull.
+
+        Kept for callers that need a file on disk (e.g. user-requested screenshot step).
+        """
+        # Fast path: exec-out straight to file (no on-device temp file)
+        success, data = self.capture_screenshot_bytes(device_id)
+        if success:
+            try:
+                with open(local_path, "wb") as f:
+                    f.write(data)
+                return True, local_path
+            except Exception as e:
+                return False, f"Failed to write screenshot file: {e}"
+
+        # Fallback: legacy screencap -> pull -> rm (for emulators without exec-out)
         safe_id = device_id.replace(":", "_").replace(".", "_")
         remote_path = f"/data/local/tmp/screen_{safe_id}.png"
-        
-        # 1. Take screenshot on emulator
-        success, out = self.run_adb_cmd(["-s", device_id, "shell", "screencap", "-p", remote_path])
-        if not success:
+        ok, out = self.run_adb_cmd(["-s", device_id, "shell", "screencap", "-p", remote_path])
+        if not ok:
             return False, f"Failed to take screenshot: {out}"
-        
-        # 2. Pull screenshot to local machine
-        success, out = self.run_adb_cmd(["-s", device_id, "pull", remote_path, local_path])
-        
-        # 3. Delete the temporary remote screenshot file
+        ok, out = self.run_adb_cmd(["-s", device_id, "pull", remote_path, local_path])
         self.run_adb_cmd(["-s", device_id, "shell", "rm", remote_path])
-        
-        return success, out
+        return ok, out
+
+    def _match_template(self, screen, template, threshold):
+        """Core OpenCV matchTemplate on already-loaded images. Returns (found, x, y, msg)."""
+        if screen is None or template is None:
+            return False, 0, 0, "Failed to load screenshot or template image"
+        res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        if max_val >= threshold:
+            h, w, _ = template.shape
+            click_x = int(max_loc[0] + w / 2)
+            click_y = int(max_loc[1] + h / 2)
+            return True, click_x, click_y, f"Match found (confidence: {max_val:.2f})"
+        return False, 0, 0, f"No match found (best confidence: {max_val:.2f})"
+
+    def find_image_in_bytes(self, screen_bytes, template_path, threshold=0.8):
+        """Finds template_path within a screenshot held in memory (PNG bytes)."""
+        try:
+            if not os.path.exists(template_path):
+                return False, 0, 0, "Template image file not found"
+            if not screen_bytes:
+                return False, 0, 0, "Empty screenshot data"
+            screen = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+            template = cv2.imread(template_path)
+            return self._match_template(screen, template, threshold)
+        except Exception as e:
+            return False, 0, 0, str(e)
 
     def find_image_on_screen(self, screen_path, template_path, threshold=0.8):
-        """Finds template_path image on screen_path using OpenCV matchTemplate."""
+        """Finds template_path image on a screenshot file using OpenCV matchTemplate."""
         try:
             if not os.path.exists(screen_path):
                 return False, 0, 0, "Screenshot file not found"
             if not os.path.exists(template_path):
                 return False, 0, 0, "Template image file not found"
-
-            # Load images
             screen = cv2.imread(screen_path)
             template = cv2.imread(template_path)
-
-            if screen is None or template is None:
-                return False, 0, 0, "Failed to load screenshot or template image"
-
-            # Perform template matching
-            res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-
-            if max_val >= threshold:
-                h, w, _ = template.shape
-                # Center point coordinates
-                click_x = int(max_loc[0] + w / 2)
-                click_y = int(max_loc[1] + h / 2)
-                return True, click_x, click_y, f"Match found (confidence: {max_val:.2f})"
-            else:
-                return False, 0, 0, f"No match found (best confidence: {max_val:.2f})"
+            return self._match_template(screen, template, threshold)
         except Exception as e:
             return False, 0, 0, str(e)

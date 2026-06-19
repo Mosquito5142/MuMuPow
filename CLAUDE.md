@@ -41,7 +41,8 @@ All ADB interactions go through `MuMuController`. Key responsibilities:
 - Locate ADB (checks Android SDK and LDPlayer paths, then PATH)
 - Connect to emulators via TCP ports; deduplicate connections by device serial
 - `run_parallel_action()` — ThreadPoolExecutor fan-out for simultaneous multi-device commands
-- `find_image_on_screen()` — OpenCV template matching at 0.8 confidence threshold
+- `capture_screenshot_bytes()` — `exec-out screencap -p` straight to memory (no on-device temp file/pull); `take_screenshot()` uses it then falls back to legacy screencap+pull
+- `find_image_in_bytes()` / `find_image_on_screen()` — OpenCV template matching (shared `_match_template` core) at 0.8 confidence threshold; macro image steps use the in-memory bytes variant
 
 ### GUI — `gui.py` (4,576 lines)
 
@@ -53,11 +54,13 @@ Macro execution runs on a **worker thread** (not the main thread) to keep the GU
 
 ### Macro system
 
-Macros are JSON files in `macros/`. Supported step types: `tap`, `swipe`, `text`, `keyevent`, `sleep`, `start_app`, `stop_app`, `screenshot`, `detect_image`, `wait_for_image`, `clear_ads_loop`, `fetch_otp`, `run_set`, `keyboard`.
+Macros are JSON files in `macros/`. Supported step types: `tap`, `swipe`, `text`, `keyevent`, `sleep`, `start_app`, `stop_app`, `screenshot`, `detect_image`, `wait_for_image`, `tap_text`, `wait_for_text`, `clear_ads_loop`, `fetch_otp`, `run_set`, `keyboard`.
 
 The macro engine dispatches each step type to a `_step_<type>` handler method on `MuMuGUI`, registered in `_get_step_handlers()`. To add a new step type: write a `_step_xxx(self, ctx, step)` handler, register it there, add it to `STEP_LABEL_MATCHERS`/`DEFAULT_STEP_DELAYS`, the dropdown list, `_build_step_from_form`, and the load/visibility logic in `on_listbox_select`/`on_step_type_change`. `wait_for_image` polls the screen until a template appears (or `timeout`), a reliable replacement for fixed `sleep` waits.
 
-`{EMAIL}` and `{PASSWORD}` placeholders in `text` steps are substituted at runtime from the selected account.
+`tap_text`/`wait_for_text` locate UI elements via `uiautomator dump` (parsed by `find_element_center` in `mumu_controller.py`) — robust for native Android screens (login/registration/email) but blind to game canvases (Unity/Cocos), where image steps are still required. The Manual Sync tab's "UI Inspector" button (`inspect_ui`) dumps the current screen's elements so you can tell which approach a screen needs. A search string starting with `id:` matches `resource-id`; otherwise it matches visible text/content-desc.
+
+`{EMAIL}`, `{PASSWORD}`, and `{NAME}` placeholders in `text` steps are substituted at runtime from the selected account (`_substitute_account`). ASCII text uses `input text`; Thai/Unicode text routes through `input_text_unicode` (base64 broadcast to ADBKeyboard), which requires the ADBKeyboard IME — set it up per-emulator via the Settings tab buttons (`setup_adb_keyboard`/`restore_keyboard`), with `ADBKeyboard.apk` placed next to the app.
 
 `quick_builder.py` provides factory functions for building steps. Coordinate presets (Thai UI labels → x/y pairs) live in `presets.json` and are loaded by the GUI at startup.
 
