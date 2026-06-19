@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MuMupow — แผนปรับปรุงโปรแกรม</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --card2:#1d212b; --line:#272c38;
+    --fg:#e6e9ef; --muted:#8b93a7; --white:#fff;
+    --green:#34d399; --blue:#5b9dff; --amber:#fbbf24; --red:#f87171; --gray:#6b7280;
+    --shadow:0 4px 18px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI","Sarabun",system-ui,-apple-system,sans-serif;
+    line-height:1.6; padding:0 0 80px;
+  }
+  header{
+    position:sticky; top:0; z-index:10; backdrop-filter:blur(10px);
+    background:rgba(15,17,21,.85); border-bottom:1px solid var(--line);
+    padding:18px 24px;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:0 24px}
+  h1{margin:0; font-size:22px; letter-spacing:.3px}
+  h1 span{color:var(--blue)}
+  .sub{color:var(--muted); font-size:13px; margin-top:4px}
+  .progress-bar{
+    height:8px; background:var(--card2); border-radius:99px; overflow:hidden;
+    margin-top:14px; border:1px solid var(--line);
+  }
+  .progress-fill{height:100%; width:0%; background:linear-gradient(90deg,var(--green),var(--blue)); transition:width .35s ease}
+  .progress-text{font-size:12px; color:var(--muted); margin-top:6px}
+
+  section{margin-top:34px}
+  .section-head{display:flex; align-items:center; gap:10px; margin-bottom:6px}
+  .section-head h2{font-size:17px; margin:0}
+  .section-desc{color:var(--muted); font-size:13px; margin:0 0 14px}
+
+  .badge{font-size:11px; font-weight:700; padding:2px 9px; border-radius:99px; white-space:nowrap}
+  .b-red{background:rgba(248,113,113,.15); color:var(--red); border:1px solid rgba(248,113,113,.3)}
+  .b-green{background:rgba(52,211,153,.13); color:var(--green); border:1px solid rgba(52,211,153,.3)}
+  .b-amber{background:rgba(251,191,36,.13); color:var(--amber); border:1px solid rgba(251,191,36,.3)}
+  .b-gray{background:rgba(107,114,128,.16); color:#a4adbf; border:1px solid rgba(107,114,128,.35)}
+
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:0; margin-bottom:14px; box-shadow:var(--shadow); overflow:hidden;
+    transition:border-color .2s;
+  }
+  .card.done{opacity:.62}
+  .card-top{display:flex; align-items:flex-start; gap:14px; padding:16px 18px; cursor:pointer}
+  .card-top:hover{background:var(--card2)}
+  .chk{
+    appearance:none; -webkit-appearance:none; flex:0 0 auto; margin-top:2px;
+    width:22px; height:22px; border:2px solid var(--gray); border-radius:7px;
+    cursor:pointer; position:relative; background:transparent; transition:.15s;
+  }
+  .chk:checked{background:var(--green); border-color:var(--green)}
+  .chk:checked::after{
+    content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#06281c; font-weight:900; font-size:14px;
+  }
+  .card-title{flex:1; min-width:0}
+  .card-title .t{font-weight:600; font-size:15px}
+  .card.done .t{text-decoration:line-through; text-decoration-color:var(--muted)}
+  .card-title .meta{font-size:12px; color:var(--muted); margin-top:3px}
+  .toggle{flex:0 0 auto; color:var(--muted); font-size:13px; user-select:none; transition:transform .2s}
+  .card.open .toggle{transform:rotate(90deg)}
+
+  .card-body{display:none; padding:0 18px 18px 54px; border-top:1px solid var(--line)}
+  .card.open .card-body{display:block}
+  .card-body h4{margin:14px 0 6px; font-size:13px; color:var(--blue); text-transform:uppercase; letter-spacing:.5px}
+  .card-body ol,.card-body ul{margin:6px 0; padding-left:20px}
+  .card-body li{margin:4px 0; font-size:14px}
+  code{
+    background:var(--card2); border:1px solid var(--line); border-radius:5px;
+    padding:1px 6px; font-family:"Cascadia Code",Consolas,monospace; font-size:12.5px; color:#cbd5e1;
+  }
+  .file{color:var(--amber); font-family:Consolas,monospace; font-size:12.5px}
+  .why{background:var(--card2); border-left:3px solid var(--blue); padding:8px 12px; border-radius:0 8px 8px 0; margin:10px 0; font-size:13px; color:#c3cad8}
+
+  .filterow{display:flex; gap:8px; flex-wrap:wrap; margin:18px 0 4px}
+  .filt{
+    background:var(--card); border:1px solid var(--line); color:var(--muted);
+    padding:6px 14px; border-radius:99px; font-size:13px; cursor:pointer; transition:.15s;
+  }
+  .filt:hover{color:var(--fg)}
+  .filt.active{background:var(--blue); color:#fff; border-color:var(--blue)}
+
+  footer{margin-top:40px; text-align:center; color:var(--muted); font-size:12px}
+  .reset{background:none; border:1px solid var(--line); color:var(--muted); padding:6px 14px; border-radius:8px; cursor:pointer; font-size:12px; margin-top:10px}
+  .reset:hover{color:var(--red); border-color:var(--red)}
+  .order{font-size:11px; color:var(--gray); font-weight:700; font-family:monospace}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap" style="padding:0">
+    <h1>MuMu<span>pow</span> · แผนปรับปรุงโปรแกรม</h1>
+    <div class="sub">ติ๊ก checkbox เพื่อบันทึกความคืบหน้า (เก็บไว้ในเบราว์เซอร์อัตโนมัติ) · คลิกหัวข้อเพื่อดูขั้นตอน</div>
+    <div class="progress-bar"><div class="progress-fill" id="pfill"></div></div>
+    <div class="progress-text" id="ptext">0 / 0 เสร็จ</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="filterow">
+    <button class="filt active" data-f="all">ทั้งหมด</button>
+    <button class="filt" data-f="bug">🔴 บั๊ก</button>
+    <button class="filt" data-f="feat">🟢 ฟีเจอร์</button>
+    <button class="filt" data-f="clean">🟡 โค้ด</button>
+    <button class="filt" data-f="remove">⚪ ลบ</button>
+    <button class="filt" data-f="todo">ยังไม่เสร็จ</button>
+  </div>
+
+  <!-- ============ BUGS ============ -->
+  <section data-cat="bug">
+    <div class="section-head"><span class="badge b-red">ลำดับ 1</span><h2>บั๊ก / จุดเสี่ยงที่ควรแก้ก่อน</h2></div>
+    <p class="section-desc">กระทบงานจริงโดยตรง — ทำไอดีพลาดโดยไม่รู้สาเหตุ</p>
+
+    <div class="card" data-cat="bug" data-id="b1">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#1</span> แก้ <code>input_text</code> escape อักขระพิเศษให้ครบ</div>
+          <div class="meta"><span class="file">mumu_controller.py:203</span> · รหัสผ่านที่มี <code>&amp; ( ) &lt; &gt; ' " $</code> กรอกไม่ผ่าน</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> ตอนนี้ escape แค่ช่องว่าง (<code>%s</code>) เท่านั้น คอมเมนต์ในโค้ดก็ยอมรับเอง ถ้า password มีอักขระพิเศษ ADB shell จะตีความผิด → ไอดีนั้น login/สมัครไม่ผ่าน <b>โดยไม่มี error</b> น่าจะเป็นต้นเหตุที่บางไอดีพลาดแบบหาสาเหตุไม่เจอ</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>ใน <code>input_text()</code> เปลี่ยนวิธีส่งข้อความ — escape อักขระพิเศษของ shell ทุกตัว ไม่ใช่แค่ช่องว่าง</li>
+          <li>ทางที่ปลอดภัยสุด: ส่งทีละอักขระ หรือใช้ <code>am broadcast</code> ผ่าน ADBKeyboard IME แทน <code>input text</code> สำหรับอักขระพิเศษ</li>
+          <li>ทางเร็ว: ครอบข้อความด้วย quote + escape <code>\\ " ' $ ` &amp; | ; ( ) &lt; &gt; ! space</code></li>
+          <li>เพิ่มเทสใน <span class="file">tests/</span>: ป้อน password ที่มี <code>P@ss&amp;w(rd)!</code> แล้ว assert คำสั่งที่ออกไปถูก escape</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="bug" data-id="b2">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#2</span> เก็บผลลัพธ์ ADB ของทุก step แทนการทิ้ง</div>
+          <div class="meta"><span class="file">gui.py · execute_device_macro</span> · จอหลุดกลางคันแต่มาโครเดินต่อเงียบๆ</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> <code>tap/swipe/input_text</code> คืน <code>(success, output)</code> แต่ไม่เคยถูกเช็ค ถ้าอุปกรณ์หลุด มาโครยังทำต่อเหมือนปกติ ทำให้ผลลัพธ์เพี้ยนแบบไม่รู้ตัว</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>ในแต่ละ handler รับค่า <code>success, out = self.controller.tap(...)</code></li>
+          <li>ถ้า <code>not success</code> → <code>write_log</code> เป็น error + นับลง counter ของจอ/บัญชีนั้น</li>
+          <li>เพิ่มตัวเลือก "หยุดบัญชีนี้ถ้า step ล้มเหลว" (fail-fast) ใน Settings</li>
+          <li>ส่งผล success/fail ต่อไปให้ระบบสรุปผล (ข้อ #4)</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="bug" data-id="b3">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#3</span> แสดงสรุปผลหลังรันจบ (ไม่ใช่แค่ "เสร็จแล้ว")</div>
+          <div class="meta">ตอนนี้ messagebox บอกแค่เสร็จ · ไม่รู้ว่าไอดีไหนผ่าน/พลาด</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> งานกระจายหลายร้อยไอดี ข้อมูลสำคัญสุดคือ "ใครพลาด" แต่ตอนนี้ log เลื่อนหายหมด</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>สร้าง dict สะสมผลระหว่างรัน: <code>{email: {device, status, error, duration}}</code></li>
+          <li>หลังรันจบ เปิดหน้าต่างสรุป: ผ่านกี่ไอดี / พลาดกี่ไอดี + ตารางรายชื่อที่พลาด</li>
+          <li>เชื่อมกับข้อ #4 (export) และ #2 (เก็บผล)</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEATURES ============ -->
+  <section data-cat="feat">
+    <div class="section-head"><span class="badge b-green">ลำดับ 2</span><h2>ฟีเจอร์ที่เพิ่มแล้วคุ้ม</h2></div>
+    <p class="section-desc">เพิ่มความน่าเชื่อถือและลดงานซ้ำซ้อน</p>
+
+    <div class="card" data-cat="feat" data-id="f4">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#4</span> Run Report + รันใหม่เฉพาะไอดีที่พลาด</div>
+          <div class="meta">export CSV/JSON · ปุ่ม "รันเฉพาะที่พลาด"</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> ตอนนี้มีแค่ field <code>checked</code> เป็น state เดียว เพิ่ม <code>last_status</code> ต่อบัญชีจะไม่ต้องไล่หาเองว่าใครยังไม่เสร็จ</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>เพิ่ม field <code>last_status</code>, <code>last_run</code> ใน <span class="file">accounts.json</span></li>
+          <li>หลังรันแต่ละบัญชี อัปเดต status ลง account แล้ว <code>save_accounts()</code></li>
+          <li>ปุ่ม "export ผลล่าสุด" → ไฟล์ CSV: <code>email, device, status, time</code></li>
+          <li>ปุ่ม "เลือกเฉพาะที่ status=พลาด" → ติ๊ก checked ให้อัตโนมัติเพื่อรันซ้ำ</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="feat" data-id="f5">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#5</span> Step ใหม่: <code>wait_for_image</code> (รอจนภาพขึ้น)</div>
+          <div class="meta">แทน <code>sleep</code> เวลาคงที่ที่เปราะ · ทำงานตามสถานะจอจริง</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> ความน่าเชื่อถือตอนนี้พึ่ง <code>sleep</code> เวลาตายตัว ซึ่งแต่ละจอเร็วไม่เท่ากัน <code>detect_image</code> ที่มีอยู่เช็คครั้งเดียวแล้วข้าม ถ้าเพิ่มแบบ "วนเช็คจนเจอ + มี timeout" จะแทน sleep แข็งๆ ได้ ทำให้สคริปต์เสถียรขึ้นมากและไม่ต้องนั่งจูน sleep เอง</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>เพิ่ม step type <code>wait_for_image</code> — params: <code>template</code>, <code>timeout</code>, <code>interval</code></li>
+          <li>วน <code>take_screenshot</code> + <code>find_image_on_screen</code> ทุก interval จนเจอหรือครบ timeout</li>
+          <li>เจอ → ทำต่อ (option: คลิกที่เจอ) · ครบ timeout → log warning + ทำต่อหรือหยุดตาม config</li>
+          <li>เพิ่มเข้า dropdown + dispatch dict (ทำง่ายขึ้นมากถ้าทำข้อ #9 ก่อน)</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="feat" data-id="f6">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#6</span> ทดสอบ step เดี่ยว (Dry-run)</div>
+          <div class="meta">ปุ่ม "ทดสอบ step นี้บนจอที่เลือก" โดยไม่รันทั้งมาโคร</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> ตอนนี้ต้องรันทั้งชุดเพื่อเทสจุดเดียว เสียเวลามากตอนหาพิกัด/เช็ค template</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>เพิ่มปุ่มข้างรายการ step: "▶ ทดสอบ step นี้"</li>
+          <li>เรียก handler ของ step เดียวบนจอแรกที่เลือก (ใช้ dispatch dict ข้อ #9)</li>
+          <li>ใช้ account ตัวอย่างตัวแรก หรือ dummy ถ้าไม่มี</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="feat" data-id="f7">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#7</span> Placeholder แบบ dynamic <code>{field}</code></div>
+          <div class="meta"><span class="file">gui.py:4243</span> · ตอนนี้ hardcode แค่ 3 ตัว</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> ตอนนี้แทนได้แค่ <code>{EMAIL} {PASSWORD} {NAME}</code> ถ้าทำให้ <code>{ชื่อ field อะไรก็ได้}</code> ดึงจาก account dict อัตโนมัติ จะใช้ <code>{ingamename}</code>, <code>{group}</code> ได้ทันที</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>เขียน helper <code>substitute(text, account)</code> ใช้ regex หา <code>{...}</code> ทุกตัว</li>
+          <li>map ไปยัง key ใน account dict (รองรับทั้งตัวพิมพ์ใหญ่ EMAIL → email)</li>
+          <li>field ที่ไม่มี → เว้นว่างหรือคงเดิม + log เตือน</li>
+          <li>แทนที่ logic <code>.replace()</code> ทั้งหมดในมาโครและ screenshot ด้วย helper เดียวกัน</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CLEAN ============ -->
+  <section data-cat="clean">
+    <div class="section-head"><span class="badge b-amber">ลำดับ 3</span><h2>ความสะอาดของโค้ด</h2></div>
+    <p class="section-desc">ทำให้ทุกอย่างหลังจากนี้แก้ง่ายขึ้น — ควรทำก่อนเพิ่มฟีเจอร์เยอะๆ</p>
+
+    <div class="card" data-cat="clean" data-id="c9">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#9</span> เปลี่ยน macro engine จาก if/elif ยักษ์ → dispatch dict</div>
+          <div class="meta">14 สาขา ปนกับ logging · ทำก่อนข้อ #5, #6 จะง่ายขึ้นมาก</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> <code>execute_device_macro</code> เป็น <code>if t == ...</code> ยาว 300 บรรทัด ถ้าทำเป็น <code>STEP_HANDLERS = {"tap": handle_tap, ...}</code> จะ: เพิ่ม step ง่าย, เทสได้ทีละ handler, ลบ step แก้ที่เดียวจบ (อย่าง <code>clear_app</code> ที่เพิ่งลบต้องแก้ 8 จุด)</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>สร้าง <span class="file">macro_engine.py</span> — แต่ละ step type เป็นฟังก์ชัน <code>handle_xxx(ctx, step)</code></li>
+          <li><code>ctx</code> รวม controller, device, account, logger, substitute() เข้าด้วยกัน</li>
+          <li>ทำ registry: <code>STEP_HANDLERS = {"tap": handle_tap, "swipe": handle_swipe, ...}</code></li>
+          <li>loop กลายเป็น <code>STEP_HANDLERS[t](ctx, step)</code> — สั้นและอ่านง่าย</li>
+          <li>ย้าย default-delay + jitter เข้า ctx จุดเดียว</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="clean" data-id="c10">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#10</span> รวมโค้ดซ้ำ 3 จุด</div>
+          <div class="meta">label→type mapping + default-delay ซ้ำใน add_step / update_step / execute</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> เห็นชัดตอนลบ <code>clear_app</code> — mapping label→type เหมือนกันเป๊ะใน <code>add_step</code> กับ <code>update_step</code>, default-delay ซ้ำ 3 ที่ แก้ทีต้องตามแก้หลายที่ เสี่ยงตกหล่น</li></div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>ทำ dict กลาง <code>LABEL_TO_TYPE</code> + <code>DEFAULT_DELAYS</code> ไว้ที่เดียว (บนสุดของไฟล์หรือใน quick_builder)</li>
+          <li><code>add_step</code> และ <code>update_step</code> เรียกฟังก์ชัน <code>parse_form_to_step()</code> ตัวเดียวกัน</li>
+          <li>ลบ logic ที่ซ้ำออก</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="clean" data-id="c8">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#8</span> แตกไฟล์ <code>gui.py</code> (4,574 บรรทัด)</div>
+          <div class="meta">แยก macro_engine / theme / otp ออกจากไฟล์เดียว</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> ไฟล์เดียว 4,500+ บรรทัด ใหญ่เกินจัดการ หาอะไรก็ยาก</div>
+        <h4>ขั้นตอน (ทำทีละไฟล์ ทดสอบทุกครั้ง)</h4>
+        <ol>
+          <li><span class="file">macro_engine.py</span> — ย้าย execute_device_macro (ทำพร้อมข้อ #9)</li>
+          <li><span class="file">theme.py</span> — ค่าสี + ModernButton / ModernEntry / make_panel</li>
+          <li><span class="file">otp.py</span> — fetch_otp_via_readmail_api + fetch_otp_from_mail</li>
+          <li>หลังย้ายแต่ละไฟล์: <code>python -m pytest tests/</code> + เปิดแอปเช็ค</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="clean" data-id="c11">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#11</span> เพิ่มเทสให้ macro engine + controller + OTP</div>
+          <div class="meta">ตอนนี้เทสครอบแค่ helper · หัวใจไม่มีเทสเลย</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> <code>quick_builder/script_sets/save_web_game/gui_helpers</code> มีเทส แต่ macro engine, controller, OTP ไม่มี ถ้าทำข้อ #9 (dispatch) จะเทส engine ได้ทันทีโดย mock controller</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>หลัง refactor engine: เทสแต่ละ handler ด้วย fake controller (ตรวจว่าเรียกคำสั่งถูก)</li>
+          <li>เทส substitute() (ข้อ #7) ทุกเคส placeholder</li>
+          <li>เทส input_text escaping (ข้อ #1)</li>
+          <li>เทส expand_steps_with_sets เคส cycle (มี logic แต่ยังไม่ครบ)</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ REMOVE ============ -->
+  <section data-cat="remove">
+    <div class="section-head"><span class="badge b-gray">ลำดับ 4</span><h2>ลบ / เก็บกวาด</h2></div>
+    <p class="section-desc">งานเล็ก ทำเมื่อมีเวลา</p>
+
+    <div class="card" data-cat="remove" data-id="r12">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#12</span> ใส่ <code>scratch/</code> ลง .gitignore</div>
+          <div class="meta">สคริปต์ทิ้งขว้าง ไม่ควรเข้า git</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <h4>ขั้นตอน</h4>
+        <ol><li>เพิ่ม <code>scratch/</code> ใน <span class="file">.gitignore</span></li></ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="remove" data-id="r13">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#13</span> รวม preset ให้เหลือแหล่งเดียว</div>
+          <div class="meta">ซ้ำใน <span class="file">quick_builder.py</span> กับ <span class="file">presets.json</span></div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>ทำไม:</b> <code>DEFAULT_COORDINATE_PRESETS</code> กับ <code>presets.json</code> เก็บข้อมูลคล้ายกัน เสี่ยง drift ไม่ตรงกัน</div>
+        <h4>ขั้นตอน</h4>
+        <ol>
+          <li>เลือกแหล่งหลัก: <code>presets.json</code> (แก้ได้โดยไม่ต้อง build)</li>
+          <li>ให้ <code>DEFAULT_COORDINATE_PRESETS</code> เป็นแค่ fallback ตอนไฟล์หาย</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" data-cat="remove" data-id="r14">
+      <div class="card-top">
+        <input type="checkbox" class="chk">
+        <div class="card-title">
+          <div class="t"><span class="order">#14</span> ทบทวน subsystem <code>run_set</code> ว่ายังใช้มั้ย</div>
+          <div class="meta"><span class="file">script_sets/</span> ว่างเปล่า · <span class="file">macros/</span> มีไฟล์เดียว</div>
+        </div>
+        <div class="toggle">▶</div>
+      </div>
+      <div class="card-body">
+        <div class="why"><b>หมายเหตุ:</b> ถ้ายังไม่ได้ใช้ script set เลย พิจารณาว่าจะเก็บไว้ (ยังมีประโยชน์สำหรับ reuse) หรือลบเพื่อลดความซับซ้อน — ดูแล้วยังน่าเก็บ</div>
+        <h4>ขั้นตอน</h4>
+        <ol><li>ตัดสินใจ: ใช้ต่อ → สร้าง script set ตัวอย่าง / ไม่ใช้ → ลบ <code>run_set</code> + <span class="file">script_sets.py</span></li></ol>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div>ความคืบหน้าถูกบันทึกอัตโนมัติในเบราว์เซอร์นี้ · เปิดไฟล์เดิมจะจำค่าที่ติ๊กไว้</div>
+    <button class="reset" id="resetbtn">ล้างความคืบหน้าทั้งหมด</button>
+  </footer>
+</div>
+
+<script>
+  const KEY = "mumupow_plan_v1";
+  const cards = [...document.querySelectorAll(".card")];
+  const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+
+  function save(){
+    const state = {};
+    cards.forEach(c=>{ state[c.dataset.id] = c.querySelector(".chk").checked; });
+    localStorage.setItem(KEY, JSON.stringify(state));
+  }
+  function updateProgress(){
+    const total = cards.length;
+    const done = cards.filter(c=>c.querySelector(".chk").checked).length;
+    const pct = total ? Math.round(done/total*100) : 0;
+    document.getElementById("pfill").style.width = pct+"%";
+    document.getElementById("ptext").textContent = `${done} / ${total} เสร็จ (${pct}%)`;
+  }
+
+  cards.forEach(card=>{
+    const chk = card.querySelector(".chk");
+    const top = card.querySelector(".card-top");
+    if(saved[card.dataset.id]){ chk.checked = true; card.classList.add("done"); }
+
+    // toggle expand by clicking the row (but not the checkbox)
+    top.addEventListener("click", e=>{
+      if(e.target === chk) return;
+      card.classList.toggle("open");
+    });
+    chk.addEventListener("change", ()=>{
+      card.classList.toggle("done", chk.checked);
+      save(); updateProgress(); applyFilter();
+    });
+  });
+
+  // filters
+  let currentFilter = "all";
+  function applyFilter(){
+    document.querySelectorAll("section").forEach(sec=>{
+      let anyVisible = false;
+      sec.querySelectorAll(".card").forEach(c=>{
+        const cat = c.dataset.cat;
+        const done = c.querySelector(".chk").checked;
+        let show = true;
+        if(currentFilter==="todo") show = !done;
+        else if(currentFilter!=="all") show = (cat===currentFilter);
+        c.style.display = show ? "" : "none";
+        if(show) anyVisible = true;
+      });
+      sec.style.display = anyVisible ? "" : "none";
+    });
+  }
+  document.querySelectorAll(".filt").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      document.querySelectorAll(".filt").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      currentFilter = b.dataset.f;
+      applyFilter();
+    });
+  });
+
+  document.getElementById("resetbtn").addEventListener("click", ()=>{
+    if(confirm("ล้างความคืบหน้าทั้งหมด?")){
+      localStorage.removeItem(KEY);
+      cards.forEach(c=>{ c.querySelector(".chk").checked=false; c.classList.remove("done"); });
+      updateProgress(); applyFilter();
+    }
+  });
+
+  updateProgress();
+  applyFilter();
+</script>
+</body>
+</html>

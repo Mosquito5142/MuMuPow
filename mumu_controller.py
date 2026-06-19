@@ -7,6 +7,31 @@ import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
+
+# Characters that the on-device shell (/system/bin/sh) interprets when running
+# `input text ...`. They must be backslash-escaped or the text gets mangled /
+# truncated silently. Space is sent as the special token %s (an `input` quirk).
+_ADB_TEXT_SPECIAL = set(" '\"`$&|;<>()*\\!?#~{}[]^")
+
+
+def escape_adb_text(text):
+    """Escapes a string so `adb shell input text` sends it verbatim.
+
+    Without this, passwords/emails containing shell metacharacters such as
+    & ( ) < > | ; ' " $ ` are interpreted by the device shell and the account
+    silently fails to log in. Returns the escaped token string.
+    """
+    out = []
+    for ch in str(text):
+        if ch == " ":
+            out.append("%s")
+        elif ch in _ADB_TEXT_SPECIAL:
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 class MuMuController:
     def __init__(self, adb_path=None):
         self.adb_path = adb_path or self.find_adb()
@@ -201,11 +226,12 @@ class MuMuController:
         return self.run_adb_cmd(["-s", device_id, "shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(duration)])
 
     def input_text(self, device_id, text):
-        """Inputs text on the specified device (escapes space for adb input)."""
-        # ADB 'input text' interprets '%s' as spaces
-        escaped_text = text.replace(" ", "%s")
-        # escape special characters like & | < > ( ) [ ] { } ^ = ; ! ' " ` ~
-        # standard text input from user is email/password so simple escape is fine
+        """Inputs text on the specified device, escaping shell metacharacters.
+
+        See escape_adb_text(): emails/passwords with characters like
+        & ( ) < > | ; ' " $ ` would otherwise be mangled by the device shell.
+        """
+        escaped_text = escape_adb_text(text)
         return self.run_adb_cmd(["-s", device_id, "shell", "input", "text", escaped_text])
 
     def keyevent(self, device_id, code):
@@ -237,10 +263,6 @@ class MuMuController:
     def stop_app(self, device_id, package):
         """Stops an application on the specified device (package name)."""
         return self.run_adb_cmd(["-s", device_id, "shell", "am", "force-stop", package])
-
-    def clear_app(self, device_id, package):
-        """Clears application data on the specified device (package name)."""
-        return self.run_adb_cmd(["-s", device_id, "shell", "pm", "clear", package])
 
     # Multi-device action runners (Parallelized)
     def run_parallel_action(self, devices, action_func, *args):
