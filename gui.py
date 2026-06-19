@@ -7,7 +7,7 @@ import json
 import os
 import glob
 import sys
-from mumu_controller import MuMuController
+from mumu_controller import MuMuController, find_element_center, list_ui_elements
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
     DEFAULT_ACTION_DELAY,
@@ -72,6 +72,8 @@ def build_macro_step_summary(idx, step):
         "stop_app": "Stop App",
         "detect_image": "Image Match",
         "wait_for_image": "Wait Image",
+        "tap_text": "Tap Text",
+        "wait_for_text": "Wait Text",
         "clear_ads_loop": "Ads Loop",
         "fetch_otp": "Auto OTP",
         "run_set": "Run Set",
@@ -145,6 +147,9 @@ def build_sequential_macro_pairs(devices, accounts):
 
 # จับคู่ข้อความบางส่วนใน dropdown -> ชนิด step ภายใน (ตรวจตามลำดับ)
 STEP_LABEL_MATCHERS = [
+    # หมายเหตุ: "Tap Text"/"Wait Text" มีคำว่า "Text" จึงต้องตรวจก่อน matcher "Text"
+    ("Tap Text", "tap_text"),
+    ("Wait Text", "wait_for_text"),
     ("Text", "text"),
     ("Keyevent", "keyevent"),
     ("Swipe", "swipe"),
@@ -178,6 +183,8 @@ DEFAULT_STEP_DELAYS = {
     "stop_app": 1.0,
     "detect_image": 1.0,
     "wait_for_image": 1.0,
+    "tap_text": 1.0,
+    "wait_for_text": 1.0,
     "clear_ads_loop": 1.0,
     "fetch_otp": 1.0,
     "screenshot": 1.0,
@@ -788,6 +795,8 @@ class MuMuGUI(tk.Tk):
                 "ปิดแอป (Stop App)",
                 "ตรวจจับรูปภาพ (Image Match)",
                 "รอจนเจอรูป (Wait Image)",
+                "กดตามข้อความ (Tap Text)",
+                "รอจนเจอข้อความ (Wait Text)",
                 "ลูปปิดโฆษณา (Clear Ads Loop)",
                 "กรอก OTP อัตโนมัติ (Auto Fill OTP)",
                 "ใช้ชุดคำสั่ง (Run Set)",
@@ -1112,6 +1121,72 @@ class MuMuGUI(tk.Tk):
 
         ModernButton(cmd_input_frame, text="รัน", command=self.send_custom_cmd, variant="warning").pack(side="right")
 
+        # 6. ดู element บนจอ (UI Inspector) — เช็คว่าหน้าจอนี้ใช้ tap_text ได้ไหม
+        ui_outer, ui_box = self.make_panel(sync_frame, "ดู Element บนจอ (UI Inspector)", fill="x", pady=10)
+        tk.Label(
+            ui_box,
+            text="อ่าน element บนหน้าจอของเครื่องที่เลือก (เครื่องแรก) — ถ้าเห็นข้อความ/ปุ่ม = ใช้ step 'กดตามข้อความ' ได้, ถ้าว่าง = เป็นหน้าจอเกมต้องใช้รูป",
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
+        ).pack(anchor="w")
+        ModernButton(ui_box, text="ดู Element บนจอ", command=self.inspect_ui, variant="accent").pack(anchor="w", pady=(8, 0))
+
+    def inspect_ui(self):
+        """อ่าน element บนหน้าจอของเครื่องที่เลือกตัวแรก แล้วแสดงรายการ (ช่วยเตรียม tap_text)"""
+        devices = self.get_selected_devices()
+        if not devices:
+            messagebox.showwarning("ยังไม่ได้เลือกเครื่อง", "กรุณาติ๊กเลือก Emulator อย่างน้อย 1 เครื่องก่อน")
+            return
+        device = devices[0]
+        self.write_log(f"🔎 [{device}] กำลังอ่าน element บนหน้าจอ...", "info")
+        ok, xml = self.controller.dump_ui(device)
+        if not ok:
+            messagebox.showinfo("อ่าน UI ไม่ได้", f"[{device}] {xml}")
+            return
+
+        elements = list_ui_elements(xml)
+        lines = []
+        for el in elements:
+            parts = []
+            if el["text"]:
+                parts.append(f"text='{el['text']}'")
+            if el["resource_id"]:
+                parts.append(f"id:{el['resource_id']}")
+            if el["content_desc"]:
+                parts.append(f"desc='{el['content_desc']}'")
+            if el["clickable"]:
+                parts.append("[คลิกได้]")
+            if el["center"]:
+                parts.append(f"@({el['center'][0]},{el['center'][1]})")
+            lines.append("  •  ".join(parts))
+
+        win = tk.Toplevel(self)
+        win.title(f"UI Elements — {device}")
+        win.configure(bg=BG_DARK)
+        win.geometry("760x520")
+        win.transient(self)
+
+        tk.Label(
+            win, text=f"พบ {len(elements)} element บนจอ [{device}]",
+            bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w", padx=20, pady=(16, 4))
+        tk.Label(
+            win, text="คัดลอกข้อความหรือ id (ขึ้นต้น id:) ไปใส่ใน step 'กดตามข้อความ' / 'รอจนเจอข้อความ'",
+            bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"),
+        ).pack(anchor="w", padx=20)
+
+        text_frame = tk.Frame(win, bg=BG_DARK)
+        text_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        txt = tk.Text(text_frame, bg=BG_INPUT, fg=FG_WHITE, relief="flat", bd=0, wrap="none", font=("Consolas", 9))
+        scroll = ttk.Scrollbar(text_frame, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=scroll.set)
+        txt.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        txt.insert("1.0", "\n".join(lines) if lines else "(ไม่พบ element ที่มีข้อความ/id — น่าจะเป็นหน้าจอเกม ใช้การจับภาพแทน)")
+        txt.configure(state="disabled")
+
+        ModernButton(win, text="ปิด", command=win.destroy, variant="subtle").pack(anchor="e", padx=20, pady=(0, 16))
+        self.write_log(f"✅ [{device}] อ่าน element ได้ {len(elements)} รายการ", "success")
+
     def build_settings_tab(self, parent):
         # สร้าง Canvas และ Scrollbar เพื่อให้หน้าต่างตั้งค่าเลื่อนขึ้น-ลงได้
         canvas = tk.Canvas(parent, bg=BG_DARK, highlightthickness=0)
@@ -1222,6 +1297,76 @@ class MuMuGUI(tk.Tk):
             wraplength=700
         )
         helper_lbl.pack(anchor="w", pady=(5, 0))
+
+        # คีย์บอร์ดภาษาไทย/Unicode (ADBKeyboard)
+        kb_outer, kb_box = self.make_panel(settings_frame, "พิมพ์ภาษาไทย/Unicode (ADBKeyboard)", fill="x", pady=10)
+
+        kb_btn_row = tk.Frame(kb_box, bg=BG_CARD)
+        kb_btn_row.pack(anchor="w", pady=5)
+        ModernButton(kb_btn_row, text="เปิดใช้คีย์บอร์ดไทย", command=self.setup_adb_keyboard, variant="primary").pack(side="left", padx=(0, 10))
+        ModernButton(kb_btn_row, text="คืนคีย์บอร์ดเดิม", command=self.restore_keyboard, variant="subtle").pack(side="left")
+
+        tk.Label(
+            kb_box,
+            text=(
+                "step 'พิมพ์ข้อความ' รองรับ ASCII ได้เลย แต่ภาษาไทย/Unicode (เช่น ingamename ไทย) ต้องเปิดใช้ ADBKeyboard ก่อน\n"
+                "วิธี: วางไฟล์ ADBKeyboard.apk ไว้ในโฟลเดอร์เดียวกับโปรแกรม (ดาวน์โหลดจาก github.com/senzhk/ADBKeyBoard) "
+                "แล้วเลือกเครื่อง → กด 'เปิดใช้คีย์บอร์ดไทย' (ติดตั้ง+ตั้งเป็นคีย์บอร์ดปัจจุบันให้อัตโนมัติ)\n"
+                "เล่นเองด้วยมือเมื่อไรให้กด 'คืนคีย์บอร์ดเดิม'"
+            ),
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
+        ).pack(anchor="w", pady=(8, 0))
+
+    def _app_base_dir(self):
+        """โฟลเดอร์ของโปรแกรม (รองรับทั้งรันสคริปต์และไฟล์ .exe ที่ build แล้ว)"""
+        if getattr(sys, "frozen", False):
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def setup_adb_keyboard(self):
+        """ติดตั้ง (ถ้ายังไม่มี) + ตั้ง ADBKeyboard เป็นคีย์บอร์ดปัจจุบันบนเครื่องที่เลือก"""
+        devices = self.get_selected_devices()
+        if not devices:
+            messagebox.showwarning("ยังไม่ได้เลือกเครื่อง", "กรุณาติ๊กเลือก Emulator อย่างน้อย 1 เครื่องก่อน")
+            return
+
+        apk_path = os.path.join(self._app_base_dir(), "ADBKeyboard.apk")
+
+        def worker():
+            for device in devices:
+                if not self.controller.is_adb_keyboard_installed(device):
+                    if not os.path.exists(apk_path):
+                        self.write_log(f"❌ [{device}] ไม่พบไฟล์ ADBKeyboard.apk ในโฟลเดอร์โปรแกรม — ข้าม", "error")
+                        continue
+                    self.write_log(f"📦 [{device}] กำลังติดตั้ง ADBKeyboard...", "info")
+                    ok, out = self.controller.install_adb_keyboard(device, apk_path)
+                    if not ok:
+                        self.write_log(f"❌ [{device}] ติดตั้ง ADBKeyboard ไม่สำเร็จ: {out}", "error")
+                        continue
+                ok, out = self.controller.enable_adb_keyboard(device)
+                if ok:
+                    self.write_log(f"✅ [{device}] เปิดใช้คีย์บอร์ดไทย (ADBKeyboard) แล้ว", "success")
+                else:
+                    self.write_log(f"❌ [{device}] ตั้งคีย์บอร์ดไม่สำเร็จ: {out}", "error")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def restore_keyboard(self):
+        """คืนคีย์บอร์ดเริ่มต้นของเครื่องที่เลือก (ime reset)"""
+        devices = self.get_selected_devices()
+        if not devices:
+            messagebox.showwarning("ยังไม่ได้เลือกเครื่อง", "กรุณาติ๊กเลือก Emulator อย่างน้อย 1 เครื่องก่อน")
+            return
+
+        def worker():
+            for device in devices:
+                ok, out = self.controller.reset_ime(device)
+                if ok:
+                    self.write_log(f"↩️ [{device}] คืนคีย์บอร์ดเดิมแล้ว", "success")
+                else:
+                    self.write_log(f"❌ [{device}] คืนคีย์บอร์ดไม่สำเร็จ: {out}", "error")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def build_log_panel(self):
         self.log_frame = tk.Frame(self, bg=BG_PANEL, height=130)
@@ -3239,6 +3384,10 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("ตรวจจับรูปภาพ (Image Match)")
         elif t == "wait_for_image":
             self.form_type.set("รอจนเจอรูป (Wait Image)")
+        elif t == "tap_text":
+            self.form_type.set("กดตามข้อความ (Tap Text)")
+        elif t == "wait_for_text":
+            self.form_type.set("รอจนเจอข้อความ (Wait Text)")
         elif t == "clear_ads_loop":
             self.form_type.set("ลูปปิดโฆษณา (Clear Ads Loop)")
         elif t == "fetch_otp":
@@ -3275,6 +3424,12 @@ class MuMuGUI(tk.Tk):
             self.form_y2.insert(0, step.get("y2", ""))
             self.form_sleep.insert(0, step.get("delay", "5.0"))
         elif t == "wait_for_image":
+            self.form_text.insert(0, step.get("text", ""))
+            self.form_sleep.insert(0, step.get("timeout", "30"))
+        elif t == "tap_text":
+            self.form_text.insert(0, step.get("text", ""))
+            self.form_sleep.insert(0, step.get("delay", "1.0"))
+        elif t == "wait_for_text":
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("timeout", "30"))
         elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
@@ -3352,8 +3507,17 @@ class MuMuGUI(tk.Tk):
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
             self.form_code.configure(state="disabled")
-        elif "Wait Image" in t:
+        elif "Wait Image" in t or "Wait Text" in t:
             self.form_sleep_label.configure(text="ระยะเวลารอสูงสุด (วินาที):")
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_code.configure(state="disabled")
+        elif "Tap Text" in t:
+            self.form_sleep_label.configure(text="หน่วงหลังคลิก (วินาที):")
             self.form_x_label.configure(fg=FG_MUTED)
             self.form_x.configure(state="disabled")
             self.form_y.configure(state="disabled")
@@ -3626,6 +3790,16 @@ class MuMuGUI(tk.Tk):
                 if not step["text"]:
                     raise ValueError("ชื่อไฟล์รูปภาพต้นแบบห้ามว่างเปล่า")
                 # ช่อง "หน่วงเวลา" ใช้เป็นระยะเวลารอสูงสุด (timeout) สำหรับ step นี้
+                step["timeout"] = float(self.form_sleep.get().strip() or "30")
+            elif t == "tap_text":
+                step["text"] = self.form_text.get().strip()
+                if not step["text"]:
+                    raise ValueError("ข้อความ/id ที่จะค้นหาห้ามว่างเปล่า (ขึ้นต้น id: เพื่อค้นจาก resource-id)")
+                step["delay"] = float(self.form_sleep.get().strip() or "1.0")
+            elif t == "wait_for_text":
+                step["text"] = self.form_text.get().strip()
+                if not step["text"]:
+                    raise ValueError("ข้อความ/id ที่จะค้นหาห้ามว่างเปล่า (ขึ้นต้น id: เพื่อค้นจาก resource-id)")
                 step["timeout"] = float(self.form_sleep.get().strip() or "30")
             elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
@@ -4453,6 +4627,8 @@ class MuMuGUI(tk.Tk):
                 "stop_app": self._step_stop_app,
                 "detect_image": self._step_detect_image,
                 "wait_for_image": self._step_wait_for_image,
+                "tap_text": self._step_tap_text,
+                "wait_for_text": self._step_wait_for_text,
                 "screenshot": self._step_screenshot,
                 "clear_ads_loop": self._step_clear_ads_loop,
                 "fetch_otp": self._step_fetch_otp,
@@ -4471,13 +4647,13 @@ class MuMuGUI(tk.Tk):
         time.sleep(ctx.step_delay)  # หน่วงเวลาหลังลากจอ
 
     def _step_text(self, ctx, step):
-        text_to_send = step["text"]
-        if ctx.account:
-            # แทนที่ตัวแปร {EMAIL}, {PASSWORD} และ {NAME} ด้วยไอดีรอบนี้
-            text_to_send = text_to_send.replace("{EMAIL}", ctx.account["email"])
-            text_to_send = text_to_send.replace("{PASSWORD}", ctx.account["password"])
-            text_to_send = text_to_send.replace("{NAME}", ctx.account.get("name", ""))
-        ctx.record(self.controller.input_text(ctx.device, text_to_send), "text")
+        # แทนที่ตัวแปร {EMAIL}/{PASSWORD}/{NAME} ด้วยไอดีรอบนี้
+        text_to_send = self._substitute_account(step["text"], ctx.account)
+        if str(text_to_send).isascii():
+            ctx.record(self.controller.input_text(ctx.device, text_to_send), "text")
+        else:
+            # มีอักขระไทย/Unicode -> ต้องผ่าน ADBKeyboard
+            ctx.record(self.controller.input_text_unicode(ctx.device, text_to_send), "text")
         time.sleep(ctx.step_delay)  # หน่วงเวลาหลังพิมพ์ข้อความ
 
     def _step_keyevent(self, ctx, step):
@@ -4501,24 +4677,15 @@ class MuMuGUI(tk.Tk):
         if not os.path.exists(template_path):
             self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file}", "warning")
             return
-        safe_device = device.replace(":", "_").replace(".", "_")
-        temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
 
-        # ถ่ายภาพหน้าจอของจอนี้
-        success, err = self.controller.take_screenshot(device, temp_screenshot)
+        # ถ่ายภาพหน้าจอตรงเข้าหน่วยความจำ (exec-out, ไม่มีไฟล์ชั่วคราว)
+        success, data = self.controller.capture_screenshot_bytes(device)
         if not success:
-            self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+            self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {data}", "error")
             return
 
         # ค้นหาตำแหน่งภาพ
-        found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.8)
-
-        # ลบภาพแคปหน้าจอชั่วคราวทิ้งทันที
-        if os.path.exists(temp_screenshot):
-            try:
-                os.remove(temp_screenshot)
-            except Exception:
-                pass
+        found, match_x, match_y, msg = self.controller.find_image_in_bytes(data, template_path, threshold=0.8)
 
         if found:
             self.write_log(f"   🎯 [{device}] พบรูป '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
@@ -4552,20 +4719,15 @@ class MuMuGUI(tk.Tk):
         on_timeout = (step.get("on_timeout") or "continue").lower()
 
         self.write_log(f"   ⏳ [{device}] รอจนกว่าจะเจอรูป '{template_file}' (สูงสุด {timeout:g} วิ)...", "info")
-        safe_device = device.replace(":", "_").replace(".", "_")
-        temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
         deadline = time.time() + timeout
 
         while time.time() < deadline:
             if not self.macro_running:
                 return "stop"
 
-            success, err = self.controller.take_screenshot(device, temp_screenshot)
+            success, data = self.controller.capture_screenshot_bytes(device)
             if success:
-                found, mx, my, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=threshold)
-                if os.path.exists(temp_screenshot):
-                    try: os.remove(temp_screenshot)
-                    except Exception: pass
+                found, mx, my, msg = self.controller.find_image_in_bytes(data, template_path, threshold=threshold)
                 if found:
                     self.write_log(f"   🎯 [{device}] เจอรูป '{template_file}' พิกัด ({mx}, {my})", "success")
                     if click:
@@ -4574,7 +4736,7 @@ class MuMuGUI(tk.Tk):
                         time.sleep(ctx.step_delay)
                     return
             else:
-                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {data}", "error")
 
             # รอช่วง interval ก่อนเช็คอีกครั้ง (ตรวจสถานะหยุดถี่ๆ เพื่อยกเลิกได้ทันที)
             waited = 0.0
@@ -4588,6 +4750,90 @@ class MuMuGUI(tk.Tk):
         self.write_log(f"   ⌛ [{device}] รอครบ {timeout:g} วิ แล้วยังไม่เจอรูป '{template_file}'", "warning")
         if on_timeout == "fail":
             ctx.record((False, f"wait_for_image timeout: {template_file}"), "wait_for_image")
+
+    @staticmethod
+    def _substitute_account(text, account):
+        """แทนที่ {EMAIL}/{PASSWORD}/{NAME} ในข้อความด้วยข้อมูลบัญชี (ถ้ามี)"""
+        if not account:
+            return text
+        return (text
+                .replace("{EMAIL}", account.get("email", ""))
+                .replace("{PASSWORD}", account.get("password", ""))
+                .replace("{NAME}", account.get("name", "")))
+
+    @staticmethod
+    def _parse_ui_query(query):
+        """แยกคำค้น element: ขึ้นต้น 'id:' = ค้นจาก resource-id, ไม่งั้นค้นจาก text"""
+        query = (query or "").strip()
+        if query.lower().startswith("id:"):
+            return None, query[3:].strip()
+        return query, None
+
+    def _step_tap_text(self, ctx, step):
+        """กดปุ่ม/element ตามข้อความหรือ resource-id (หน้าจอ Android ปกติ ไม่ใช่ในเกม)"""
+        device = ctx.device
+        query = self._substitute_account(step.get("text", ""), ctx.account)
+        text, rid = self._parse_ui_query(query)
+        if not text and not rid:
+            self.write_log(f"   ⚠️ [{device}] tap_text: ไม่ได้ระบุข้อความ/id ที่จะค้นหา -> ข้าม", "warning")
+            return
+
+        ok, xml = self.controller.dump_ui(device)
+        if not ok:
+            self.write_log(f"   ⚠️ [{device}] อ่าน UI ไม่ได้: {xml}", "warning")
+            return
+
+        found, x, y, info = find_element_center(xml, text=text, resource_id=rid)
+        if found:
+            self.write_log(f"   🎯 [{device}] เจอ element ({info}) พิกัด ({x}, {y}) -> กำลังคลิก", "success")
+            ctx.record(self.controller.tap(device, x, y), "tap_text")
+            if ctx.step_delay > 0:
+                time.sleep(ctx.step_delay)
+        else:
+            self.write_log(f"   🔍 [{device}] ไม่พบ element: {info} -> ข้ามขั้นตอนนี้", "info")
+
+    def _step_wait_for_text(self, ctx, step):
+        """รอจน element (text/id) โผล่บนจอ แล้วค่อยทำต่อ (มี timeout) — เหมือน wait_for_image แต่ใช้ uiautomator"""
+        device = ctx.device
+        query = self._substitute_account(step.get("text", ""), ctx.account)
+        text, rid = self._parse_ui_query(query)
+        if not text and not rid:
+            self.write_log(f"   ⚠️ [{device}] wait_for_text: ไม่ได้ระบุข้อความ/id -> ข้าม", "warning")
+            return
+
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = float(step.get("interval", 1.0) or 1.0)
+        click = step.get("click", True)
+        on_timeout = (step.get("on_timeout") or "continue").lower()
+
+        self.write_log(f"   ⏳ [{device}] รอจนเจอข้อความ/element '{query}' (สูงสุด {timeout:g} วิ)...", "info")
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            if not self.macro_running:
+                return "stop"
+
+            ok, xml = self.controller.dump_ui(device)
+            if ok:
+                found, x, y, info = find_element_center(xml, text=text, resource_id=rid)
+                if found:
+                    self.write_log(f"   🎯 [{device}] เจอ element ({info}) พิกัด ({x}, {y})", "success")
+                    if click:
+                        self.controller.tap(device, x, y)
+                    if ctx.step_delay > 0:
+                        time.sleep(ctx.step_delay)
+                    return
+
+            waited = 0.0
+            while waited < interval:
+                if not self.macro_running:
+                    return "stop"
+                time.sleep(0.1)
+                waited += 0.1
+
+        self.write_log(f"   ⌛ [{device}] รอครบ {timeout:g} วิ แล้วยังไม่เจอ '{query}'", "warning")
+        if on_timeout == "fail":
+            ctx.record((False, f"wait_for_text timeout: {query}"), "wait_for_text")
 
     def _step_screenshot(self, ctx, step):
         device = ctx.device
@@ -4682,12 +4928,10 @@ class MuMuGUI(tk.Tk):
             if not self.macro_running:
                 break
 
-            safe_device = device.replace(":", "_").replace(".", "_")
-            temp_screenshot = os.path.join(self.templates_dir, f"temp_{safe_device}.png")
-
-            success, err = self.controller.take_screenshot(device, temp_screenshot)
+            # ถ่ายภาพหน้าจอตรงเข้าหน่วยความจำ (exec-out, ไม่มีไฟล์ชั่วคราว)
+            success, data = self.controller.capture_screenshot_bytes(device)
             if not success:
-                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {err}", "error")
+                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {data}", "error")
                 break
 
             # 1. ตรวจสอบว่ามาถึงหน้าจอหลัก/เริ่มต้น (Lobby) หรือยัง
@@ -4696,16 +4940,13 @@ class MuMuGUI(tk.Tk):
             if lobby_template:
                 lobby_path = os.path.join(self.templates_dir, lobby_template)
                 if os.path.exists(lobby_path):
-                    found_lobby, lx, ly, lmsg = self.controller.find_image_on_screen(temp_screenshot, lobby_path, threshold=0.7)
+                    found_lobby, lx, ly, lmsg = self.controller.find_image_in_bytes(data, lobby_path, threshold=0.7)
                     lobby_msg = lmsg
                     if found_lobby:
                         self.write_log(f"   🎉 [{device}] รอบที่ {attempt+1}: ตรวจพบหน้าจอหลัก/เริ่มต้น '{lobby_template}' -> โฆษณาเคลียร์หมดแล้ว!", "success")
                         reached_lobby = True
 
             if reached_lobby:
-                if os.path.exists(temp_screenshot):
-                    try: os.remove(temp_screenshot)
-                    except Exception: pass
                 break
 
             # 2. ตรวจสอบปุ่มปิดโฆษณาเพื่อกดปิด
@@ -4715,7 +4956,7 @@ class MuMuGUI(tk.Tk):
                 if not os.path.exists(template_path):
                     continue
 
-                found, match_x, match_y, msg = self.controller.find_image_on_screen(temp_screenshot, template_path, threshold=0.7)
+                found, match_x, match_y, msg = self.controller.find_image_in_bytes(data, template_path, threshold=0.7)
                 if found:
                     self.write_log(f"   🎯 [{device}] รอบที่ {attempt+1}: พบรูปปุ่มปิด '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
                     self.controller.tap(device, match_x, match_y)
@@ -4723,10 +4964,6 @@ class MuMuGUI(tk.Tk):
                     if step_delay > 0:
                         time.sleep(step_delay)
                     break
-
-            if os.path.exists(temp_screenshot):
-                try: os.remove(temp_screenshot)
-                except Exception: pass
 
             # 3. หากไม่พบปุ่มปิดใดๆ และยังไม่ถึงหน้าหลัก ให้ส่งปุ่ม BACK ย้อนกลับเป็นทางเลือกสำรอง
             if not found_ad:

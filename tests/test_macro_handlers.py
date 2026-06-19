@@ -28,6 +28,10 @@ class FakeController:
         self.calls.append(("text", device, text))
         return self._ret()
 
+    def input_text_unicode(self, device, text):
+        self.calls.append(("text_unicode", device, text))
+        return self._ret()
+
     def keyevent(self, device, code):
         self.calls.append(("keyevent", device, code))
         return self._ret()
@@ -40,10 +44,29 @@ class FakeController:
         self.calls.append(("screenshot", device, path))
         return (True, "")
 
+    def capture_screenshot_bytes(self, device):
+        self.calls.append(("screenshot_bytes", device))
+        return (True, b"PNGDATA")
+
     def find_image_on_screen(self, screen_path, template_path, threshold=0.8):
         if self.found_image:
             return (True, self.match_point[0], self.match_point[1], "match")
         return (False, 0, 0, "no match")
+
+    def find_image_in_bytes(self, screen_bytes, template_path, threshold=0.8):
+        if self.found_image:
+            return (True, self.match_point[0], self.match_point[1], "match")
+        return (False, 0, 0, "no match")
+
+    # ใช้สำหรับ handler ที่อิง uiautomator (tap_text/wait_for_text)
+    ui_xml = '<hierarchy><node text="ยืนยัน" resource-id="" bounds="[100,400][300,500]"/></hierarchy>'
+    ui_ok = True
+
+    def dump_ui(self, device):
+        self.calls.append(("dump_ui", device))
+        if self.ui_ok:
+            return (True, self.ui_xml)
+        return (False, "no elements")
 
 
 def make_stub(controller):
@@ -53,6 +76,9 @@ def make_stub(controller):
     stub.templates_dir = "templates"
     stub._logs = []
     stub.write_log = lambda msg, t="info": stub._logs.append((t, msg))
+    # static helper บน MuMuGUI ที่ handler เรียกผ่าน self
+    stub._substitute_account = gui.MuMuGUI._substitute_account
+    stub._parse_ui_query = gui.MuMuGUI._parse_ui_query
     return stub
 
 
@@ -107,6 +133,14 @@ class StepHandlerTests(unittest.TestCase):
 
         self.assertEqual(ctrl.calls, [("text", "127.0.0.1:5555", "{EMAIL}")])
 
+    def test_thai_text_routes_to_unicode_input(self):
+        ctrl = FakeController()
+        account = {"email": "p@e.com", "password": "x", "name": "บอส"}
+        ctx = make_ctx(account=account)
+        gui.MuMuGUI._step_text(make_stub(ctrl), ctx, {"text": "{NAME}"})
+
+        self.assertEqual(ctrl.calls, [("text_unicode", "127.0.0.1:5555", "บอส")])
+
     def test_keyevent_passes_code(self):
         ctrl = FakeController()
         ctx = make_ctx()
@@ -158,12 +192,43 @@ class StepHandlerTests(unittest.TestCase):
         self.assertIsNone(signal)
         self.assertEqual(ctrl.calls, [])  # ไม่ควรถ่ายภาพหรือคลิกเลย
 
+    def test_tap_text_finds_element_and_taps_center(self):
+        ctrl = FakeController()
+        ctx = make_ctx()
+        gui.MuMuGUI._step_tap_text(make_stub(ctrl), ctx, {"text": "ยืนยัน"})
+
+        self.assertIn(("dump_ui", "127.0.0.1:5555"), ctrl.calls)
+        self.assertIn(("tap", "127.0.0.1:5555", 200, 450), ctrl.calls)
+
+    def test_tap_text_substitutes_account_placeholder(self):
+        ctrl = FakeController()
+        ctrl.ui_xml = '<hierarchy><node text="p@e.com" resource-id="" bounds="[0,0][100,100]"/></hierarchy>'
+        ctx = make_ctx(account={"email": "p@e.com", "password": "x", "name": "n"})
+        gui.MuMuGUI._step_tap_text(make_stub(ctrl), ctx, {"text": "{EMAIL}"})
+
+        self.assertIn(("tap", "127.0.0.1:5555", 50, 50), ctrl.calls)
+
+    def test_tap_text_skips_when_element_absent(self):
+        ctrl = FakeController()
+        ctx = make_ctx()
+        gui.MuMuGUI._step_tap_text(make_stub(ctrl), ctx, {"text": "ไม่มีปุ่มนี้"})
+
+        self.assertNotIn(("tap", "127.0.0.1:5555", 200, 450), ctrl.calls)
+
+    def test_wait_for_text_returns_stop_when_halted(self):
+        stub = make_stub(FakeController())
+        stub.macro_running = False
+        ctx = make_ctx()
+        signal = gui.MuMuGUI._step_wait_for_text(stub, ctx, {"text": "ยืนยัน", "timeout": 5})
+
+        self.assertEqual(signal, "stop")
+
     def test_every_known_step_type_has_a_handler_method(self):
         # ทุกชนิด step ที่ระบบรองรับต้องมีเมธอด handler _step_<type> รองรับ
         expected = {
             "tap", "swipe", "text", "keyevent", "start_app", "stop_app",
-            "detect_image", "wait_for_image", "screenshot", "clear_ads_loop",
-            "fetch_otp", "sleep", "keyboard",
+            "detect_image", "wait_for_image", "tap_text", "wait_for_text",
+            "screenshot", "clear_ads_loop", "fetch_otp", "sleep", "keyboard",
         }
         for step_type in expected:
             self.assertTrue(
