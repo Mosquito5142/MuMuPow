@@ -2136,11 +2136,20 @@ class MuMuGUI(tk.Tk):
             cfg = self.diamond_config or {}
             web_base_url = (cfg.get("web_base_url") or "").strip()
             if cfg.get("auto_push", True) and web_base_url:
-                updates = [
-                    {"id": row["save_web_game_id"], "diamonds": row["diamonds"], "lastFarmDate": today}
-                    for row in export_rows
-                    if row.get("save_web_game_id") and row.get("diamonds") is not None
-                ]
+                _MAX_DIAMONDS = 999_999
+                updates = []
+                for row in export_rows:
+                    if not row.get("save_web_game_id"):
+                        continue
+                    d = row.get("diamonds")
+                    name = row.get("name") or row.get("email") or row.get("device") or "?"
+                    if d is None:
+                        self.write_log(f"   ⚠️ ข้ามการส่งเพชร [{name}]: OCR อ่านไม่ได้", "warning")
+                        continue
+                    if not isinstance(d, int) or d < 0 or d > _MAX_DIAMONDS:
+                        self.write_log(f"   ⚠️ ข้ามการส่งเพชร [{name}]: ค่า '{d}' ผิดปกติ (ต้องอยู่ในช่วง 0–{_MAX_DIAMONDS:,})", "warning")
+                        continue
+                    updates.append({"id": row["save_web_game_id"], "diamonds": d, "lastFarmDate": today})
                 if updates:
                     self.write_log(f"🌐 กำลังส่งเพชรเข้าเว็บ {len(updates)} บัญชี -> {web_base_url}", "info")
                     try:
