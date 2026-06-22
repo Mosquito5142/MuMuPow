@@ -192,7 +192,7 @@ def push_diamonds_to_web(base_url, updates, timeout=20):
     if not valid:
         return results, {"sent": 0, "failed": 0}
 
-    with ThreadPoolExecutor(max_workers=min(8, max(1, len(valid)))) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, len(valid))) as ex:
         for acc_id, outcome in ex.map(_put_one, valid):
             if acc_id is not None:
                 results[acc_id] = outcome
