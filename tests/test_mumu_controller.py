@@ -160,5 +160,82 @@ class FindElementCenterTests(unittest.TestCase):
         self.assertEqual(confirm["center"], (200, 450))
 
 
+class ReadNumberInRegionTests(unittest.TestCase):
+    """ทดสอบ OCR เลขแบบเทมเพลตต่อหลัก (per-digit template matching) ของระบบอ่านเพชร"""
+
+    def _controller(self):
+        return MuMuController.__new__(MuMuController)
+
+    def _render_digit(self, d):
+        """วาดเลข d เป็นภาพเล็ก (BGR) ด้วยฟอนต์คงที่ ใช้เป็นทั้งเทมเพลตและชิ้นส่วนของเลขเป้าหมาย"""
+        font, scale, thick = cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2
+        (w, h), base = cv2.getTextSize(str(d), font, scale, thick)
+        img = np.zeros((h + base + 4, w + 4, 3), dtype=np.uint8)
+        cv2.putText(img, str(d), (2, h + 2), font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+        return img
+
+    def _build_scene(self, digits_dir, number_str, rx=200, ry=40, gap=8):
+        """สร้างภาพหน้าจอจำลองโดย 'วาง' ภาพเลขแต่ละหลักลงไปจริง ๆ (paste) เพื่อให้ match ตรงเป๊ะ
+        พร้อมบันทึกเทมเพลตเลข 0-9 ลง digits_dir แล้วคืน (png_bytes, region)"""
+        digit_imgs = {d: self._render_digit(d) for d in range(10)}
+        for d, im in digit_imgs.items():
+            cv2.imwrite(os.path.join(digits_dir, f"{d}.png"), im)
+
+        cell_h = max(im.shape[0] for im in digit_imgs.values())
+        screen = np.zeros((ry + cell_h + 40, 500, 3), dtype=np.uint8)
+        x = rx
+        for ch in number_str:
+            im = digit_imgs[int(ch)]
+            hi, wi = im.shape[:2]
+            screen[ry:ry + hi, x:x + wi] = im
+            x += wi + gap
+        region = {"x": rx - 2, "y": ry - 2, "w": (x - rx) + 4, "h": cell_h + 4}
+        ok, png = cv2.imencode(".png", screen)
+        self.assertTrue(ok)
+        return png.tobytes(), region
+
+    def test_reads_multi_digit_number_with_repeats(self):
+        ctrl = self._controller()
+        with tempfile.TemporaryDirectory() as d:
+            png_bytes, region = self._build_scene(d, "3631")  # มีเลขซ้ำ (3) และเลขแคบ (1)
+            ok, number, raw = ctrl.read_number_in_region(png_bytes, region, d, threshold=0.85)
+        self.assertTrue(ok, raw)
+        self.assertEqual(number, 3631)
+
+    def test_reads_single_digit(self):
+        ctrl = self._controller()
+        with tempfile.TemporaryDirectory() as d:
+            png_bytes, region = self._build_scene(d, "7")
+            ok, number, raw = ctrl.read_number_in_region(png_bytes, region, d, threshold=0.85)
+        self.assertTrue(ok, raw)
+        self.assertEqual(number, 7)
+
+    def test_zero_size_region_returns_not_found(self):
+        ctrl = self._controller()
+        with tempfile.TemporaryDirectory() as d:
+            png_bytes, _region = self._build_scene(d, "42")
+            ok, number, raw = ctrl.read_number_in_region(png_bytes, {"x": 0, "y": 0, "w": 0, "h": 0}, d)
+        self.assertFalse(ok)
+        self.assertIsNone(number)
+
+    def test_no_digit_templates_returns_not_found(self):
+        ctrl = self._controller()
+        screen = np.zeros((80, 200, 3), dtype=np.uint8)
+        ok_enc, png = cv2.imencode(".png", screen)
+        self.assertTrue(ok_enc)
+        with tempfile.TemporaryDirectory() as empty_dir:  # ไม่มีไฟล์เลขเลย
+            ok, number, raw = ctrl.read_number_in_region(
+                png.tobytes(), {"x": 0, "y": 0, "w": 50, "h": 30}, empty_dir)
+        self.assertFalse(ok)
+        self.assertIsNone(number)
+
+    def test_empty_bytes_returns_not_found(self):
+        ctrl = self._controller()
+        with tempfile.TemporaryDirectory() as d:
+            ok, number, raw = ctrl.read_number_in_region(b"", {"x": 0, "y": 0, "w": 10, "h": 10}, d)
+        self.assertFalse(ok)
+        self.assertIsNone(number)
+
+
 if __name__ == "__main__":
     unittest.main()

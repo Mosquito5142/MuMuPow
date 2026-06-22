@@ -1,5 +1,8 @@
 import subprocess
 import os
+import sys
+import shutil
+import tempfile
 import re
 import time
 import json
@@ -8,6 +11,36 @@ import cv2
 import numpy as np
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+
+
+_TESSERACT_CMD = None
+
+
+def find_tesseract():
+    """หา tesseract.exe: ข้างๆ โปรแกรม (โฟลเดอร์ tesseract/) -> ที่ติดตั้งมาตรฐาน -> PATH.
+    คืน path ของ tesseract.exe หรือ None ถ้าไม่พบ (แคชผลไว้)"""
+    global _TESSERACT_CMD
+    if _TESSERACT_CMD is not None:
+        return _TESSERACT_CMD or None
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(app_dir, "tesseract", "tesseract.exe"),  # ฝังมากับแอป (ถ้ามี)
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
+    ]
+    which = shutil.which("tesseract")
+    if which:
+        candidates.append(which)
+    for c in candidates:
+        if c and os.path.exists(c):
+            _TESSERACT_CMD = c
+            return c
+    _TESSERACT_CMD = ""
+    return None
 
 
 # Characters that the on-device shell (/system/bin/sh) interprets when running
@@ -519,3 +552,140 @@ class MuMuController:
             return self._match_template(screen, template, threshold)
         except Exception as e:
             return False, 0, 0, str(e)
+
+    def read_number_in_region(self, screen_bytes, region, digits_dir, threshold=0.6):
+        """Reads an integer from a fixed screen region using per-digit template matching.
+
+        region: dict with x, y, w, h (pixels in the original screenshot resolution).
+        digits_dir: folder holding digit templates 0.png .. 9.png (crops of the game font).
+                    Only the digit templates that exist are matched.
+        Returns (ok: bool, number: int|None, raw_str: str). raw_str is "" when nothing matched
+        (or the exception text on error, for logging).
+
+        Why template matching: the game renders the currency count in a fixed font at a fixed
+        resolution, so each glyph is pixel-stable. Cropping to a tight region first is what keeps
+        the many other on-screen numbers (gold, level, score) out of the read.
+
+        Matching is done on GRAYSCALE so that the same white digit reads regardless of the colored
+        bar behind it (the diamond bar is blue, the gold/score bars are other colors) — a color
+        match would score the background differences and miss.
+        """
+        try:
+            if not screen_bytes:
+                return False, None, ""
+            screen = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if screen is None:
+                return False, None, ""
+
+            # ครอปเฉพาะพื้นที่ตัวเลข (clamp ไม่ให้เกินขอบภาพ) แล้วแปลงเป็นเทา
+            sh, sw = screen.shape[:2]
+            x = max(0, int(region.get("x", 0)))
+            y = max(0, int(region.get("y", 0)))
+            w = int(region.get("w", 0))
+            h = int(region.get("h", 0))
+            if w <= 0 or h <= 0:
+                return False, None, ""
+            crop = screen[y:min(sh, y + h), x:min(sw, x + w)]
+            if crop.size == 0:
+                return False, None, ""
+            crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+
+            # จับคู่ทุกตัวเลข (0-9) ในพื้นที่ครอป เก็บทุกตำแหน่งที่คะแนนถึงเกณฑ์
+            dets = []  # (px, digit, score, tpl_w)
+            for d in range(10):
+                tpl_path = os.path.join(digits_dir, f"{d}.png")
+                if not os.path.exists(tpl_path):
+                    continue
+                tpl = cv2.imread(tpl_path, cv2.IMREAD_GRAYSCALE)
+                if tpl is None:
+                    continue
+                th, tw = tpl.shape[:2]
+                if crop.shape[0] < th or crop.shape[1] < tw:
+                    continue  # template ใหญ่กว่าพื้นที่ครอป ข้าม
+                res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
+                ys, xs = np.where(res >= threshold)
+                for px, py in zip(xs, ys):
+                    dets.append((int(px), d, float(res[py, px]), int(tw)))
+
+            if not dets:
+                return False, None, ""
+
+            # Non-max suppression ตามแกน x: เรียงคะแนนมาก->น้อย เก็บเฉพาะตัวที่ไม่ทับกับที่เก็บไว้
+            # (กันการอ่านเลขตัวเดียวซ้ำ หรือเลขคนละตัวทับตำแหน่งเดียวกัน)
+            dets.sort(key=lambda t: -t[2])
+            kept = []
+            for px, d, score, tw in dets:
+                if all(abs(px - kpx) > tw * 0.5 for kpx, _, _, _ in kept):
+                    kept.append((px, d, score, tw))
+
+            # เรียงตามตำแหน่งซ้าย->ขวา แล้วต่อกันเป็นเลขจำนวนเต็ม
+            kept.sort(key=lambda t: t[0])
+            raw = "".join(str(d) for _, d, _, _ in kept)
+            if not raw:
+                return False, None, ""
+            return True, int(raw), raw
+        except Exception as e:
+            return False, None, str(e)
+
+    def read_number_tesseract(self, screen_bytes, region, scale=6, psm=7, sat_thresh=120):
+        """อ่านเลขจากพื้นที่ที่กำหนดด้วย Tesseract OCR (เรียก tesseract.exe ตรง — ไม่พึ่ง pytesseract/PIL)
+
+        region: dict {x,y,w,h} พิกัดในภาพต้นฉบับ — ควรครอบ 'เฉพาะตัวเลข' ไม่เอาไอคอน
+        คืน (ok, number:int|None, raw:str). raw='no_tesseract' เมื่อไม่พบ tesseract.exe, '' เมื่ออ่านไม่ได้
+
+        วิธี: ครอปพื้นที่ -> เทา -> ขยายภาพ (เลขในจอเล็ก ~7px ต้องขยายให้อ่านได้) -> เว้นขอบขาว ->
+        เซฟ PNG ชั่วคราว -> ส่งให้ tesseract.exe อ่านแบบบรรทัดเดียว เฉพาะเลข 0-9 (ซ่อนหน้าต่าง cmd)
+        """
+        cmd = find_tesseract()
+        if not cmd:
+            return False, None, "no_tesseract"
+        tmp = None
+        try:
+            if not screen_bytes:
+                return False, None, ""
+            screen = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if screen is None:
+                return False, None, ""
+            sh, sw = screen.shape[:2]
+            x = max(0, int(region.get("x", 0)))
+            y = max(0, int(region.get("y", 0)))
+            w = int(region.get("w", 0))
+            h = int(region.get("h", 0))
+            if w <= 0 or h <= 0:
+                return False, None, ""
+            crop = screen[y:min(sh, y + h), x:min(sw, x + w)]
+            if crop.size == 0:
+                return False, None, ""
+            g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            # ลบพิกเซลสีอิ่มสูง (ปุ่ม "+" สีฟ้า / ไอคอนเพชร) ออกเป็นขาว เพื่อไม่ให้ OCR อ่าน
+            # ขอบปุ่ม "+" เป็นเลข "1" ต่อท้าย — ตัวเลขเพชรสีจาง (อิ่มสีต่ำ) จึงไม่ถูกลบ
+            if sat_thresh and sat_thresh > 0:
+                sat = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1]
+                g[sat > sat_thresh] = 255
+            g = cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            g = cv2.copyMakeBorder(g, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+
+            fd, tmp = tempfile.mkstemp(suffix=".png", prefix="diamond_ocr_")
+            os.close(fd)
+            cv2.imwrite(tmp, g)
+
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            res = subprocess.run(
+                [cmd, tmp, "stdout", "--psm", str(psm), "-c", "tessedit_char_whitelist=0123456789"],
+                capture_output=True, startupinfo=startupinfo, timeout=20,
+            )
+            txt = res.stdout.decode("utf-8", errors="ignore")
+            digits = "".join(c for c in txt if c.isdigit())
+            if not digits:
+                return False, None, ""
+            return True, int(digits), digits
+        except Exception as e:
+            return False, None, str(e)
+        finally:
+            if tmp:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass

@@ -7,7 +7,7 @@ import json
 import os
 import glob
 import sys
-from mumu_controller import MuMuController, find_element_center, list_ui_elements
+from mumu_controller import MuMuController, find_element_center, list_ui_elements, find_tesseract
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
     DEFAULT_ACTION_DELAY,
@@ -27,7 +27,12 @@ from script_sets import (
     safe_set_slug,
     save_script_set,
 )
-from save_web_game_import import import_save_web_game_accounts
+from save_web_game_import import (
+    import_save_web_game_accounts,
+    push_diamonds_to_web,
+    fetch_web_accounts,
+    match_accounts_to_web,
+)
 
 # จานสีสำหรับธีมมืดระดับพรีเมียม (Premium Dark Theme Color Palette)
 BG_DARK = "#080D16"
@@ -294,6 +299,10 @@ class MuMuGUI(tk.Tk):
         self.ports_file = os.path.join(base_dir, "ports.json")
         self.presets_file = os.path.join(base_dir, "presets.json")
         self.coordinate_presets = self.load_coordinate_presets()
+        # ระบบอ่านจำนวนเพชร (Diamond OCR) — พื้นที่ครอป + เทมเพลตเลข 0-9
+        self.diamond_config_file = os.path.join(base_dir, "diamond_ocr.json")
+        self.diamond_digits_dir = os.path.join(self.templates_dir, "diamond_digits")
+        self.diamond_config = self.load_diamond_config()
         self.account_checkboxes = {} # email -> BooleanVar
         self.group_checkboxes = {}   # group_name -> BooleanVar
         self.load_accounts()
@@ -1106,6 +1115,18 @@ class MuMuGUI(tk.Tk):
         self.manual_screenshot_entry.insert(0, "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png")
         
         ModernButton(screenshot_input_frame, text="ถ่ายทุกเครื่อง", command=self.send_manual_screenshot, variant="accent").pack(side="right")
+
+        # 4.1 ระบบอ่านจำนวนเพชร (Diamond OCR) — แคปจอ อ่านเลขเพชร แล้ว Export เป็น JSON
+        tk.Label(
+            screenshot_box,
+            text="💎 อ่านจำนวนเพชร: แคปจอทุกเครื่องที่เลือก ตั้งชื่อตามรหัสที่ล็อกอินล่าสุด อ่านเลขเพชรบนหัวจอ แล้ว Export เป็น JSON",
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
+        ).pack(anchor="w", pady=(12, 2))
+        diamond_btn_frame = tk.Frame(screenshot_box, bg=BG_CARD)
+        diamond_btn_frame.pack(fill="x", pady=2)
+        ModernButton(diamond_btn_frame, text="💎 แคปจอ + อ่านเพชร (Export JSON)", command=self.capture_and_read_diamonds, variant="accent").pack(side="left")
+        ModernButton(diamond_btn_frame, text="⚙️ ตั้งค่าพื้นที่เพชร", command=self.open_diamond_setup, variant="subtle").pack(side="left", padx=8)
+        ModernButton(diamond_btn_frame, text="🔗 เติม id เว็บ (จับคู่ชื่อ)", command=self.backfill_web_ids, variant="subtle").pack(side="left", padx=8)
 
         # 5. กล่องรันคำสั่ง ADB แบบแมนนวลเอง
         raw_outer, raw_box = self.make_panel(sync_frame, "ADB Shell", fill="x", pady=10)
@@ -1959,6 +1980,557 @@ class MuMuGUI(tk.Tk):
                     self.write_log(f"   [{dev}] บันทึกภาพล้มเหลว: {err}", "error")
                     
         threading.Thread(target=worker, daemon=True).start()
+
+    # ===== ระบบอ่านจำนวนเพชร (Diamond OCR) =====
+    def load_diamond_config(self):
+        """โหลดการตั้งค่าระบบอ่านเพชร (พื้นที่ครอป + threshold + ที่อยู่ไฟล์ export) จาก diamond_ocr.json
+        ถ้าไม่มีไฟล์หรืออ่านไม่ได้ จะคืนค่าดีฟอลต์ (พื้นที่เริ่มต้นเดาไว้สำหรับความละเอียด 960x540)"""
+        defaults = {
+            "region": {"x": 400, "y": 14, "w": 80, "h": 24},
+            "threshold": 0.6,
+            "export_path": "diamond_export.json",
+            "web_base_url": "",
+            "auto_push": True,
+        }
+        try:
+            if os.path.exists(self.diamond_config_file):
+                with open(self.diamond_config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    defaults.update(data)
+        except Exception as e:
+            self.write_log(f"โหลดการตั้งค่าระบบอ่านเพชรขัดข้อง: {e}", "warning")
+        return defaults
+
+    def save_diamond_config(self):
+        """บันทึกการตั้งค่าระบบอ่านเพชรลงไฟล์ diamond_ocr.json"""
+        try:
+            with open(self.diamond_config_file, "w", encoding="utf-8") as f:
+                json.dump(self.diamond_config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.write_log(f"บันทึกการตั้งค่าระบบอ่านเพชรล้มเหลว: {e}", "error")
+
+    def _build_screenshot_filename(self, pattern, account, device):
+        """สร้างชื่อไฟล์ภาพจากแพทเทิร์น แทนที่ {EMAIL}/{PASSWORD}/{NAME}/{GROUP}/{DATE}/{TIME}/{DEVICE}
+        และกรองอักขระให้ปลอดภัยกับ Windows (รองรับไทย/อังกฤษ/ตัวเลข/สัญลักษณ์ปลอดภัย)"""
+        from datetime import datetime
+        now = datetime.now()
+        filename = pattern or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
+        if account:
+            filename = filename.replace("{EMAIL}", account.get("email", "no_account"))
+            filename = filename.replace("{PASSWORD}", account.get("password", "no_password"))
+            filename = filename.replace("{NAME}", account.get("name", ""))
+            filename = filename.replace("{GROUP}", account.get("group", "no_group"))
+        else:
+            filename = filename.replace("{EMAIL}", "no_account")
+            filename = filename.replace("{PASSWORD}", "no_password")
+            filename = filename.replace("{NAME}", "no_name")
+            filename = filename.replace("{GROUP}", "no_group")
+        filename = filename.replace("{DATE}", now.strftime("%Y-%m-%d"))
+        filename = filename.replace("{TIME}", now.strftime("%H-%M-%S"))
+        filename = filename.replace("{DEVICE}", device.replace(":", "_").replace(".", "_"))
+
+        def is_safe_char(c):
+            return c.isalnum() or c in "-_.() /\\" or ('฀' <= c <= '๿')
+
+        filename = "".join(c for c in filename if is_safe_char(c))
+        if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            filename += ".png"
+        return filename
+
+    def capture_and_read_diamonds(self):
+        """แคปจอทุกเครื่องที่เลือก เซฟรูปตั้งชื่อตามบัญชีที่ล็อกอินล่าสุด อ่านจำนวนเพชรบนหัวจอ
+        แล้ว Export ผลเป็น JSON (รหัส/ชื่อ/จำนวนเพชร/เวลา) เพื่อเอาไปใช้ต่อ"""
+        devices = self.get_selected_devices()
+        if not devices:
+            self.write_log("⚠️ อ่านเพชรไม่ได้: กรุณาเลือก Emulator ด้านซ้ายอย่างน้อย 1 เครื่อง!", "warning")
+            return
+
+        region = (self.diamond_config or {}).get("region") or {}
+
+        # ตรวจว่าตั้งค่าพื้นที่แล้ว + มี Tesseract OCR แล้วหรือยัง
+        if int(region.get("w", 0)) <= 0 or int(region.get("h", 0)) <= 0:
+            messagebox.showwarning("ยังไม่ได้ตั้งค่า",
+                "ยังไม่ได้กำหนดพื้นที่ตัวเลขเพชร\nกรุณากดปุ่ม '⚙️ ตั้งค่าพื้นที่เพชร' ก่อน", parent=self)
+            return
+        if not find_tesseract():
+            messagebox.showwarning("ไม่พบ Tesseract OCR",
+                "ระบบอ่านเพชรต้องใช้ Tesseract OCR (ตัวอ่านตัวอักษร) ซึ่งยังไม่ได้ติดตั้ง\n\n"
+                "วิธีติดตั้ง: เปิด PowerShell แล้วรันคำสั่ง\n"
+                "    winget install UB-Mannheim.TesseractOCR\n\n"
+                "หรือดาวน์โหลดจาก https://github.com/UB-Mannheim/tesseract/wiki\n"
+                "ติดตั้งเสร็จแล้วเปิดโปรแกรมนี้ใหม่", parent=self)
+            return
+
+        filename_pattern = self.manual_screenshot_entry.get().strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
+        checked_accounts = [acc for acc in self.accounts if acc.get("checked", True)]
+
+        # จับคู่ emulator กับบัญชี (ตรรกะเดียวกับการแคปจอแมนนวล: ใช้บัญชีที่รันล่าสุดบนเครื่องนั้น)
+        paired_list = []
+        for idx, dev in enumerate(devices):
+            acc = None
+            if hasattr(self, 'device_active_accounts') and dev in self.device_active_accounts:
+                acc = self.device_active_accounts[dev]
+            else:
+                acc = checked_accounts[idx] if idx < len(checked_accounts) else None
+            paired_list.append((dev, acc))
+
+        def worker():
+            from concurrent.futures import ThreadPoolExecutor
+            from datetime import datetime
+            self.write_log(f"💎 กำลังแคปจอและอ่านเพชรจาก Emulator {len(devices)} เครื่อง...", "info")
+
+            def process_single(pair):
+                dev, acc = pair
+                ok, data = self.controller.capture_screenshot_bytes(dev)
+                if not ok:
+                    return {"device": dev, "account": acc, "ok": False, "diamonds": None, "file": ""}
+                # เซฟรูปตั้งชื่อตามบัญชี (ใช้ bytes ชุดเดียวกับที่อ่านเพชร — แคปครั้งเดียว)
+                saved_file = ""
+                try:
+                    filename = self._build_screenshot_filename(filename_pattern, acc, dev)
+                    out_dir = os.path.dirname(os.path.abspath(filename))
+                    if out_dir and not os.path.exists(out_dir):
+                        os.makedirs(out_dir, exist_ok=True)
+                    with open(filename, "wb") as f:
+                        f.write(data)
+                    saved_file = filename
+                except Exception as e:
+                    self.write_log(f"   ⚠️ [{dev}] เซฟรูปไม่สำเร็จ: {e}", "warning")
+                # อ่านเลขเพชรจาก bytes ด้วย Tesseract OCR
+                rok, number, _raw = self.controller.read_number_tesseract(data, region)
+                return {"device": dev, "account": acc, "ok": rok, "diamonds": number, "file": saved_file}
+
+            with ThreadPoolExecutor(max_workers=max(1, len(paired_list))) as executor:
+                results = list(executor.map(process_single, paired_list))
+
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            today = datetime.now().strftime("%Y-%m-%d")
+            export_rows = []
+            for r in results:
+                acc = r.get("account") or {}
+                email = acc.get("email", "")
+                name = acc.get("name", "") or acc.get("ingamename", "")
+                web_id = (acc.get("save_web_game_id") or "").strip()
+                diamonds = r.get("diamonds")
+                export_rows.append({
+                    "email": email, "name": name, "save_web_game_id": web_id,
+                    "diamonds": diamonds, "device": r["device"], "time": stamp,
+                })
+                who = name or email or "no_account"
+                if r["ok"]:
+                    self.write_log(f"   💎 [{r['device']}] {who}: {diamonds} เพชร", "success")
+                else:
+                    self.write_log(f"   ❌ [{r['device']}] {who}: อ่านจำนวนเพชรไม่ได้ (ลองปรับพื้นที่ให้ครอบเฉพาะตัวเลข ไม่เอาไอคอน)", "error")
+
+            export_path = (self.diamond_config or {}).get("export_path") or "diamond_export.json"
+            try:
+                with open(export_path, "w", encoding="utf-8") as f:
+                    json.dump(export_rows, f, ensure_ascii=False, indent=2)
+                self.write_log(f"📤 Export เพชรสำเร็จ: {os.path.abspath(export_path)} ({len(export_rows)} รายการ)", "success")
+            except Exception as e:
+                self.write_log(f"❌ เขียนไฟล์ Export ล้มเหลว: {e}", "error")
+
+            # ส่งเพชรเข้าเว็บ Save_Web_Game อัตโนมัติ (จับคู่ด้วย save_web_game_id = id ของเว็บ)
+            push_results = {}
+            cfg = self.diamond_config or {}
+            web_base_url = (cfg.get("web_base_url") or "").strip()
+            if cfg.get("auto_push", True) and web_base_url:
+                updates = [
+                    {"id": row["save_web_game_id"], "diamonds": row["diamonds"], "lastFarmDate": today}
+                    for row in export_rows
+                    if row.get("save_web_game_id") and row.get("diamonds") is not None
+                ]
+                if updates:
+                    self.write_log(f"🌐 กำลังส่งเพชรเข้าเว็บ {len(updates)} บัญชี -> {web_base_url}", "info")
+                    try:
+                        push_results, push_stats = push_diamonds_to_web(web_base_url, updates)
+                        self.write_log(
+                            f"🌐 ส่งเข้าเว็บ: สำเร็จ {push_stats['sent']} / ล้มเหลว {push_stats['failed']}",
+                            "success" if push_stats["failed"] == 0 else "warning")
+                        for acc_id, (ok, msg) in push_results.items():
+                            if not ok:
+                                self.write_log(f"   ❌ [web {acc_id}] {msg}", "error")
+                    except Exception as e:
+                        self.write_log(f"❌ ส่งเข้าเว็บล้มเหลว: {e}", "error")
+                else:
+                    self.write_log("🌐 ไม่มีบัญชีที่มี id เว็บ (save_web_game_id) ให้ส่ง — ข้ามการส่งเข้าเว็บ", "warning")
+            elif not web_base_url:
+                self.write_log("🌐 ยังไม่ได้ตั้ง URL เว็บ — ข้ามการส่งเข้าเว็บ (ตั้งได้ที่ปุ่ม ⚙️ ตั้งค่าพื้นที่เพชร)", "info")
+
+            self.after(0, lambda: self._show_diamond_summary(export_rows, export_path, push_results))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def backfill_web_ids(self):
+        """ดึงบัญชีจากเว็บ แล้วจับคู่กับบัญชีใน MuMuPow ด้วยชื่อ เพื่อเติม save_web_game_id (id เว็บ)"""
+        base = (self.diamond_config or {}).get("web_base_url", "").strip()
+        if not base:
+            messagebox.showwarning("ยังไม่ได้ตั้ง URL เว็บ",
+                "กรุณาตั้ง URL เว็บก่อน — กดปุ่ม '⚙️ ตั้งค่าพื้นที่เพชร' แล้วใส่ในช่อง 🌐 URL เว็บ", parent=self)
+            return
+
+        def worker():
+            self.write_log(f"🔗 กำลังดึงบัญชีจากเว็บเพื่อจับคู่ id -> {base}", "info")
+            try:
+                web_accounts = fetch_web_accounts(base)
+            except Exception as e:
+                self.write_log(f"❌ ดึงบัญชีจากเว็บล้มเหลว: {e}", "error")
+                self.after(0, lambda e=e: messagebox.showerror("ผิดพลาด", f"ดึงบัญชีจากเว็บไม่ได้:\n{e}", parent=self))
+                return
+            proposals = match_accounts_to_web(self.accounts, web_accounts)
+            self.write_log(f"🔗 บัญชีในเว็บ {len(web_accounts)} รายการ | จับคู่ได้ {len(proposals)}", "info")
+            self.after(0, lambda: self._show_backfill_review(proposals, len(web_accounts)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_backfill_review(self, proposals, web_count):
+        """หน้าต่างตรวจการจับคู่ id เว็บ — คลิกแถวเพื่อติ๊ก/เอาออก แล้วยืนยันเติม save_web_game_id"""
+        if not proposals:
+            messagebox.showinfo("ไม่พบคู่ที่จับได้",
+                f"ดึงบัญชีจากเว็บ {web_count} รายการ แต่จับคู่กับบัญชีใน MuMuPow (ที่ยังไม่มี id) ไม่ได้เลย\n"
+                "ตรวจว่าชื่อบัญชี (name) ตรงกับ title หรือ ingamename ในเว็บไหม", parent=self)
+            return
+        win = tk.Toplevel(self)
+        win.title("🔗 ตรวจการจับคู่ id เว็บ")
+        win.configure(bg=BG_DARK)
+        win.transient(self)
+        win.geometry("780x520")
+
+        tk.Label(win, text=f"จับคู่ได้ {len(proposals)} บัญชี — คลิกแถวเพื่อติ๊ก/เอาออก แล้วกด 'ยืนยันเติม id'",
+                 bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=15, pady=(15, 5))
+
+        cols = ("use", "name", "web", "by")
+        tree = ttk.Treeview(win, columns=cols, show="headings", height=16)
+        tree.heading("use", text="เลือก")
+        tree.heading("name", text="บัญชี MuMuPow")
+        tree.heading("web", text="→ เว็บ (title | id)")
+        tree.heading("by", text="จับด้วย")
+        tree.column("use", width=50, anchor="center")
+        tree.column("name", width=300)
+        tree.column("web", width=330)
+        tree.column("by", width=80, anchor="center")
+        tree.pack(fill="both", expand=True, padx=15, pady=5)
+
+        accepted = {}
+        for i, p in enumerate(proposals):
+            iid = str(i)
+            accepted[iid] = True
+            tree.insert("", "end", iid=iid,
+                        values=("☑", p["mumupow_name"], f"{p['web_title']} | {p['web_id']}", p["by"]))
+
+        def toggle(event):
+            iid = tree.identify_row(event.y)
+            if not iid:
+                return
+            accepted[iid] = not accepted.get(iid, True)
+            vals = list(tree.item(iid, "values"))
+            vals[0] = "☑" if accepted[iid] else "☐"
+            tree.item(iid, values=vals)
+        tree.bind("<Button-1>", toggle)
+
+        def set_all(val):
+            for iid in accepted:
+                accepted[iid] = val
+                vals = list(tree.item(iid, "values"))
+                vals[0] = "☑" if val else "☐"
+                tree.item(iid, values=vals)
+
+        def confirm():
+            by_email = {(a.get("email") or "").strip().lower(): a for a in self.accounts}
+            n = 0
+            for i, p in enumerate(proposals):
+                if not accepted.get(str(i)):
+                    continue
+                acc = by_email.get((p["email"] or "").strip().lower())
+                if acc is not None:
+                    acc["save_web_game_id"] = p["web_id"]
+                    n += 1
+            if n:
+                self.save_accounts()
+                try:
+                    self.refresh_accounts_ui()
+                except Exception:
+                    pass
+            self.write_log(f"🔗 เติม id เว็บให้ {n} บัญชีแล้ว", "success")
+            messagebox.showinfo("สำเร็จ", f"เติม save_web_game_id ให้ {n} บัญชีเรียบร้อย", parent=win)
+            win.destroy()
+
+        btn = tk.Frame(win, bg=BG_DARK)
+        btn.pack(fill="x", padx=15, pady=12)
+        ModernButton(btn, text="เลือกทั้งหมด", variant="subtle", command=lambda: set_all(True)).pack(side="left")
+        ModernButton(btn, text="ไม่เลือกเลย", variant="subtle", command=lambda: set_all(False)).pack(side="left", padx=8)
+        ModernButton(btn, text="✅ ยืนยันเติม id", variant="primary", command=confirm).pack(side="right")
+        ModernButton(btn, text="ปิด", variant="subtle", command=win.destroy).pack(side="right", padx=8)
+
+    def _show_diamond_summary(self, rows, export_path, push_results=None):
+        """หน้าต่างสรุปผลการอ่านเพชร (บัญชี/จำนวนเพชร/เครื่อง/สถานะส่งเข้าเว็บ) + ปุ่มเปิดโฟลเดอร์/บันทึกเป็น"""
+        push_results = push_results or {}
+        win = tk.Toplevel(self)
+        win.title("💎 สรุปผลการอ่านเพชร")
+        win.configure(bg=BG_DARK)
+        win.transient(self)
+        win.geometry("700x440")
+
+        ok_count = sum(1 for r in rows if r.get("diamonds") is not None)
+        sent_count = sum(1 for v in push_results.values() if v[0])
+        head = f"อ่านสำเร็จ {ok_count}/{len(rows)} รายการ"
+        if push_results:
+            head += f"  •  ส่งเข้าเว็บ {sent_count}/{len(push_results)}"
+        tk.Label(win, text=head, bg=BG_DARK, fg=FG_WHITE,
+                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=15, pady=(15, 5))
+
+        cols = ("name", "diamonds", "device", "web")
+        tree = ttk.Treeview(win, columns=cols, show="headings", height=12)
+        tree.heading("name", text="บัญชี / ชื่อในเกม")
+        tree.heading("diamonds", text="เพชร")
+        tree.heading("device", text="เครื่อง")
+        tree.heading("web", text="เว็บ")
+        tree.column("name", width=230)
+        tree.column("diamonds", width=80, anchor="center")
+        tree.column("device", width=150)
+        tree.column("web", width=180)
+        tree.pack(fill="both", expand=True, padx=15, pady=5)
+
+        def web_status(r):
+            wid = (r.get("save_web_game_id") or "").strip()
+            if not wid:
+                return "⏭️ ข้าม (ไม่มี id)"
+            if r.get("diamonds") is None:
+                return "—"
+            if wid in push_results:
+                ok, msg = push_results[wid]
+                return "✅ ส่งแล้ว" if ok else f"❌ {msg[:24]}"
+            return "ไม่ได้ส่ง"
+
+        for r in rows:
+            label = r.get("name") or r.get("email") or "ไม่ทราบบัญชี"
+            diamonds = r.get("diamonds")
+            dia_text = "อ่านไม่ได้" if diamonds is None else f"{diamonds:,}"
+            tree.insert("", "end", values=(label, dia_text, r.get("device", ""), web_status(r)))
+
+        tk.Label(win, text=f"ไฟล์: {os.path.abspath(export_path)}", bg=BG_DARK, fg=FG_MUTED,
+                 font=("Segoe UI", 9), wraplength=660, justify="left").pack(anchor="w", padx=15, pady=(5, 0))
+
+        btn_row = tk.Frame(win, bg=BG_DARK)
+        btn_row.pack(fill="x", padx=15, pady=12)
+        ModernButton(btn_row, text="เปิดโฟลเดอร์ไฟล์", variant="subtle",
+                     command=lambda: self._open_in_explorer(export_path)).pack(side="left")
+        ModernButton(btn_row, text="บันทึกเป็น...", variant="accent",
+                     command=lambda: self._save_diamond_export_as(rows)).pack(side="left", padx=8)
+        ModernButton(btn_row, text="ปิด", variant="subtle", command=win.destroy).pack(side="right")
+
+    def _open_in_explorer(self, path):
+        """เปิดโฟลเดอร์ที่เก็บไฟล์ใน File Explorer (Windows)"""
+        try:
+            os.startfile(os.path.dirname(os.path.abspath(path)))
+        except Exception as e:
+            self.write_log(f"เปิดโฟลเดอร์ไม่สำเร็จ: {e}", "warning")
+
+    def _save_diamond_export_as(self, rows):
+        """บันทึกผลการอ่านเพชรเป็นไฟล์ JSON ไปยังตำแหน่งที่ผู้ใช้เลือก"""
+        from datetime import datetime
+        default_name = f"diamond_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        path = filedialog.asksaveasfilename(parent=self, defaultextension=".json",
+            initialfile=default_name, filetypes=[("JSON", "*.json"), ("ทั้งหมด", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False, indent=2)
+            self.write_log(f"📤 บันทึกไฟล์ Export: {path}", "success")
+        except Exception as e:
+            self.write_log(f"❌ บันทึกไฟล์ล้มเหลว: {e}", "error")
+
+    def open_diamond_setup(self):
+        """หน้าต่างตั้งค่าระบบอ่านเพชร: จับภาพหน้าจอ -> ลากเลือกพื้นที่ตัวเลข -> สอนเลข 0-9 -> ทดสอบอ่าน
+        ทำงานคล้าย Visual Recorder (จับภาพ -> แสดงบน canvas -> map พิกัดลากกลับเป็นพิกัดจริงด้วย scale)"""
+        if self.macro_running:
+            messagebox.showwarning("คำเตือน", "กรุณาปิดบอทมาโครก่อนตั้งค่าระบบอ่านเพชร", parent=self)
+            return
+        selected_devices = self.get_selected_devices() or self.controller.get_connected_devices()
+        if not selected_devices:
+            messagebox.showerror("ไม่พบอุปกรณ์", "ไม่พบ Emulator ที่เชื่อมต่ออยู่! กรุณาเปิดและเชื่อมต่อ Emulator ก่อน", parent=self)
+            return
+
+        import cv2
+        import numpy as np
+
+        if not find_tesseract():
+            messagebox.showwarning("ไม่พบ Tesseract OCR",
+                "ระบบอ่านเพชรต้องใช้ Tesseract OCR (ตัวอ่านตัวอักษร) ซึ่งยังไม่ได้ติดตั้ง\n\n"
+                "ติดตั้งโดยเปิด PowerShell แล้วรัน:\n    winget install UB-Mannheim.TesseractOCR\n\n"
+                "หรือดาวน์โหลดจาก https://github.com/UB-Mannheim/tesseract/wiki\n"
+                "ติดตั้งเสร็จแล้วเปิดโปรแกรมนี้ใหม่", parent=self)
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("💎 ตั้งค่าระบบอ่านเพชร — กำหนดพื้นที่ตัวเลข")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # sx = สเกลแสดงผล (native = display / sx)
+        state = {"orig": None, "bytes": None, "sx": 1.0, "rect_id": None}
+        temp_disp = os.path.join(self.templates_dir, "diamond_setup_disp.png")
+
+        def on_close():
+            try:
+                if os.path.exists(temp_disp):
+                    os.remove(temp_disp)
+            except Exception:
+                pass
+            dialog.grab_release()
+            dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+
+        # ซ้าย: canvas แสดงภาพหน้าจอ
+        left = tk.Frame(dialog, bg=BG_DARK)
+        left.pack(side="left", padx=15, pady=15)
+        canvas = tk.Canvas(left, width=800, height=450, bg="#000000", highlightthickness=1, highlightbackground=BG_PANEL)
+        canvas.pack()
+        tk.Label(left, text="ลากเมาส์ครอบ 'เฉพาะตัวเลขเพชร' (อย่าเอาไอคอนเพชรเข้ามา) แล้วกด 'ทดสอบอ่านเลข' — Tesseract จะอ่านตัวเลขให้เอง ไม่ต้องสอนเลข",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), wraplength=780, justify="left").pack(anchor="w", pady=(6, 0))
+
+        # ขวา: แผงควบคุม
+        right = tk.Frame(dialog, bg=BG_DARK, padx=15, pady=15)
+        right.pack(side="right", fill="both", expand=True)
+
+        tk.Label(right, text="📱 เลือก Emulator:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        dev_var = tk.StringVar(value=selected_devices[0])
+        ttk.Combobox(right, textvariable=dev_var, values=selected_devices, state="readonly").pack(fill="x", pady=(2, 12))
+
+        tk.Label(right, text="วิธีใช้:\n1) กดจับภาพหน้าจอ\n2) ลากครอบเฉพาะตัวเลขเพชร\n3) กดทดสอบอ่านเลข\n4) กดบันทึก",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 8))
+
+        # URL เว็บ Save_Web_Game — สำหรับส่งจำนวนเพชรเข้าเว็บอัตโนมัติ (จับคู่ด้วย id)
+        tk.Label(right, text="🌐 URL เว็บ Save_Web_Game (ใส่ครั้งเดียว):", bg=BG_DARK, fg=FG_WHITE,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        web_url_entry = ModernEntry(right)
+        web_url_entry.pack(fill="x", pady=(2, 2))
+        web_url_entry.insert(0, (self.diamond_config or {}).get("web_base_url", ""))
+        tk.Label(right, text="เช่น https://your-app.vercel.app — เว้นว่าง = ไม่ส่งเข้าเว็บ",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 8), justify="left").pack(anchor="w", pady=(0, 8))
+
+        status = tk.Label(right, text="กด '📸 จับภาพหน้าจอ' เพื่อเริ่ม", bg=BG_DARK, fg=ACCENT_ORANGE,
+                          font=("Segoe UI", 9), wraplength=240, justify="left")
+        status.pack(fill="x", pady=10)
+
+        def render():
+            """แสดงภาพหน้าจอเต็มบน canvas พร้อมกรอบพื้นที่ที่ตั้งไว้ (sx = สเกล: native = display/sx)"""
+            img = state["orig"]
+            if img is None:
+                return
+            oh, ow = img.shape[:2]
+            sc = min(800.0 / ow, 450.0 / oh)
+            state["sx"] = sc
+            disp = cv2.resize(img, (int(ow * sc), int(oh * sc)))
+            dh, dw = disp.shape[:2]
+            cv2.imwrite(temp_disp, disp)
+            canvas.configure(width=dw, height=dh)
+            photo = tk.PhotoImage(file=temp_disp)
+            canvas.delete("all")
+            canvas.create_image(0, 0, image=photo, anchor="nw")
+            canvas.image = photo
+            state["rect_id"] = None
+            reg = (self.diamond_config or {}).get("region") or {}
+            if reg.get("w") and reg.get("h"):
+                canvas.create_rectangle(reg["x"] * sc, reg["y"] * sc,
+                                        (reg["x"] + reg["w"]) * sc, (reg["y"] + reg["h"]) * sc,
+                                        outline=ACCENT_GREEN, width=2)
+
+        def capture():
+            dev = dev_var.get()
+            status.configure(text="⏳ กำลังจับภาพ...", fg=ACCENT_ORANGE)
+            dialog.update()
+            ok, data = self.controller.capture_screenshot_bytes(dev)
+            if not ok:
+                status.configure(text=f"❌ จับภาพล้มเหลว: {data}", fg=ACCENT_RED)
+                return
+            state["bytes"] = data
+            state["orig"] = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if state["orig"] is None:
+                status.configure(text="❌ ถอดรหัสภาพไม่สำเร็จ", fg=ACCENT_RED)
+                return
+            render()
+            status.configure(text=f"📸 จับภาพสำเร็จ ({state['orig'].shape[1]}x{state['orig'].shape[0]}) — ลากครอบเฉพาะตัวเลข", fg=ACCENT_GREEN)
+
+        press = {"x": 0, "y": 0}
+
+        def on_press(e):
+            press["x"], press["y"] = e.x, e.y
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+                state["rect_id"] = None
+
+        def on_motion(e):
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+            state["rect_id"] = canvas.create_rectangle(press["x"], press["y"], e.x, e.y, outline=ACCENT_ORANGE, width=2)
+
+        def on_release(e):
+            if state["orig"] is None:
+                status.configure(text="กรุณาจับภาพก่อน", fg=ACCENT_RED)
+                return
+            sx = state["sx"] or 1.0
+            x1, y1 = min(press["x"], e.x), min(press["y"], e.y)
+            x2, y2 = max(press["x"], e.x), max(press["y"], e.y)
+            rx, ry = int(x1 / sx), int(y1 / sx)
+            rw, rh = int((x2 - x1) / sx), int((y2 - y1) / sx)
+            if rw < 3 or rh < 3:
+                status.configure(text="กรอบเล็กเกินไป ลองลากใหม่", fg=ACCENT_RED)
+                return
+            self.diamond_config["region"] = {"x": rx, "y": ry, "w": rw, "h": rh}
+            status.configure(text=f"✅ ตั้งพื้นที่: x={rx} y={ry} w={rw} h={rh}\nกด 'ทดสอบอ่านเลข' เพื่อตรวจ", fg=ACCENT_GREEN)
+            render()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_motion)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+        def test_read():
+            if state["bytes"] is None:
+                status.configure(text="กรุณาจับภาพก่อน", fg=ACCENT_RED)
+                return
+            reg = (self.diamond_config or {}).get("region") or {}
+            if int(reg.get("w", 0)) <= 0 or int(reg.get("h", 0)) <= 0:
+                status.configure(text="ยังไม่ได้ลากกรอบพื้นที่ตัวเลข", fg=ACCENT_RED)
+                return
+            # เซฟภาพพื้นที่ที่ครอปให้เปิดดูได้ว่าครอบโดนเฉพาะตัวเลขไหม
+            preview_msg = ""
+            try:
+                img = state["orig"]
+                sh, sw = img.shape[:2]
+                rx, ry = max(0, int(reg["x"])), max(0, int(reg["y"]))
+                rw, rh = int(reg["w"]), int(reg["h"])
+                crop = img[ry:min(sh, ry + rh), rx:min(sw, rx + rw)]
+                if crop.size:
+                    pp = os.path.join(self.templates_dir, "diamond_region_preview.png")
+                    cv2.imwrite(pp, crop)
+                    preview_msg = f"\n📂 ภาพพื้นที่: {pp}"
+            except Exception:
+                pass
+            ok, number, raw = self.controller.read_number_tesseract(state["bytes"], reg)
+            if ok:
+                status.configure(text=f"🔍 อ่านได้: {number}{preview_msg}", fg=ACCENT_GREEN)
+            elif raw in ("no_tesseract", "no_pytesseract"):
+                status.configure(text="❌ ไม่พบ Tesseract OCR — ต้องติดตั้งก่อน (winget install UB-Mannheim.TesseractOCR)", fg=ACCENT_RED)
+            else:
+                status.configure(text=f"🔍 อ่านไม่ได้ — ลองครอบให้เฉพาะตัวเลข ไม่เอาไอคอน/ขอบเข้ามา{preview_msg}", fg=ACCENT_RED)
+
+        def save_and_close():
+            self.diamond_config["web_base_url"] = web_url_entry.get().strip()
+            self.save_diamond_config()
+            self.write_log("💾 บันทึกการตั้งค่าระบบอ่านเพชรแล้ว", "success")
+            on_close()
+
+        btns = tk.Frame(right, bg=BG_DARK)
+        btns.pack(fill="x", pady=(14, 0))
+        ModernButton(btns, text="📸 จับภาพหน้าจอ", command=capture, variant="primary").pack(fill="x", pady=3)
+        ModernButton(btns, text="🔍 ทดสอบอ่านเลข", command=test_read, variant="accent").pack(fill="x", pady=3)
+        ModernButton(btns, text="💾 บันทึกการตั้งค่า", command=save_and_close, variant="primary").pack(fill="x", pady=3)
+
+        dialog.after(200, capture)  # จับภาพอัตโนมัติครั้งแรก
 
     def open_visual_recorder(self):
         if self.macro_running:
