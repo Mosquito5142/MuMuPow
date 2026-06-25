@@ -84,6 +84,7 @@ def build_macro_step_summary(idx, step):
         "run_set": "Run Set",
         "screenshot": "Screenshot",
         "keyboard": "Keyboard",
+        "read_diamond": "อ่านเพชร",
     }
     label = label_map.get(step_type, step_type.title() or "Step")
 
@@ -165,6 +166,8 @@ STEP_LABEL_MATCHERS = [
     ("Image Match", "detect_image"),
     ("Clear Ads Loop", "clear_ads_loop"),
     ("Auto Fill OTP", "fetch_otp"),
+    ("Read Diamond", "read_diamond"),
+    ("อ่านเพชร", "read_diamond"),
     ("Run Set", "run_set"),
     ("ใช้ชุดคำสั่ง", "run_set"),
 ]
@@ -193,6 +196,7 @@ DEFAULT_STEP_DELAYS = {
     "clear_ads_loop": 1.0,
     "fetch_otp": 1.0,
     "screenshot": 1.0,
+    "read_diamond": 1.0,
 }
 
 
@@ -810,8 +814,9 @@ class MuMuGUI(tk.Tk):
                 "กรอก OTP อัตโนมัติ (Auto Fill OTP)",
                 "ใช้ชุดคำสั่ง (Run Set)",
                 "แคปหน้าจอ (Screenshot)",
-                "คีย์บอร์ด (Keyboard)"
-            ], 
+                "คีย์บอร์ด (Keyboard)",
+                "อ่านเพชร (Read Diamond)"
+            ],
             state="readonly", 
             width=22
         )
@@ -2123,53 +2128,70 @@ class MuMuGUI(tk.Tk):
                 else:
                     self.write_log(f"   ❌ [{r['device']}] {who}: อ่านจำนวนเพชรไม่ได้ (ลองปรับพื้นที่ให้ครอบเฉพาะตัวเลข ไม่เอาไอคอน)", "error")
 
-            export_path = (self.diamond_config or {}).get("export_path") or "diamond_export.json"
-            try:
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(export_rows, f, ensure_ascii=False, indent=2)
-                self.write_log(f"📤 Export เพชรสำเร็จ: {os.path.abspath(export_path)} ({len(export_rows)} รายการ)", "success")
-            except Exception as e:
-                self.write_log(f"❌ เขียนไฟล์ Export ล้มเหลว: {e}", "error")
-
-            # ส่งเพชรเข้าเว็บ Save_Web_Game อัตโนมัติ (จับคู่ด้วย save_web_game_id = id ของเว็บ)
-            push_results = {}
-            cfg = self.diamond_config or {}
-            web_base_url = (cfg.get("web_base_url") or "").strip()
-            if cfg.get("auto_push", True) and web_base_url:
-                _MAX_DIAMONDS = 999_999
-                updates = []
-                for row in export_rows:
-                    if not row.get("save_web_game_id"):
-                        continue
-                    d = row.get("diamonds")
-                    name = row.get("name") or row.get("email") or row.get("device") or "?"
-                    if d is None:
-                        self.write_log(f"   ⚠️ ข้ามการส่งเพชร [{name}]: OCR อ่านไม่ได้", "warning")
-                        continue
-                    if not isinstance(d, int) or d < 0 or d > _MAX_DIAMONDS:
-                        self.write_log(f"   ⚠️ ข้ามการส่งเพชร [{name}]: ค่า '{d}' ผิดปกติ (ต้องอยู่ในช่วง 0–{_MAX_DIAMONDS:,})", "warning")
-                        continue
-                    updates.append({"id": row["save_web_game_id"], "diamonds": d, "lastFarmDate": today})
-                if updates:
-                    self.write_log(f"🌐 กำลังส่งเพชรเข้าเว็บ {len(updates)} บัญชี -> {web_base_url}", "info")
-                    try:
-                        push_results, push_stats = push_diamonds_to_web(web_base_url, updates)
-                        self.write_log(
-                            f"🌐 ส่งเข้าเว็บ: สำเร็จ {push_stats['sent']} / ล้มเหลว {push_stats['failed']}",
-                            "success" if push_stats["failed"] == 0 else "warning")
-                        for acc_id, (ok, msg) in push_results.items():
-                            if not ok:
-                                self.write_log(f"   ❌ [web {acc_id}] {msg}", "error")
-                    except Exception as e:
-                        self.write_log(f"❌ ส่งเข้าเว็บล้มเหลว: {e}", "error")
-                else:
-                    self.write_log("🌐 ไม่มีบัญชีที่มี id เว็บ (save_web_game_id) ให้ส่ง — ข้ามการส่งเข้าเว็บ", "warning")
-            elif not web_base_url:
-                self.write_log("🌐 ยังไม่ได้ตั้ง URL เว็บ — ข้ามการส่งเข้าเว็บ (ตั้งได้ที่ปุ่ม ⚙️ ตั้งค่าพื้นที่เพชร)", "info")
-
-            self.after(0, lambda: self._show_diamond_summary(export_rows, export_path, push_results))
+            self._write_and_push_diamonds(export_rows, show_summary=True)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _write_and_push_diamonds(self, export_rows, show_summary=True):
+        """เขียนผลเพชรลง diamond_export.json แล้วส่งเข้าเว็บ Save_Web_Game อัตโนมัติ
+        (ใช้ร่วมกันระหว่างปุ่ม '💎 แคปจอ + อ่านเพชร' กับ step 'อ่านเพชร' ตอนจบรันมาโคร)
+
+        export_rows: list ของ dict {email, name, save_web_game_id, diamonds, device, time}
+        คืน push_results (dict id -> (ok, msg))
+        """
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        export_path = (self.diamond_config or {}).get("export_path") or "diamond_export.json"
+        try:
+            with open(export_path, "w", encoding="utf-8") as f:
+                json.dump(export_rows, f, ensure_ascii=False, indent=2)
+            self.write_log(f"📤 Export เพชรสำเร็จ: {os.path.abspath(export_path)} ({len(export_rows)} รายการ)", "success")
+        except Exception as e:
+            self.write_log(f"❌ เขียนไฟล์ Export ล้มเหลว: {e}", "error")
+
+        # ส่งเพชรเข้าเว็บ Save_Web_Game อัตโนมัติ (จับคู่ด้วย save_web_game_id = id ของเว็บ)
+        push_results = {}
+        cfg = self.diamond_config or {}
+        web_base_url = (cfg.get("web_base_url") or "").strip()
+        if cfg.get("auto_push", True) and web_base_url:
+            updates = [
+                {"id": row["save_web_game_id"], "diamonds": row["diamonds"], "lastFarmDate": today}
+                for row in export_rows
+                if row.get("save_web_game_id") and row.get("diamonds") is not None
+            ]
+            if updates:
+                self.write_log(f"🌐 กำลังส่งเพชรเข้าเว็บ {len(updates)} บัญชี -> {web_base_url}", "info")
+                try:
+                    push_results, push_stats = push_diamonds_to_web(web_base_url, updates)
+                    self.write_log(
+                        f"🌐 ส่งเข้าเว็บ: สำเร็จ {push_stats['sent']} / ล้มเหลว {push_stats['failed']}",
+                        "success" if push_stats["failed"] == 0 else "warning")
+                    for acc_id, (ok, msg) in push_results.items():
+                        if not ok:
+                            self.write_log(f"   ❌ [web {acc_id}] {msg}", "error")
+                except Exception as e:
+                    self.write_log(f"❌ ส่งเข้าเว็บล้มเหลว: {e}", "error")
+            else:
+                self.write_log("🌐 ไม่มีบัญชีที่มี id เว็บ (save_web_game_id) ให้ส่ง — ข้ามการส่งเข้าเว็บ", "warning")
+        elif not web_base_url:
+            self.write_log("🌐 ยังไม่ได้ตั้ง URL เว็บ — ข้ามการส่งเข้าเว็บ (ตั้งได้ที่ปุ่ม ⚙️ ตั้งค่าพื้นที่เพชร)", "info")
+
+        if show_summary:
+            self.after(0, lambda: self._show_diamond_summary(export_rows, export_path, push_results))
+        return push_results
+
+    def _flush_run_diamonds(self):
+        """ตอนจบรันมาโคร: เอาเพชรที่ step 'อ่านเพชร' เก็บไว้ระหว่างรัน ไป export + push เข้าเว็บ
+        ทำในเธรดเบื้องหลัง (เขียนไฟล์ + ยิงเน็ตเวิร์ก) เพื่อไม่ให้ค้าง GUI"""
+        rows = list(getattr(self, "run_diamond_rows", []))
+        if not rows:
+            return
+        self.write_log(f"💎 จบรัน: กำลังอัพเดทเพชร {len(rows)} บัญชีที่อ่านได้ระหว่างรัน...", "info")
+        threading.Thread(
+            target=lambda: self._write_and_push_diamonds(rows, show_summary=True),
+            daemon=True,
+        ).start()
 
     def backfill_web_ids(self):
         """ดึงบัญชีจากเว็บ แล้วจับคู่กับบัญชีใน MuMuPow ด้วยชื่อ เพื่อเติม save_web_game_id (id เว็บ)"""
@@ -3979,7 +4001,9 @@ class MuMuGUI(tk.Tk):
             self.form_type.set("แคปหน้าจอ (Screenshot)")
         elif t == "keyboard":
             self.form_type.set("คีย์บอร์ด (Keyboard)")
-            
+        elif t == "read_diamond":
+            self.form_type.set("อ่านเพชร (Read Diamond)")
+
         self.on_step_type_change()
         
         self.form_desc.delete(0, tk.END)
@@ -4013,7 +4037,7 @@ class MuMuGUI(tk.Tk):
         elif t == "wait_for_text":
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("timeout", "30"))
-        elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
+        elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot", "read_diamond"]:
             self.form_text.insert(0, step.get("text", ""))
             self.form_sleep.insert(0, step.get("delay", "5.0" if t == "text" else "1.0"))
         elif t == "run_set":
@@ -4134,6 +4158,17 @@ class MuMuGUI(tk.Tk):
             self.form_x2.configure(state="disabled")
             self.form_y2.configure(state="disabled")
             self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_code.configure(state="disabled")
+        elif "Read Diamond" in t or "อ่านเพชร" in t:
+            # อ่านเพชรไม่ใช้พิกัด/ข้อความ — ใช้พื้นที่ตัวเลขเพชรที่ตั้งไว้แล้ว (ปุ่ม ⚙️ ตั้งค่าพื้นที่เพชร)
+            self.form_sleep_label.configure(text="หน่วงหลังอ่าน (วินาที):")
+            self.form_x_label.configure(fg=FG_MUTED)
+            self.form_x.configure(state="disabled")
+            self.form_y.configure(state="disabled")
+            self.form_x2.configure(state="disabled")
+            self.form_y2.configure(state="disabled")
+            self.form_x2_label.configure(fg=FG_MUTED)
+            self.form_text.configure(state="disabled")
             self.form_code.configure(state="disabled")
         elif "Keyboard" in t or "คีย์บอร์ด" in t:
             self.form_x_label.configure(fg=FG_MUTED)
@@ -4382,6 +4417,9 @@ class MuMuGUI(tk.Tk):
                 if not step["text"]:
                     raise ValueError("ข้อความ/id ที่จะค้นหาห้ามว่างเปล่า (ขึ้นต้น id: เพื่อค้นจาก resource-id)")
                 step["timeout"] = float(self.form_sleep.get().strip() or "30")
+            elif t == "read_diamond":
+                # อ่านเพชร: ไม่ต้องใส่พิกัด/ข้อความ มีแค่ค่าหน่วงหลังอ่าน
+                step["delay"] = float(self.form_sleep.get().strip() or "1.0")
             elif t in ["text", "start_app", "stop_app", "detect_image", "clear_ads_loop", "fetch_otp", "screenshot"]:
                 step["text"] = self.form_text.get()
                 if t in ["start_app", "stop_app", "detect_image"] and not step["text"]:
@@ -4515,6 +4553,9 @@ class MuMuGUI(tk.Tk):
         # เริ่มเก็บผลลัพธ์การรันรอบใหม่ (สำหรับสรุปผล + export + รันซ้ำที่พลาด)
         self.run_results = []
         self.run_results_lock = threading.Lock()
+        # เก็บผลอ่านเพชรระหว่างรัน (จาก step 'อ่านเพชร') เพื่อ export/push เข้าเว็บตอนจบรัน
+        self.run_diamond_rows = []
+        self.run_diamond_lock = threading.Lock()
 
         # ล็อคปุ่มสับเปลี่ยนสถานะ
         self.macro_running = True
@@ -4811,6 +4852,9 @@ class MuMuGUI(tk.Tk):
 
     def finalize_run_results(self):
         """บันทึกสถานะล่าสุดลงบัญชี + เปิดหน้าต่างสรุปผลหลังรันจบ"""
+        # อัพเดทเพชรที่ step 'อ่านเพชร' เก็บไว้ระหว่างรัน -> export + push เข้าเว็บ
+        self._flush_run_diamonds()
+
         results = list(getattr(self, "run_results", []))
         if not results:
             return
@@ -5215,6 +5259,7 @@ class MuMuGUI(tk.Tk):
                 "fetch_otp": self._step_fetch_otp,
                 "sleep": self._step_sleep,
                 "keyboard": self._step_keyboard,
+                "read_diamond": self._step_read_diamond,
             }
         return self._step_handlers
 
@@ -5606,6 +5651,56 @@ class MuMuGUI(tk.Tk):
         action = step.get("action", "").strip().lower()
         self.write_log(f"   ⌨️ [{ctx.device}] ส่งปุ่มคีย์บอร์ด: '{key_name}' ({action})", "info")
         self.execute_keyboard_input(ctx.device, key_name, action)
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
+
+    def _step_read_diamond(self, ctx, step):
+        """อ่านจำนวนเพชรของแอคเคานต์รอบนี้ แล้วเก็บไว้ (จะ export/push เข้าเว็บตอนจบรัน)
+
+        ถ้าอ่านไม่ได้ (ยังไม่ตั้งพื้นที่ / ไม่มี Tesseract / แคปจอพลาด / OCR พลาด)
+        จะ log แล้ว 'ข้าม' ไปทำ step ต่อไป — ไม่นับเป็น error ของบัญชีและไม่หยุดลูป
+        """
+        from datetime import datetime
+        device = ctx.device
+        account = ctx.account or {}
+        region = (self.diamond_config or {}).get("region") or {}
+        who = account.get("name") or account.get("ingamename") or account.get("email") or "no_account"
+
+        # เงื่อนไขที่อ่านไม่ได้ -> ข้าม (ไม่ใช้ ctx.record เพื่อไม่ให้บัญชีถูกตีว่า error)
+        if int(region.get("w", 0)) <= 0 or int(region.get("h", 0)) <= 0:
+            self.write_log(f"   ⏭️ [{device}] อ่านเพชร: ยังไม่ได้ตั้งพื้นที่ตัวเลขเพชร (ปุ่ม ⚙️ ตั้งค่าพื้นที่เพชร) -> ข้าม", "warning")
+            return
+        if not find_tesseract():
+            self.write_log(f"   ⏭️ [{device}] อ่านเพชร: ไม่พบ Tesseract OCR -> ข้าม", "warning")
+            return
+
+        ok, data = self.controller.capture_screenshot_bytes(device)
+        if not ok:
+            self.write_log(f"   ⏭️ [{device}] {who}: อ่านเพชรไม่ได้ (แคปจอไม่สำเร็จ) -> ข้าม", "warning")
+            return
+
+        rok, number, _raw = self.controller.read_number_tesseract(data, region)
+        if not rok or number is None:
+            self.write_log(f"   ⏭️ [{device}] {who}: OCR อ่านจำนวนเพชรไม่ได้ -> ข้าม", "warning")
+            return
+
+        row = {
+            "email": account.get("email", ""),
+            "name": account.get("name", "") or account.get("ingamename", ""),
+            "save_web_game_id": (account.get("save_web_game_id") or "").strip(),
+            "diamonds": number,
+            "device": device,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        lock = getattr(self, "run_diamond_lock", None)
+        if not hasattr(self, "run_diamond_rows"):
+            self.run_diamond_rows = []
+        if lock is not None:
+            with lock:
+                self.run_diamond_rows.append(row)
+        else:
+            self.run_diamond_rows.append(row)
+        self.write_log(f"   💎 [{device}] {who}: {number} เพชร (จะอัพเดทเข้าเว็บตอนจบรัน)", "success")
         if ctx.step_delay > 0:
             time.sleep(ctx.step_delay)
 
