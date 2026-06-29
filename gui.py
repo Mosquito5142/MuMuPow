@@ -7,6 +7,7 @@ import json
 import os
 import glob
 import sys
+import hashlib
 from mumu_controller import MuMuController, find_element_center, list_ui_elements, find_tesseract
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
@@ -115,8 +116,25 @@ def build_macro_step_summary(idx, step):
     return f"{idx + 1:02d}  {label:<12}  {detail:<28}  {delay_text:<6}  {desc}"
 
 
+def account_display_name(account):
+    """ชื่อที่ใช้ 'แสดงผล' ในโปรแกรม/ล็อก/รายงาน — ใช้ title (จาก Save_Web_Game) ก่อน
+    แล้วค่อย ingamename / name / email ตามลำดับ
+
+    หมายเหตุ: นี่คือชื่อสำหรับ 'แสดงให้คนอ่าน' เท่านั้น ไม่ใช่ชื่อที่พิมพ์ลงเกม
+    (placeholder {NAME} ในสเต็ปยังใช้ name/ingamename เหมือนเดิม)
+    """
+    if not account:
+        return "-"
+    return (account.get("save_web_game_title")
+            or account.get("title")
+            or account.get("ingamename")
+            or account.get("name")
+            or account.get("email")
+            or "-")
+
+
 def build_account_summary(account):
-    name = account.get("ingamename") or account.get("name") or account.get("save_web_game_title") or "-"
+    name = account_display_name(account)
     email = account.get("email") or "-"
     group = account.get("group") or "ทั่วไป"
     otp = "OTP" if account.get("refresh_token") else ""
@@ -297,6 +315,11 @@ class MuMuGUI(tk.Tk):
         self.active_devices_for_run = []
         self.device_active_accounts = {}
 
+        # ระบบ Checkpoint รันต่อจากที่ค้าง (resume) — เก็บความคืบหน้าระดับบัญชีลงไฟล์
+        self.run_checkpoint_file = os.path.join(base_dir, "run_checkpoint.json")
+        self.run_checkpoint = None
+        self.run_checkpoint_lock = None
+
         # ตัวแปรสำหรับการจัดการบัญชีผู้ใช้
         self.accounts = []
         self.accounts_file = os.path.join(base_dir, "accounts.json")
@@ -328,6 +351,9 @@ class MuMuGUI(tk.Tk):
         # ตรวจสอบ ADB และสแกนอุปกรณ์เริ่มต้น
         self.write_log(f"⚡ เริ่มต้นระบบควบคุม MuMupow แล้ว เส้นทาง ADB: {self.controller.adb_path}", "success")
         self.scan_devices()
+
+        # แจ้งเตือนถ้ามีการรันค้างจากครั้งก่อน (resume)
+        self._check_startup_checkpoint()
 
     def make_panel(self, parent, title=None, fill="both", expand=False, padx=0, pady=0, manager="pack"):
         """Create a styled panel; use manager=None when the caller will grid/place/pack it."""
@@ -2115,7 +2141,7 @@ class MuMuGUI(tk.Tk):
             for r in results:
                 acc = r.get("account") or {}
                 email = acc.get("email", "")
-                name = acc.get("name", "") or acc.get("ingamename", "")
+                name = account_display_name(acc) if acc else ""
                 web_id = (acc.get("save_web_game_id") or "").strip()
                 diamonds = r.get("diamonds")
                 export_rows.append({
@@ -2855,10 +2881,10 @@ class MuMuGUI(tk.Tk):
         grouped_accounts = {}
         for acc in self.accounts:
             email_lower = acc.get("email", "").lower()
-            name_lower = acc.get("name", "").lower()
+            name_lower = account_display_name(acc).lower()
             group_lower = acc.get("group", "").lower()
-            
-            # ถ้ามีคำค้นหา ให้เช็คว่าคำค้นหาตรงกับ email, name หรือ group หรือไม่
+
+            # ถ้ามีคำค้นหา ให้เช็คว่าคำค้นหาตรงกับ email, name(=ชื่อที่แสดง) หรือ group หรือไม่
             if search_query and (search_query not in email_lower and search_query not in name_lower and search_query not in group_lower):
                 continue
                 
@@ -4529,20 +4555,51 @@ class MuMuGUI(tk.Tk):
         # ดึงบัญชีที่เลือก
         checked_accounts = [acc for acc in self.accounts if acc.get("checked", True)]
         profile_name = self.profile_cb.get() or "กำหนดเอง"
-        
+
+        # ===== ตรวจ checkpoint: เสนอ 'รันต่อจากที่ค้าง' =====
+        is_resume = False
         if checked_accounts:
+            cp = self._load_run_checkpoint()
+            if cp and cp.get("macro_signature") == self._macro_signature():
+                statuses = cp.get("status_by_email", {})
+                done = {em for em, st in statuses.items() if st == "completed"}
+                pending_accounts = [a for a in checked_accounts
+                                    if (a.get("email") or "").strip().lower() not in done]
+                if done and pending_accounts:
+                    total = len(statuses) or len(checked_accounts)
+                    ans = messagebox.askyesnocancel(
+                        "พบการรันค้าง",
+                        f"พบ checkpoint ของ '{cp.get('profile_name','')}'\n"
+                        f"เสร็จไปแล้ว {len(done)}/{total} ไอดี — เหลือ {len(pending_accounts)} ไอดี\n\n"
+                        f"• Yes = รันต่อจากที่ค้าง (เฉพาะ {len(pending_accounts)} ไอดีที่เหลือ)\n"
+                        f"• No = เริ่มใหม่ทั้งหมด\n"
+                        f"• Cancel = ยกเลิก",
+                    )
+                    if ans is None:
+                        return
+                    if ans:
+                        checked_accounts = pending_accounts
+                        self.run_checkpoint = cp
+                        self.run_checkpoint_lock = threading.Lock()
+                        is_resume = True
+                    else:
+                        self._clear_run_checkpoint()
+
+        if is_resume:
+            confirm = True
+        elif checked_accounts:
             confirm = messagebox.askyesno(
-                "ยืนยันเปิดบอท", 
+                "ยืนยันเปิดบอท",
                 f"ยืนยันรันบอทมาโครโปรไฟล์ '{profile_name}' โดยกระจายบัญชี {len(checked_accounts)} ไอดี\n"
                 f"ลงบน Emulator ทั้งหมด {len(devices)} จอ (ทำงานพร้อมกันแบบคู่ขนาน) ใช่หรือไม่?"
             )
         else:
             confirm = messagebox.askyesno(
-                "ยืนยันเปิดบอท", 
+                "ยืนยันเปิดบอท",
                 f"คำเตือน: คุณยังไม่ได้ระบุหรือเลือกบัญชีในแท็บจัดการบัญชี ระบบจะรันสคริปต์ 1 รอบแบบไม่มีตัวแปรแทนที่\n"
                 f"ยืนยันต้องการรันมาโครรอบเดียวต่อหรือไม่?"
             )
-            
+
         if not confirm:
             return
 
@@ -4556,6 +4613,28 @@ class MuMuGUI(tk.Tk):
         # เก็บผลอ่านเพชรระหว่างรัน (จาก step 'อ่านเพชร') เพื่อ export/push เข้าเว็บตอนจบรัน
         self.run_diamond_rows = []
         self.run_diamond_lock = threading.Lock()
+
+        # สร้าง checkpoint ใหม่ (เฉพาะรันสด ไม่ใช่รันต่อ และต้องมีบัญชี)
+        if not is_resume and checked_accounts:
+            from datetime import datetime
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.run_checkpoint_lock = threading.Lock()
+            self.run_checkpoint = {
+                "macro_signature": self._macro_signature(),
+                "profile_name": profile_name,
+                "mode": ("sequential" if self.run_sequentially.get()
+                         else "sets" if self.pause_between_sets.get() else "parallel"),
+                "devices": devices.copy(),
+                "started_at": now,
+                "updated_at": now,
+                "order": [a.get("email") for a in checked_accounts if a.get("email")],
+                "status_by_email": {(a.get("email") or "").strip().lower(): "pending"
+                                    for a in checked_accounts if a.get("email")},
+                "last_device_by_email": {},
+            }
+            self._write_checkpoint_file()
+        elif not checked_accounts:
+            self.run_checkpoint = None
 
         # ล็อคปุ่มสับเปลี่ยนสถานะ
         self.macro_running = True
@@ -4583,6 +4662,91 @@ class MuMuGUI(tk.Tk):
                 self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร")
                 self.stop_macro_btn.configure(state="disabled")
                 self.write_log("⏹️ หยุดการทำงานของบอทและเคลียร์คิวเรียบร้อยแล้ว", "success")
+            # ถ้ายังมี checkpoint ค้าง โชว์ป้าย 'รันต่อได้' ไว้บนปุ่ม
+            cp = getattr(self, "run_checkpoint", None) or self._load_run_checkpoint()
+            if cp:
+                statuses = cp.get("status_by_email", {})
+                remaining = [em for em, st in statuses.items() if st != "completed"]
+                if remaining:
+                    self.run_macro_btn.configure(text=f"▶️ รันต่อได้ (เหลือ {len(remaining)})")
+
+    # ===== ระบบ Checkpoint รันต่อจากที่ค้าง (resume) =====
+    def _macro_signature(self):
+        """ลายเซ็นของสคริปต์มาโครปัจจุบัน ใช้เช็คว่า checkpoint มาจากสคริปต์เดียวกันไหม"""
+        try:
+            raw = json.dumps(self.macro_steps, sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(raw.encode("utf-8")).hexdigest()
+        except Exception:
+            return ""
+
+    def _load_run_checkpoint(self):
+        """อ่าน checkpoint จากไฟล์ (คืน dict หรือ None)"""
+        try:
+            if os.path.exists(self.run_checkpoint_file):
+                with open(self.run_checkpoint_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return None
+
+    def _write_checkpoint_file(self):
+        """เขียน self.run_checkpoint ลงไฟล์ (ผู้เรียกต้องถือ lock เองถ้าจำเป็น)"""
+        cp = getattr(self, "run_checkpoint", None)
+        if not cp:
+            return
+        from datetime import datetime
+        try:
+            cp["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(self.run_checkpoint_file, "w", encoding="utf-8") as f:
+                json.dump(cp, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.write_log(f"⚠️ เขียน checkpoint ไม่สำเร็จ: {e}", "warning")
+
+    def _clear_run_checkpoint(self):
+        """ลบ checkpoint ทั้งในหน่วยความจำและไฟล์ (เรียกเมื่อรันครบทุกบัญชี)"""
+        self.run_checkpoint = None
+        try:
+            if os.path.exists(self.run_checkpoint_file):
+                os.remove(self.run_checkpoint_file)
+        except Exception:
+            pass
+
+    def _mark_checkpoint_account(self, email, status, device=""):
+        """อัปเดตสถานะบัญชีหนึ่งใน checkpoint แล้วเขียนไฟล์ทันที (thread-safe)
+        status: 'completed' = สำเร็จไม่ต้องรันซ้ำ, อย่างอื่น = ค้าง/พลาด จะถูกรันต่อรอบหน้า"""
+        cp = getattr(self, "run_checkpoint", None)
+        if not cp or not email:
+            return
+        em = str(email).strip().lower()
+        lock = getattr(self, "run_checkpoint_lock", None)
+        if lock is not None:
+            with lock:
+                cp.setdefault("status_by_email", {})[em] = status
+                if device:
+                    cp.setdefault("last_device_by_email", {})[em] = device
+                self._write_checkpoint_file()
+        else:
+            cp.setdefault("status_by_email", {})[em] = status
+            if device:
+                cp.setdefault("last_device_by_email", {})[em] = device
+            self._write_checkpoint_file()
+
+    def _check_startup_checkpoint(self):
+        """ตอนเปิดโปรแกรม ถ้าพบ checkpoint ค้าง ให้แจ้งเตือน + เปลี่ยนป้ายปุ่มรัน"""
+        cp = self._load_run_checkpoint()
+        if not cp:
+            return
+        statuses = cp.get("status_by_email", {})
+        remaining = [em for em, st in statuses.items() if st != "completed"]
+        if remaining and hasattr(self, "run_macro_btn"):
+            prof = cp.get("profile_name", "")
+            self.write_log(
+                f"💾 พบการรันค้างของ '{prof}' — เหลือ {len(remaining)} ไอดี "
+                f"กด 'รันมาโคร' เพื่อเลือกรันต่อหรือเริ่มใหม่", "warning")
+            try:
+                self.run_macro_btn.configure(text=f"▶️ รันต่อได้ (เหลือ {len(remaining)})")
+            except Exception:
+                pass
 
     def run_macro_task(self, devices, checked_accounts):
         import queue
@@ -4850,6 +5014,12 @@ class MuMuGUI(tk.Tk):
         else:
             self.run_results.append(res)
 
+        # อัปเดต checkpoint: บัญชีไหนเสร็จ/พลาด เพื่อให้รันต่อจากที่ค้างได้
+        email = res.get("email")
+        if email:
+            cp_status = "completed" if res.get("status") == "completed" else "failed"
+            self._mark_checkpoint_account(email, cp_status, res.get("device", ""))
+
     def finalize_run_results(self):
         """บันทึกสถานะล่าสุดลงบัญชี + เปิดหน้าต่างสรุปผลหลังรันจบ"""
         # อัพเดทเพชรที่ step 'อ่านเพชร' เก็บไว้ระหว่างรัน -> export + push เข้าเว็บ
@@ -4883,6 +5053,21 @@ class MuMuGUI(tk.Tk):
         if changed:
             self.save_accounts()
             self.refresh_accounts_ui()
+
+        # จัดการ checkpoint: ครบทุกบัญชี -> ล้างทิ้ง, ยังเหลือ/ถูกหยุด -> เก็บไว้ให้รันต่อ
+        cp = getattr(self, "run_checkpoint", None)
+        if cp:
+            statuses = cp.get("status_by_email", {})
+            remaining = [em for em, st in statuses.items() if st != "completed"]
+            if remaining:
+                self.write_log(
+                    f"💾 ยังเหลือ {len(remaining)} ไอดีที่ยังไม่สำเร็จ — เก็บ checkpoint ไว้ "
+                    f"กด 'รันมาโคร' เพื่อรันต่อได้", "warning")
+                self.after(0, lambda n=len(remaining): self.run_macro_btn.configure(
+                    text=f"▶️ รันต่อได้ (เหลือ {n})"))
+            else:
+                self._clear_run_checkpoint()
+                self.write_log("✅ รันครบทุกบัญชีแล้ว — ล้าง checkpoint", "success")
 
         self.show_run_summary(results)
 
@@ -5156,7 +5341,7 @@ class MuMuGUI(tk.Tk):
         run_start = time.time()
         result = {
             "email": (account.get("email") if account else "") or "",
-            "name": (account.get("name") if account else "") or "",
+            "name": account_display_name(account) if account else "",
             "device": device,
             "status": "completed",  # completed | device_error | stopped | macro_error
             "error": "",
@@ -5207,8 +5392,8 @@ class MuMuGUI(tk.Tk):
             desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
             email_log = ""
             if account:
-                acc_name = account.get("name", "")
-                email_log = f" ({acc_name if acc_name else account['email']})"
+                acc_name = account_display_name(account)
+                email_log = f" ({acc_name if acc_name and acc_name != '-' else account['email']})"
             self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {idx+1}/{len(steps_to_run)}: {desc}...", "info")
             
             # ไฮไลท์การทำงานบนลิสต์บ็อกซ์ GUI เฉพาะกรณีที่ระบุไฮไลท์
@@ -5664,7 +5849,7 @@ class MuMuGUI(tk.Tk):
         device = ctx.device
         account = ctx.account or {}
         region = (self.diamond_config or {}).get("region") or {}
-        who = account.get("name") or account.get("ingamename") or account.get("email") or "no_account"
+        who = account_display_name(account) if account else "no_account"
 
         # เงื่อนไขที่อ่านไม่ได้ -> ข้าม (ไม่ใช้ ctx.record เพื่อไม่ให้บัญชีถูกตีว่า error)
         if int(region.get("w", 0)) <= 0 or int(region.get("h", 0)) <= 0:
@@ -5686,7 +5871,7 @@ class MuMuGUI(tk.Tk):
 
         row = {
             "email": account.get("email", ""),
-            "name": account.get("name", "") or account.get("ingamename", ""),
+            "name": account_display_name(account),
             "save_web_game_id": (account.get("save_web_game_id") or "").strip(),
             "diamonds": number,
             "device": device,
