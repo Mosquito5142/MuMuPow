@@ -7,6 +7,7 @@ import re
 import time
 import json
 import base64
+import unicodedata
 import cv2
 import numpy as np
 import xml.etree.ElementTree as ET
@@ -41,6 +42,342 @@ def find_tesseract():
             return c
     _TESSERACT_CMD = ""
     return None
+
+
+# ===== ตัวประเมินขีดจำกัดการรัน MuMu บนเครื่องนี้ (Capacity Estimator) =====
+# โปรไฟล์มาตรฐาน 1 จอ (ตามที่ลูกค้าใช้): CPU 2 คอร์, RAM 3GB, 540x960 DPI160, FPS 15
+# 540x960 + FPS 15 = โหลดต่อจอเบามาก -> คอขวดจริงมักเป็น RAM ไม่ใช่ CPU
+DEFAULT_MUMU_PROFILE = {
+    "ram_per_instance_gb": 3.0,   # RAM ที่ตั้งให้ MuMu 1 จอ
+    "cores_per_instance": 2,      # คอร์ที่ตั้งให้ MuMu 1 จอ
+    "host_reserve_ram_gb": 2.5,   # กัน RAM ไว้ให้ Windows + MuMupow + ตัวจัดการ MuMu
+    "host_reserve_cores": 2,      # กัน logical core ไว้ให้ระบบ
+    "cpu_oversubscribe": 1.5,     # จอ FPS-cap เบา แชร์คอร์ได้ (1.0 = ไม่ oversubscribe)
+}
+
+
+def get_host_specs():
+    """อ่านสเปกเครื่องจริงด้วย psutil. คืน dict (มี available_ok=False ถ้า psutil ใช้ไม่ได้)"""
+    try:
+        import psutil
+    except Exception as e:
+        return {"available_ok": False, "error": str(e)}
+    try:
+        vm = psutil.virtual_memory()
+        return {
+            "available_ok": True,
+            "logical_cores": psutil.cpu_count(logical=True) or 0,
+            "physical_cores": psutil.cpu_count(logical=False) or 0,
+            "total_ram_gb": round(vm.total / (1024 ** 3), 2),
+            "available_ram_gb": round(vm.available / (1024 ** 3), 2),
+        }
+    except Exception as e:
+        return {"available_ok": False, "error": str(e)}
+
+
+def estimate_mumu_capacity(specs, profile=None):
+    """คำนวณว่ารัน MuMu ได้กี่จอจากสเปกเครื่อง (pure math — เทสได้)
+
+    specs: dict จาก get_host_specs() (ต้องมี logical_cores, total_ram_gb, available_ram_gb)
+    profile: dict override DEFAULT_MUMU_PROFILE (เช่น ram_per_instance_gb)
+
+    คืน dict: recommended (เต็มประสิทธิภาพ), ram_limit, cpu_limit, bottleneck,
+    open_now (เปิดเพิ่มได้อีกกี่จอ ณ RAM ว่างตอนนี้), และค่ากลางที่ใช้คำนวณ
+    """
+    p = dict(DEFAULT_MUMU_PROFILE)
+    if profile:
+        p.update({k: v for k, v in profile.items() if v is not None})
+
+    ram_each = float(p["ram_per_instance_gb"]) or 3.0
+    cores_each = max(1, int(p["cores_per_instance"]))
+    reserve_ram = float(p["host_reserve_ram_gb"])
+    reserve_cores = int(p["host_reserve_cores"])
+    oversub = float(p["cpu_oversubscribe"]) or 1.0
+
+    logical = int(specs.get("logical_cores", 0) or 0)
+    total_ram = float(specs.get("total_ram_gb", 0) or 0)
+    avail_ram = float(specs.get("available_ram_gb", 0) or 0)
+
+    # คอขวด RAM: RAM ที่ใช้ได้จริงหารต่อจอ
+    ram_limit = int(max(0, (total_ram - reserve_ram) // ram_each))
+    # คอขวด CPU: คอร์ที่เหลือ * ตัวคูณ oversubscribe หารต่อจอ
+    usable_cores = max(0, logical - reserve_cores)
+    cpu_limit = int(max(0, (usable_cores * oversub) // cores_each))
+
+    recommended = min(ram_limit, cpu_limit)
+    bottleneck = "RAM" if ram_limit <= cpu_limit else "CPU"
+
+    # เปิดเพิ่มได้อีกกี่จอจาก RAM ว่าง 'ตอนนี้' (กันเผื่อ 0.5GB) — ไม่เกินค่าแนะนำ
+    open_now = int(max(0, (avail_ram - 0.5) // ram_each))
+    open_now = min(open_now, recommended)
+
+    return {
+        "recommended": recommended,
+        "ram_limit": ram_limit,
+        "cpu_limit": cpu_limit,
+        "bottleneck": bottleneck,
+        "open_now": open_now,
+        "ram_each": ram_each,
+        "cores_each": cores_each,
+        "reserve_ram": reserve_ram,
+        "reserve_cores": reserve_cores,
+        "oversub": oversub,
+        "logical_cores": logical,
+        "total_ram_gb": total_ram,
+        "available_ram_gb": avail_ram,
+    }
+
+
+# ===== ตัวช่วยดึงรายชื่อสมาชิกชมรม (Guild Member Grabber) =====
+def stitch_png_vertically(png_list, max_width=1080, gap=8):
+    """ต่อภาพ PNG หลายรูปเป็นรูปเดียวแนวตั้ง (เลียนแบบ stitch ฝั่งเว็บ guild-check)
+
+    png_list: list ของ bytes (PNG). คืน PNG bytes ของภาพรวม หรือ None ถ้าไม่มีรูปใช้ได้
+    ย่อรูปที่กว้างเกิน max_width ลง แล้ววางกึ่งกลางบนพื้นขาว เว้นช่อง gap ระหว่างรูป
+    """
+    imgs = []
+    for b in png_list:
+        if not b:
+            continue
+        im = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)
+        if im is None:
+            continue
+        h, w = im.shape[:2]
+        if w > max_width:
+            ratio = max_width / float(w)
+            im = cv2.resize(im, (max_width, max(1, int(h * ratio))), interpolation=cv2.INTER_AREA)
+        imgs.append(im)
+    if not imgs:
+        return None
+
+    width = max(im.shape[1] for im in imgs)
+    total_h = sum(im.shape[0] for im in imgs) + gap * (len(imgs) - 1)
+    canvas = np.full((total_h, width, 3), 255, dtype=np.uint8)  # พื้นขาว
+    y = 0
+    for im in imgs:
+        h, w = im.shape[:2]
+        x = (width - w) // 2
+        canvas[y:y + h, x:x + w] = im
+        y += h + gap
+
+    ok, buf = cv2.imencode(".png", canvas)
+    return buf.tobytes() if ok else None
+
+
+def png_similarity(a, b, tol=12):
+    """คืนค่าความเหมือนของสอง PNG เป็นสัดส่วน 0..1 (พิกเซลเทาที่ต่างกันน้อยกว่า tol)
+
+    ใช้เช็คว่าเลื่อนจอแล้วภาพเปลี่ยนไหม — ถ้าเหมือนเกือบ 1.0 แปลว่าเลื่อนไม่ไปแล้ว (สุดล่าง)
+    """
+    ia = cv2.imdecode(np.frombuffer(a, np.uint8), cv2.IMREAD_GRAYSCALE) if a else None
+    ib = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_GRAYSCALE) if b else None
+    if ia is None or ib is None:
+        return 0.0
+    if ia.shape != ib.shape:
+        ib = cv2.resize(ib, (ia.shape[1], ia.shape[0]))
+    diff = cv2.absdiff(ia, ib)
+    same = int(np.count_nonzero(diff < tol))
+    return same / float(diff.size)
+
+
+def find_yellow_frame(screen_bytes, min_area_frac=0.008, h_lo=18, h_hi=34,
+                      s_min=110, v_min=120):
+    """หา 'กรอบสีเหลือง' ของด่านถัดไปบนหน้าเลือกด่าน (Story map)
+
+    คืน (found, cx, cy, (x, y, w, h)). ตรวจด้วย HSV mask สีเหลือง-ส้ม แล้วหากล่องครอบที่
+    ใหญ่พอ (กันสับสนกับ ⭐ ดาวเหลืองดวงเล็ก ด้วย min_area_frac) — เลือกกล่องที่ใหญ่สุด
+    คืนจุดกึ่งกลางไว้แตะ
+
+    รับเป็น PNG bytes (จาก capture_screenshot_bytes). ปรับช่วงสีได้ผ่านพารามิเตอร์
+    """
+    if not screen_bytes:
+        return False, 0, 0, None
+    img = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False, 0, 0, None
+    sh, sw = img.shape[:2]
+    screen_area = float(sh * sw)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (h_lo, s_min, v_min), (h_hi, 255, 255))
+    # ปิดช่องว่างของกรอบ (กรอบเป็นเส้นขอบ ไม่ตัน) ให้กลายเป็นบล็อกเดียว
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_area = 0
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        area = w * h
+        if area < min_area_frac * screen_area:
+            continue  # เล็กเกินไป (น่าจะเป็นดาว/ไอคอน ไม่ใช่กรอบด่าน)
+        if w < 50 or h < 50:
+            continue  # บาง/เล็กเกินไป (แถบ UI สีเหลือง ไม่ใช่กรอบด่าน)
+        if area > best_area:
+            best_area = area
+            best = (x, y, w, h)
+
+    if best is None:
+        return False, 0, 0, None
+    x, y, w, h = best
+    return True, x + w // 2, y + h // 2, best
+
+
+_TESS_LANGS = None
+
+
+def available_tesseract_langs():
+    """คืน set ของภาษาที่ Tesseract มี (แคชไว้). ใช้เลือกว่าจะ OCR ด้วย eng หรือ tha+eng"""
+    global _TESS_LANGS
+    if _TESS_LANGS is not None:
+        return _TESS_LANGS
+    cmd = find_tesseract()
+    langs = set()
+    if cmd:
+        try:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            r = subprocess.run([cmd, "--list-langs"], capture_output=True, text=True,
+                               startupinfo=si, timeout=10)
+            for line in (r.stdout or "").splitlines():
+                line = line.strip()
+                if line and " " not in line and ":" not in line:
+                    langs.add(line)
+        except Exception:
+            pass
+    _TESS_LANGS = langs
+    return langs
+
+
+def ocr_text_tesseract(screen_bytes, region=None, lang="eng", psm=6, scale=2):
+    """OCR ข้อความทั่วไป (ไม่จำกัดเฉพาะตัวเลข) จากภาพ PNG หรือเฉพาะ region
+
+    คืน (ok, text, raw). raw='no_tesseract' ถ้าไม่พบ tesseract.exe
+    ใช้สำหรับอ่านรายชื่อสมาชิกชมรม — เทาภาพ + ขยาย แล้วส่งให้ tesseract อ่านทั้งบล็อก (psm 6)
+    """
+    cmd = find_tesseract()
+    if not cmd:
+        return False, "", "no_tesseract"
+    tmp = None
+    try:
+        if not screen_bytes:
+            return False, "", ""
+        img = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return False, "", ""
+        if region:
+            sh, sw = img.shape[:2]
+            x = max(0, int(region.get("x", 0)))
+            y = max(0, int(region.get("y", 0)))
+            w = int(region.get("w", 0))
+            h = int(region.get("h", 0))
+            if w > 0 and h > 0:
+                img = img[y:min(sh, y + h), x:min(sw, x + w)]
+                if img.size == 0:
+                    return False, "", ""
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if scale and scale != 1:
+            g = cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+        fd, tmp = tempfile.mkstemp(suffix=".png", prefix="guild_ocr_")
+        os.close(fd)
+        cv2.imwrite(tmp, g)
+
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        res = subprocess.run(
+            [cmd, tmp, "stdout", "-l", lang, "--psm", str(psm)],
+            capture_output=True, startupinfo=si, timeout=30,
+        )
+        txt = res.stdout.decode("utf-8", errors="ignore")
+        return True, txt, txt
+    except Exception as e:
+        return False, "", str(e)
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+
+# ===== แยก/กรองชื่อสมาชิกชมรมจากข้อความ OCR (พอร์ตจาก lib/guild-ocr.ts ฝั่งเว็บ) =====
+_GUILD_EXACT_LABELS = {
+    "guild", "member", "members", "level", "status", "rank", "search",
+    "weekly", "activity", "online", "offline",
+    "สมาชิก", "เลเวล", "สถานะ", "แรงค์", "ค้นหา", "ชมรม",
+}
+_GUILD_THAI_STATUS = [
+    "นาที", "ชั่วโมง", "ก่อน", "ออกจากชมรม", "กัปตัน", "ดาวรุ่ง", "แอคทีฟ",
+    "โปรดใส่", "หน้าแรก", "เกมเพลย์", "บันทึกประจำวัน", "ข้ามเซิร์ฟ",
+]
+_GUILD_EN_TIME = re.compile(r"\b(?:minutes?|hours?|ago)\b", re.I)
+
+
+def normalize_guild_name(value):
+    """ทำให้ชื่อเป็นรูปมาตรฐานเพื่อตัดซ้ำ (NFKC, ตัด zero-width, รวมช่องว่าง, ตัวพิมพ์เล็ก)"""
+    v = unicodedata.normalize("NFKC", value or "")
+    v = re.sub('[​-‍⁠﻿]', '', v)
+    v = re.sub(r"\s+", " ", v.strip())
+    return v.lower()
+
+
+def _clean_ocr_line(line):
+    s = unicodedata.normalize("NFKC", line)
+    s = re.sub(r"^[|()\[\]{}\s]+|[|()\[\]{}\s]+$", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _extract_name_candidate(line):
+    s = re.sub(r"\s+\d{1,2}\s+\d{1,2}\s+(?:online|offline)$", "", line, flags=re.I)
+    s = re.sub(r"\s+\d{1,2}\s+\d{1,2}\s+\d+\s+(?:minutes?|hours?)\s+ago$", "", s, flags=re.I)
+    s = re.sub(r"\s+\d{1,2}\s+\d{1,2}$", "", s)
+    return s.strip()
+
+
+def _is_likely_member_name(line):
+    if not line:
+        return False
+    if len(line) < 3 or len(line) > 32:
+        return False
+    low = line.lower()
+    if low in _GUILD_EXACT_LABELS:
+        return False
+    words = low.split()
+    if words and all(w in _GUILD_EXACT_LABELS for w in words):
+        return False
+    if _GUILD_EN_TIME.search(line):
+        return False
+    if any(frag in line for frag in _GUILD_THAI_STATUS):
+        return False
+    if re.fullmatch(r"\d{1,2}", line):
+        return False
+    if re.fullmatch(r"[ivxlcdm]+", line, re.I):
+        return False
+    # ต้องมีตัวอักษรหรือตัวเลขอย่างน้อย 1 ตัว (ละติน/ไทย/เลข)
+    if not re.search(r"[A-Za-z0-9฀-๿]", line):
+        return False
+    return True
+
+
+def extract_guild_member_names(text):
+    """แยกรายชื่อสมาชิกชมรมจากข้อความ OCR + ตัดบรรทัดขยะ/ป้ายกำกับ/เวลา + ตัดชื่อซ้ำ
+    คืน list ของชื่อ (คงลำดับที่เจอครั้งแรก)"""
+    seen = set()
+    names = []
+    for raw in re.split(r"\r?\n", text or ""):
+        line = _extract_name_candidate(_clean_ocr_line(raw))
+        if not _is_likely_member_name(line):
+            continue
+        norm = normalize_guild_name(line)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        names.append(line)
+    return names
 
 
 # Characters that the on-device shell (/system/bin/sh) interprets when running
@@ -689,3 +1026,134 @@ class MuMuController:
                     os.remove(tmp)
                 except Exception:
                     pass
+
+
+# ===== Story Auto: OCR fallback (หาปุ่มจากข้อความ) =====
+STORY_BUTTON_KEYWORDS = {
+    # ไทย
+    "ข้าม", "ตกลง", "ปิด", "รับ", "ไปต่อ", "ดำเนินการต่อ", "เริ่ม", "ถัดไป",
+    "รับรางวัล", "รับของรางวัล", "ยืนยัน", "เล่นอีกครั้ง", "กลับ", "ลงทะเบียน",
+    "เล่น", "เข้าสู่ระบบ", "เสร็จสิ้น", "สำเร็จ",
+    # English
+    "skip", "ok", "next", "close", "claim", "continue", "accept",
+    "confirm", "start", "back", "done", "retry", "tap", "play",
+    "finish", "complete", "proceed", "advance",
+}
+
+
+def ocr_find_button(screen_bytes, keywords=None, lang=None, scale=2):
+    """OCR ทั้งจอ -> หาตำแหน่ง (cx,cy) ของคำที่น่าจะเป็นปุ่ม
+    คืน (found, cx, cy, matched_word) โดยใช้ tesseract TSV output เพื่อได้ bounding box"""
+    if keywords is None:
+        keywords = STORY_BUTTON_KEYWORDS
+    cmd = find_tesseract()
+    if not cmd:
+        return False, 0, 0, ""
+    tmp = None
+    try:
+        if not screen_bytes:
+            return False, 0, 0, ""
+        img = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return False, 0, 0, ""
+        orig_h, orig_w = img.shape[:2]
+
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        actual_scale = scale if scale and scale != 1 else 1
+        if actual_scale != 1:
+            g = cv2.resize(g, None, fx=actual_scale, fy=actual_scale, interpolation=cv2.INTER_CUBIC)
+
+        fd, tmp = tempfile.mkstemp(suffix=".png", prefix="story_ocr_")
+        os.close(fd)
+        cv2.imwrite(tmp, g)
+
+        if lang is None:
+            langs = available_tesseract_langs()
+            lang = "tha+eng" if "tha" in langs else "eng"
+
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        res = subprocess.run(
+            [cmd, tmp, "stdout", "-l", lang, "--psm", "11", "tsv"],
+            capture_output=True, startupinfo=si, timeout=30,
+        )
+        tsv = res.stdout.decode("utf-8", errors="ignore")
+
+        # parse TSV: level page_num block_num par_num line_num word_num left top width height conf text
+        for line in tsv.splitlines()[1:]:
+            parts = line.split("\t")
+            if len(parts) < 12:
+                continue
+            try:
+                conf = float(parts[10])
+                word = parts[11].strip()
+            except (ValueError, IndexError):
+                continue
+            if conf < 30 or not word:
+                continue
+            if word.lower() in keywords or word in keywords:
+                left = int(parts[6])
+                top = int(parts[7])
+                w = int(parts[8])
+                h = int(parts[9])
+                # แปลงกลับเป็นพิกัดต้นฉบับ
+                cx = int((left + w / 2) / actual_scale)
+                cy = int((top + h / 2) / actual_scale)
+                # clamp ให้อยู่ในจอ
+                cx = max(0, min(orig_w - 1, cx))
+                cy = max(0, min(orig_h - 1, cy))
+                return True, cx, cy, word
+        return False, 0, 0, ""
+    except Exception:
+        return False, 0, 0, ""
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+
+# ===== Story Auto: Gemini Vision fallback =====
+def gemini_tap_suggestion(screen_bytes, api_key, screen_w=960, screen_h=540):
+    """ถาม Gemini Vision ว่าควร tap พิกัดไหนเพื่อเดินเรื่อง story ต่อ
+    คืน (found, cx, cy, reason)  — ใช้ REST API โดยตรง (ไม่ต้อง install package)"""
+    import urllib.request
+    try:
+        if not api_key or not screen_bytes:
+            return False, 0, 0, "no_key"
+        b64 = base64.b64encode(screen_bytes).decode()
+        prompt = (
+            f"This is a screenshot ({screen_w}x{screen_h}px) from a mobile RPG game story mode. "
+            "Identify the UI element I should tap to advance the story/cutscene. "
+            "Look for: Skip button, Next button, OK/Close button, Claim reward button, "
+            "or any interactive button/icon that progresses the narrative. "
+            "If the match/battle is auto-playing (no button visible), reply with x=null. "
+            'Reply ONLY with valid JSON, no markdown: {"x": <int|null>, "y": <int>, "reason": "<short English description>"}'
+        )
+        payload = json.dumps({
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/png", "data": b64}},
+                ]
+            }],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 128},
+        }).encode()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # strip markdown fences if any
+        text = re.sub(r"^```[a-z]*\n?|\n?```$", "", text.strip())
+        obj = json.loads(text)
+        x = obj.get("x")
+        y = obj.get("y")
+        reason = obj.get("reason", "")
+        if x is None:
+            return False, 0, 0, reason
+        return True, int(x), int(y), reason
+    except Exception as e:
+        return False, 0, 0, str(e)
