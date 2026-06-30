@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 import threading
 import time
 import random
@@ -8,7 +8,14 @@ import os
 import glob
 import sys
 import hashlib
-from mumu_controller import MuMuController, find_element_center, list_ui_elements, find_tesseract
+import re
+from mumu_controller import (
+    MuMuController, find_element_center, list_ui_elements, find_tesseract,
+    get_host_specs, estimate_mumu_capacity, DEFAULT_MUMU_PROFILE,
+    stitch_png_vertically, png_similarity,
+    ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs,
+    find_yellow_frame, ocr_find_button, gemini_tap_suggestion,
+)
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
     DEFAULT_ACTION_DELAY,
@@ -188,6 +195,10 @@ STEP_LABEL_MATCHERS = [
     ("อ่านเพชร", "read_diamond"),
     ("Run Set", "run_set"),
     ("ใช้ชุดคำสั่ง", "run_set"),
+    ("Story Auto", "story_auto"),
+    ("เล่นเนื้อเรื่อง", "story_auto"),
+    ("Yellow Stage", "find_yellow_stage"),
+    ("ด่านเหลือง", "find_yellow_stage"),
 ]
 
 
@@ -215,6 +226,8 @@ DEFAULT_STEP_DELAYS = {
     "fetch_otp": 1.0,
     "screenshot": 1.0,
     "read_diamond": 1.0,
+    "story_auto": 1.0,
+    "find_yellow_stage": 1.0,
 }
 
 
@@ -330,6 +343,11 @@ class MuMuGUI(tk.Tk):
         self.diamond_config_file = os.path.join(base_dir, "diamond_ocr.json")
         self.diamond_digits_dir = os.path.join(self.templates_dir, "diamond_digits")
         self.diamond_config = self.load_diamond_config()
+        # ระบบดึงรายชื่อสมาชิกชมรม — พื้นที่คอลัมน์ชื่อสำหรับครอปก่อน OCR
+        self.guild_config_file = os.path.join(base_dir, "guild_ocr.json")
+        self.guild_config = self.load_guild_config()
+        # Gemini API key สำหรับ Story Auto fallback (อ่านจาก env ก่อน, override ได้ใน Settings)
+        self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "")
         self.account_checkboxes = {} # email -> BooleanVar
         self.group_checkboxes = {}   # group_name -> BooleanVar
         self.load_accounts()
@@ -354,6 +372,40 @@ class MuMuGUI(tk.Tk):
 
         # แจ้งเตือนถ้ามีการรันค้างจากครั้งก่อน (resume)
         self._check_startup_checkpoint()
+
+        # จัดการตอนกดปิดหน้าต่าง (X) ให้ process จบจริง ไม่ค้างใน Task Manager
+        self.protocol("WM_DELETE_WINDOW", self.on_app_close)
+
+    def on_app_close(self):
+        """ปิดโปรแกรมให้สะอาด: หยุด thread + เซฟ + บังคับจบ process
+
+        จำเป็นต้องบังคับจบเพราะโปรแกรมใช้ ThreadPoolExecutor หลายจุด ซึ่ง Python จะ
+        join worker รอจนเสร็จตอนปิด ถ้ามี thread ค้าง (เช่น แคปจอ/adb/มาโครยังรัน)
+        การ join จะบล็อกค้าง ทำให้หน้าต่างหายแต่ process ยังอยู่
+        """
+        try:
+            if self.macro_running:
+                if not messagebox.askyesno(
+                    "ปิดโปรแกรม",
+                    "บอทกำลังทำงานอยู่ ต้องการปิดโปรแกรมเลยหรือไม่?\n"
+                    "(ความคืบหน้าถูกบันทึกไว้แล้ว เปิดใหม่กดรันต่อได้)",
+                ):
+                    return
+        except Exception:
+            pass
+
+        # ส่งสัญญาณให้ thread งานหยุด แล้วเซฟสถานะล่าสุด
+        self.macro_running = False
+        try:
+            self.save_accounts()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        # บังคับจบทันที ข้ามการ join ของ ThreadPoolExecutor ที่อาจค้าง
+        os._exit(0)
 
     def make_panel(self, parent, title=None, fill="both", expand=False, padx=0, pady=0, manager="pack"):
         """Create a styled panel; use manager=None when the caller will grid/place/pack it."""
@@ -1182,6 +1234,394 @@ class MuMuGUI(tk.Tk):
         ).pack(anchor="w")
         ModernButton(ui_box, text="ดู Element บนจอ", command=self.inspect_ui, variant="accent").pack(anchor="w", pady=(8, 0))
 
+        # 7. ดึงรายชื่อสมาชิกชมรม (Guild Member Grabber) — เลื่อน+แคปจนสุด รวมเป็นรูปเดียวให้เว็บ
+        guild_outer, guild_box = self.make_panel(sync_frame, "ดึงรายชื่อสมาชิกชมรม (ส่งเข้าเว็บ guild-check)", fill="x", pady=10)
+        tk.Label(
+            guild_box,
+            text=("เปิดหน้า 'สมาชิกชมรม' ในเกม เลื่อนขึ้นบนสุด แล้วกดปุ่ม — ระบบจะเลื่อนลง+แคปทีละหน้าจนสุดล่าง "
+                  "OCR เป็นรายชื่อ ตัดชื่อซ้ำให้ แล้วแสดงเป็นตัวอักษร (ก๊อปไปวางในเว็บ guild-check ช่อง 'วางรายชื่อเอง' ได้เลย)\n"
+                  "แนะนำกด '⚙️ ตั้งพื้นที่ชื่อ' ลากครอบเฉพาะคอลัมน์ชื่อก่อนสักครั้ง จะอ่านแม่นและไม่ปนเลขอันดับ/เลเวล"),
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
+        ).pack(anchor="w")
+        guild_btn_row = tk.Frame(guild_box, bg=BG_CARD)
+        guild_btn_row.pack(anchor="w", pady=(8, 0))
+        ModernButton(guild_btn_row, text="⚙️ ตั้งพื้นที่ชื่อ", command=self.open_guild_region_setup, variant="accent").pack(side="left", padx=(0, 10))
+        ModernButton(guild_btn_row, text="📋 ดึงรายชื่อ (เป็นตัวอักษร)", command=self.grab_guild_members, variant="primary").pack(side="left")
+
+        # 8. Story Auto — เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ)
+        story_outer, story_box = self.make_panel(sync_frame, "เล่นเนื้อเรื่องอัตโนมัติ (Story Auto)", fill="x", pady=10)
+        tk.Label(
+            story_box,
+            text=("เปิดเกมค้างไว้ที่ 'หน้าเลือกด่าน' (ให้เห็นกรอบเหลืองของด่านถัดไป) แล้วกดเริ่ม — ระบบจะแตะด่านเหลือง "
+                  "→ กวาดกดปุ่ม ข้าม/ไปต่อ/รับ → รอแมตช์เล่นเอง → กลับมาเลือกด่านถัดไป วนจนไม่มีด่านเหลือง (สุด story)\n"
+                  "ปุ่มที่กวาด = ไฟล์ templates/story_*.png (แถมมาให้ story_skip.png แล้ว — เพิ่ม story_next/story_claim/story_close ได้)\n"
+                  "แนะนำใส่ story_map.png (ครอปหัวข้อ 'บทที่..' หรือมุมจอหน้าเลือกด่าน) เพื่อยืนยัน 'กลับถึง map' ให้แม่นกว่ากรอบเหลือง · หยุดด้วยปุ่ม 'หยุดทันที'"),
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
+        ).pack(anchor="w")
+        ModernButton(story_box, text="🎮 เริ่ม Story Auto", command=self.start_story_auto, variant="primary").pack(anchor="w", pady=(8, 0))
+
+    def start_story_auto(self):
+        """เริ่มเล่นเนื้อเรื่องอัตโนมัติบนเครื่องที่เลือก (เครื่องแรก) แบบ background thread"""
+        if self.macro_running:
+            messagebox.showwarning("กำลังทำงานอยู่", "มีงานกำลังรันอยู่ กรุณาหยุดก่อน")
+            return
+        devices = self.get_selected_devices()
+        if not devices:
+            messagebox.showwarning("ยังไม่ได้เลือกเครื่อง", "กรุณาติ๊กเลือก Emulator อย่างน้อย 1 เครื่องก่อน")
+            return
+        device = devices[0]
+
+        btns = self._story_button_templates("")
+        if not btns:
+            if not messagebox.askyesno(
+                "ยังไม่มี template ปุ่ม",
+                "ยังไม่พบไฟล์ปุ่ม story_*.png ในโฟลเดอร์ templates/\n"
+                "ถ้าไม่มีปุ่มให้กวาด ระบบจะแตะด่านเหลืองแล้วได้แค่ 'รอ' (ข้ามคัตซีน/กดไปต่อไม่ได้)\n\n"
+                "ต้องการเริ่มเลยไหม?"):
+                return
+
+        max_stages = simpledialog.askinteger(
+            "Story Auto", "จะเล่นต่อเนื่องสูงสุดกี่ด่าน?", parent=self,
+            initialvalue=20, minvalue=1, maxvalue=200)
+        if not max_stages:
+            return
+
+        if not messagebox.askyesno(
+            "เริ่ม Story Auto",
+            f"จะเริ่มเล่นเนื้อเรื่องอัตโนมัติบน [{device}] สูงสุด {max_stages} ด่าน\n\n"
+            "ตรวจว่าเกมอยู่ที่ 'หน้าเลือกด่าน' เห็นกรอบเหลืองของด่านถัดไปแล้ว\n"
+            "หยุดได้ตลอดด้วยปุ่ม 'หยุดทันที' ที่แท็บมาโคร"):
+            return
+
+        self.macro_running = True
+        self.run_macro_btn.configure(state="disabled", bg=BG_INPUT)
+        self.stop_macro_btn.configure(state="normal")
+        self.update_status_summary()
+
+        def worker():
+            try:
+                self.run_story_auto(device, max_stages=max_stages)
+            except Exception as e:
+                self.write_log(f"❌ Story Auto ผิดพลาด: {e}", "error")
+            finally:
+                self.macro_running = False
+                self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร"))
+                self.after(0, lambda: self.stop_macro_btn.configure(state="disabled"))
+                self.after(0, self.update_status_summary)
+
+        self.macro_thread = threading.Thread(target=worker, daemon=True)
+        self.macro_thread.start()
+
+    def grab_guild_members(self):
+        """เลื่อนหน้า 'สมาชิกชมรม' แล้วแคปทีละหน้าจนสุด -> OCR เป็นรายชื่อ -> ตัดซ้ำ -> โชว์เป็นตัวอักษร
+        (ก๊อปไปวางในช่อง 'วางรายชื่อเอง' ของเว็บ guild-check ได้เลย)"""
+        devices = self.get_selected_devices()
+        if not devices:
+            messagebox.showwarning("ยังไม่ได้เลือกเครื่อง", "กรุณาติ๊กเลือก Emulator อย่างน้อย 1 เครื่องก่อน")
+            return
+        device = devices[0]
+        if not find_tesseract():
+            messagebox.showwarning(
+                "ไม่พบ Tesseract OCR",
+                "ระบบดึงรายชื่อต้องใช้ Tesseract OCR ซึ่งยังไม่ได้ติดตั้ง\n\n"
+                "ติดตั้งโดยเปิด PowerShell แล้วรัน:\n    winget install UB-Mannheim.TesseractOCR\n\n"
+                "ติดตั้งเสร็จแล้วเปิดโปรแกรมนี้ใหม่")
+            return
+
+        region = (self.guild_config or {}).get("region") or {}
+        has_region = int(region.get("w", 0)) > 0 and int(region.get("h", 0)) > 0
+        region_note = ("✅ ตั้งพื้นที่คอลัมน์ชื่อไว้แล้ว (จะอ่านเฉพาะชื่อ)\n" if has_region
+                       else "⚠️ ยังไม่ได้ตั้งพื้นที่ชื่อ จะ OCR ทั้งจอ (ชื่ออาจปนเลขอันดับ/เลเวล)\n"
+                            "   แนะนำกด '⚙️ ตั้งพื้นที่ชื่อ' ก่อน จะแม่นกว่ามาก\n")
+        if not messagebox.askyesno(
+            "ดึงรายชื่อสมาชิกชมรม",
+            f"จะดึงจากเครื่อง [{device}]\n\n{region_note}\n"
+            "เตรียม: เปิดหน้า 'สมาชิกชมรม' ในเกม เลื่อนขึ้นบนสุด แล้วกดตกลง\n"
+            "ระบบจะเลื่อนลง+แคป+OCR จนสุดล่าง แล้วโชว์รายชื่อเป็นตัวอักษรให้แก้ไข/คัดลอก",
+        ):
+            return
+
+        def worker():
+            from datetime import datetime
+            base_dir = os.path.dirname(self.accounts_file)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir = os.path.join(base_dir, "guild_members", stamp)
+            os.makedirs(out_dir, exist_ok=True)
+
+            res = self.controller.get_resolution(device)
+            m = re.match(r"(\d+)x(\d+)", res or "")
+            w, h = (int(m.group(1)), int(m.group(2))) if m else (960, 540)
+            sx = int(w * 0.6)
+            y1, y2 = int(h * 0.82), int(h * 0.30)
+
+            self.write_log(f"📋 [{device}] เริ่มดึงรายชื่อสมาชิกชมรม (จอ {w}x{h})...", "warning")
+
+            max_pages = 40
+            shots, prev = [], None
+            for i in range(max_pages):
+                ok, data = self.controller.capture_screenshot_bytes(device)
+                if not ok:
+                    self.write_log(f"   ⏭️ [{device}] แคปจอหน้า {i+1} ไม่สำเร็จ -> ข้าม", "warning")
+                else:
+                    if prev is not None and png_similarity(prev, data) >= 0.992:
+                        self.write_log(f"   ✅ [{device}] ภาพไม่เลื่อนแล้ว (ถึงล่างสุด) หยุดที่ {len(shots)} หน้า", "success")
+                        break
+                    idx = len(shots) + 1
+                    try:
+                        with open(os.path.join(out_dir, f"page_{idx:02d}.png"), "wb") as f:
+                            f.write(data)
+                    except Exception:
+                        pass
+                    shots.append(data)
+                    prev = data
+                    self.write_log(f"   📸 [{device}] แคปหน้า {idx}", "info")
+                self.controller.swipe(device, sx, y1, sx, y2, duration=700)
+                time.sleep(0.9)
+
+            if not shots:
+                self.write_log(f"❌ [{device}] ไม่ได้รูปเลย", "error")
+                self.after(0, lambda: messagebox.showerror("ไม่สำเร็จ", "แคปรายชื่อไม่ได้ ลองเปิดหน้าสมาชิกชมรมแล้วลองใหม่"))
+                return
+
+            # OCR ทุกหน้า -> รวมข้อความ -> แยกชื่อ + ตัดซ้ำ
+            lang = "tha+eng" if "tha" in available_tesseract_langs() else "eng"
+            crop = region if has_region else None
+            scale = 3 if has_region else 2
+            texts = []
+            for i, data in enumerate(shots):
+                ok, txt, _ = ocr_text_tesseract(data, region=crop, lang=lang, psm=6, scale=scale)
+                if ok and txt:
+                    texts.append(txt)
+                self.write_log(f"   🔤 [{device}] OCR หน้า {i+1}/{len(shots)}", "info")
+
+            names = extract_guild_member_names("\n".join(texts))
+            members_path = os.path.join(out_dir, "members.txt")
+            try:
+                with open(members_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(names))
+            except Exception:
+                pass
+
+            self.write_log(f"✅ [{device}] OCR ได้ {len(names)} ชื่อ (ตัดซ้ำแล้ว) จาก {len(shots)} หน้า", "success")
+            self.after(0, lambda: self._show_guild_names_window(names, out_dir, device, has_region))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_guild_names_window(self, names, out_dir, device, has_region):
+        """หน้าต่างแสดงรายชื่อสมาชิกที่ OCR ได้ (แก้ไขได้) + ปุ่มคัดลอกทั้งหมด/บันทึก"""
+        win = tk.Toplevel(self)
+        win.title(f"รายชื่อสมาชิกชมรม — {device}")
+        win.configure(bg=BG_DARK)
+        win.geometry("460x600")
+        win.transient(self)
+
+        tk.Label(win, text=f"ได้ {len(names)} ชื่อ (ตัดซ้ำแล้ว)", bg=BG_DARK, fg=FG_WHITE,
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=18, pady=(16, 2))
+        tip = ("แก้ไขชื่อที่ OCR อ่านเพี้ยนได้ในช่องนี้ แล้วกด 'คัดลอกทั้งหมด' ไปวางในเว็บ guild-check "
+               "ช่อง 'วางรายชื่อเอง' (1 ชื่อ/บรรทัด)")
+        if not has_region:
+            tip += "\n💡 ถ้าชื่อปนเลขเยอะ ลองกด '⚙️ ตั้งพื้นที่ชื่อ' แล้วดึงใหม่จะแม่นขึ้น"
+        tk.Label(win, text=tip, bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"),
+                 justify="left", wraplength=420).pack(anchor="w", padx=18)
+
+        text_frame = tk.Frame(win, bg=BG_DARK)
+        text_frame.pack(fill="both", expand=True, padx=18, pady=10)
+        txt = tk.Text(text_frame, bg=BG_INPUT, fg=FG_WHITE, relief="flat", bd=0, wrap="none",
+                      font=("Consolas", 11), insertbackground=FG_WHITE)
+        scroll = ttk.Scrollbar(text_frame, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=scroll.set)
+        txt.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        txt.insert("1.0", "\n".join(names))
+
+        def copy_all():
+            data = txt.get("1.0", "end-1c")
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(data)
+                self.update()
+                self.write_log("📋 คัดลอกรายชื่อสมาชิกชมรมลง Clipboard แล้ว", "success")
+                messagebox.showinfo("คัดลอกแล้ว", "คัดลอกรายชื่อทั้งหมดแล้ว เอาไปวางในเว็บ guild-check ได้เลย", parent=win)
+            except Exception as e:
+                messagebox.showerror("ผิดพลาด", f"คัดลอกไม่สำเร็จ: {e}", parent=win)
+
+        def save_txt():
+            data = txt.get("1.0", "end-1c")
+            try:
+                with open(os.path.join(out_dir, "members.txt"), "w", encoding="utf-8") as f:
+                    f.write(data)
+                messagebox.showinfo("บันทึกแล้ว", f"บันทึก members.txt ใน:\n{out_dir}", parent=win)
+            except Exception as e:
+                messagebox.showerror("ผิดพลาด", f"บันทึกไม่สำเร็จ: {e}", parent=win)
+
+        btns = tk.Frame(win, bg=BG_DARK)
+        btns.pack(fill="x", padx=18, pady=(0, 16))
+        ModernButton(btns, text="📋 คัดลอกทั้งหมด", command=copy_all, variant="primary").pack(side="left", padx=(0, 8))
+        ModernButton(btns, text="💾 บันทึก .txt", command=save_txt, variant="accent").pack(side="left", padx=(0, 8))
+        ModernButton(btns, text="📂 เปิดโฟลเดอร์", command=lambda: os.startfile(out_dir), variant="subtle").pack(side="left")
+
+        # คัดลอกให้อัตโนมัติเลยตั้งแต่เปิด
+        copy_all()
+
+    def open_guild_region_setup(self):
+        """ตั้งพื้นที่คอลัมน์ชื่อสมาชิกชมรม: จับภาพหน้าสมาชิก -> ลากครอบเฉพาะคอลัมน์ชื่อ -> ทดสอบอ่าน -> บันทึก"""
+        if self.macro_running:
+            messagebox.showwarning("คำเตือน", "กรุณาปิดบอทมาโครก่อนตั้งค่า", parent=self)
+            return
+        if not find_tesseract():
+            messagebox.showwarning(
+                "ไม่พบ Tesseract OCR",
+                "ต้องติดตั้ง Tesseract OCR ก่อน:\n    winget install UB-Mannheim.TesseractOCR")
+            return
+        selected_devices = self.get_selected_devices() or self.controller.get_connected_devices()
+        if not selected_devices:
+            messagebox.showerror("ไม่พบอุปกรณ์", "ไม่พบ Emulator ที่เชื่อมต่ออยู่! กรุณาเปิดและเชื่อมต่อก่อน", parent=self)
+            return
+
+        import cv2
+        import numpy as np
+
+        dialog = tk.Toplevel(self)
+        dialog.title("⚙️ ตั้งพื้นที่คอลัมน์ชื่อสมาชิกชมรม")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        state = {"orig": None, "bytes": None, "sx": 1.0, "rect_id": None}
+        temp_disp = os.path.join(self.templates_dir, "guild_setup_disp.png")
+
+        def on_close():
+            try:
+                if os.path.exists(temp_disp):
+                    os.remove(temp_disp)
+            except Exception:
+                pass
+            dialog.grab_release()
+            dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+
+        left = tk.Frame(dialog, bg=BG_DARK)
+        left.pack(side="left", padx=15, pady=15)
+        canvas = tk.Canvas(left, width=800, height=450, bg="#000000", highlightthickness=1, highlightbackground=BG_PANEL)
+        canvas.pack()
+        tk.Label(left, text="ลากเมาส์ครอบ 'เฉพาะคอลัมน์ชื่อ' (ครอบสูงคลุมหลายแถว เอาเฉพาะชื่อ ไม่เอาเลเวล/เซิร์ฟ/อันดับ) แล้วกดทดสอบอ่าน",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), wraplength=780, justify="left").pack(anchor="w", pady=(6, 0))
+
+        right = tk.Frame(dialog, bg=BG_DARK, padx=15, pady=15)
+        right.pack(side="right", fill="both", expand=True)
+
+        tk.Label(right, text="📱 เลือก Emulator:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        dev_var = tk.StringVar(value=selected_devices[0])
+        ttk.Combobox(right, textvariable=dev_var, values=selected_devices, state="readonly").pack(fill="x", pady=(2, 12))
+
+        tk.Label(right, text="วิธีใช้:\n1) เปิดหน้าสมาชิกชมรมในเกม\n2) กดจับภาพ\n3) ลากครอบเฉพาะคอลัมน์ชื่อ\n4) กดทดสอบอ่าน\n5) กดบันทึก",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 8))
+
+        status = tk.Label(right, text="กด '📸 จับภาพหน้าจอ' เพื่อเริ่ม", bg=BG_DARK, fg=ACCENT_ORANGE,
+                          font=("Segoe UI", 9), wraplength=240, justify="left")
+        status.pack(fill="x", pady=10)
+
+        def render():
+            img = state["orig"]
+            if img is None:
+                return
+            oh, ow = img.shape[:2]
+            sc = min(800.0 / ow, 450.0 / oh)
+            state["sx"] = sc
+            disp = cv2.resize(img, (int(ow * sc), int(oh * sc)))
+            dh, dw = disp.shape[:2]
+            cv2.imwrite(temp_disp, disp)
+            canvas.configure(width=dw, height=dh)
+            photo = tk.PhotoImage(file=temp_disp)
+            canvas.delete("all")
+            canvas.create_image(0, 0, image=photo, anchor="nw")
+            canvas.image = photo
+            state["rect_id"] = None
+            reg = (self.guild_config or {}).get("region") or {}
+            if reg.get("w") and reg.get("h"):
+                canvas.create_rectangle(reg["x"] * sc, reg["y"] * sc,
+                                        (reg["x"] + reg["w"]) * sc, (reg["y"] + reg["h"]) * sc,
+                                        outline=ACCENT_GREEN, width=2)
+
+        def capture():
+            dev = dev_var.get()
+            status.configure(text="⏳ กำลังจับภาพ...", fg=ACCENT_ORANGE)
+            dialog.update()
+            ok, data = self.controller.capture_screenshot_bytes(dev)
+            if not ok:
+                status.configure(text=f"❌ จับภาพล้มเหลว: {data}", fg=ACCENT_RED)
+                return
+            state["bytes"] = data
+            state["orig"] = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if state["orig"] is None:
+                status.configure(text="❌ ถอดรหัสภาพไม่สำเร็จ", fg=ACCENT_RED)
+                return
+            render()
+            status.configure(text=f"📸 จับภาพสำเร็จ ({state['orig'].shape[1]}x{state['orig'].shape[0]}) — ลากครอบคอลัมน์ชื่อ", fg=ACCENT_GREEN)
+
+        press = {"x": 0, "y": 0}
+
+        def on_press(e):
+            press["x"], press["y"] = e.x, e.y
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+                state["rect_id"] = None
+
+        def on_motion(e):
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+            state["rect_id"] = canvas.create_rectangle(press["x"], press["y"], e.x, e.y, outline=ACCENT_ORANGE, width=2)
+
+        def on_release(e):
+            if state["orig"] is None:
+                status.configure(text="กรุณาจับภาพก่อน", fg=ACCENT_RED)
+                return
+            sx = state["sx"] or 1.0
+            x1, y1 = min(press["x"], e.x), min(press["y"], e.y)
+            x2, y2 = max(press["x"], e.x), max(press["y"], e.y)
+            rx, ry = int(x1 / sx), int(y1 / sx)
+            rw, rh = int((x2 - x1) / sx), int((y2 - y1) / sx)
+            if rw < 3 or rh < 3:
+                status.configure(text="กรอบเล็กเกินไป ลองลากใหม่", fg=ACCENT_RED)
+                return
+            self.guild_config["region"] = {"x": rx, "y": ry, "w": rw, "h": rh}
+            status.configure(text=f"✅ ตั้งพื้นที่: x={rx} y={ry} w={rw} h={rh}\nกด 'ทดสอบอ่านชื่อ'", fg=ACCENT_GREEN)
+            render()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_motion)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+        def test_read():
+            if state["bytes"] is None:
+                status.configure(text="กรุณาจับภาพก่อน", fg=ACCENT_RED)
+                return
+            reg = (self.guild_config or {}).get("region") or {}
+            if int(reg.get("w", 0)) <= 0 or int(reg.get("h", 0)) <= 0:
+                status.configure(text="ยังไม่ได้ลากกรอบคอลัมน์ชื่อ", fg=ACCENT_RED)
+                return
+            lang = "tha+eng" if "tha" in available_tesseract_langs() else "eng"
+            ok, txt, _ = ocr_text_tesseract(state["bytes"], region=reg, lang=lang, psm=6, scale=3)
+            names = extract_guild_member_names(txt) if ok else []
+            if names:
+                preview = ", ".join(names[:6])
+                status.configure(text=f"🔍 อ่านได้ {len(names)} ชื่อ:\n{preview}{' ...' if len(names) > 6 else ''}", fg=ACCENT_GREEN)
+            else:
+                status.configure(text="🔍 อ่านชื่อไม่ได้ — ลองครอบให้คลุมเฉพาะคอลัมน์ชื่อ ไม่เอาไอคอน/เลเวล", fg=ACCENT_RED)
+
+        def save_and_close():
+            self.save_guild_config()
+            self.write_log("💾 บันทึกพื้นที่คอลัมน์ชื่อสมาชิกชมรมแล้ว", "success")
+            on_close()
+
+        btns = tk.Frame(right, bg=BG_DARK)
+        btns.pack(fill="x", pady=(14, 0))
+        ModernButton(btns, text="📸 จับภาพหน้าจอ", command=capture, variant="primary").pack(fill="x", pady=3)
+        ModernButton(btns, text="🔍 ทดสอบอ่านชื่อ", command=test_read, variant="accent").pack(fill="x", pady=3)
+        ModernButton(btns, text="💾 บันทึกการตั้งค่า", command=save_and_close, variant="primary").pack(fill="x", pady=3)
+
+        dialog.after(200, capture)
+
     def inspect_ui(self):
         """อ่าน element บนหน้าจอของเครื่องที่เลือกตัวแรก แล้วแสดงรายการ (ช่วยเตรียม tap_text)"""
         devices = self.get_selected_devices()
@@ -1313,6 +1753,50 @@ class MuMuGUI(tk.Tk):
             messagebox.showinfo("พอร์ตที่ใช้สแกน", msg)
 
         ModernButton(port_btn_frame, text="ดูพอร์ตปัจจุบัน", command=show_current_ports, variant="subtle").pack(side="left")
+
+        # Gemini API Key สำหรับ Story Auto fallback
+        gem_outer, gem_box = self.make_panel(settings_frame, "Gemini API Key (Story Auto AI fallback)", fill="x", pady=10)
+        tk.Label(gem_box, text="ใส่ key เพื่อให้ AI ช่วยตัดสินใจเมื่อ template+OCR หาปุ่มไม่เจอ\nเว้นว่างเพื่อปิด (ใช้แค่ Template + OCR)",
+                 bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left").pack(anchor="w", pady=(0, 4))
+        gem_row = tk.Frame(gem_box, bg=BG_CARD)
+        gem_row.pack(fill="x")
+        self._gemini_key_var = tk.StringVar(value=self.gemini_api_key)
+        gem_entry = ModernEntry(gem_row, textvariable=self._gemini_key_var, show="*", width=50)
+        gem_entry.pack(side="left", padx=(0, 8))
+
+        def _save_gemini_key():
+            self.gemini_api_key = self._gemini_key_var.get().strip()
+            messagebox.showinfo("บันทึก", "บันทึก Gemini API Key แล้ว (จนกว่าจะรีสตาร์ท)")
+        ModernButton(gem_row, text="บันทึก", command=_save_gemini_key, variant="subtle").pack(side="left")
+
+        def _toggle_gem_show():
+            gem_entry.config(show="" if gem_entry.cget("show") else "*")
+        ModernButton(gem_row, text="แสดง/ซ่อน", command=_toggle_gem_show, variant="subtle").pack(side="left", padx=(4, 0))
+
+        # ขีดจำกัดเครื่อง — ตรวจว่ารัน MuMu ได้สูงสุดกี่จอ
+        cap_outer, cap_box = self.make_panel(settings_frame, "ขีดจำกัดเครื่อง — รันได้กี่จอ", fill="x", pady=10)
+
+        p = DEFAULT_MUMU_PROFILE
+        tk.Label(
+            cap_box,
+            text=(
+                f"คำนวณจากสเปกต่อจอ: CPU {p['cores_per_instance']} คอร์ · RAM {p['ram_per_instance_gb']:g}GB · "
+                f"540×960 · DPI 160 · FPS 15\n"
+                f"กันทรัพยากรให้ระบบ: RAM {p['host_reserve_ram_gb']:g}GB + {p['host_reserve_cores']} คอร์ "
+                f"(จอ FPS-cap เบา จึงเผื่อแชร์คอร์ได้ {p['cpu_oversubscribe']:g} เท่า)"
+            ),
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"),
+            justify="left", wraplength=700,
+        ).pack(anchor="w", pady=(0, 8))
+
+        ModernButton(cap_box, text="🖥️ ตรวจขีดจำกัดเครื่องนี้", command=self.check_machine_capacity, variant="primary").pack(anchor="w")
+
+        self.capacity_result_lbl = tk.Label(
+            cap_box, text="กดปุ่มด้านบนเพื่อตรวจสเปกเครื่องและจำนวนจอที่แนะนำ",
+            bg=BG_CARD, fg=FG_WHITE, font=("Consolas", 10),
+            justify="left", anchor="w", wraplength=700,
+        )
+        self.capacity_result_lbl.pack(anchor="w", fill="x", pady=(10, 0))
 
         # ระบบตรวจสอบความเหมาะสมของขนาดจอและ DPI
         diag_outer, diag_box = self.make_panel(settings_frame, "ตรวจสอบ Emulator", fill="x", pady=10)
@@ -1815,6 +2299,46 @@ class MuMuGUI(tk.Tk):
         return selected
 
     # --- ตรวจสอบขนาดหน้าจอและ DPI ---
+    def check_machine_capacity(self):
+        """ตรวจสเปกเครื่อง แล้วบอกว่ารัน MuMu ได้สูงสุดกี่จอ (ภายใต้โปรไฟล์มาตรฐาน)"""
+        specs = get_host_specs()
+        if not specs.get("available_ok"):
+            self.capacity_result_lbl.configure(
+                text=f"❌ อ่านสเปกเครื่องไม่ได้: {specs.get('error', 'ไม่ทราบสาเหตุ')}",
+                fg=ACCENT_RED)
+            self.write_log("❌ ตรวจขีดจำกัดเครื่องไม่สำเร็จ (psutil ใช้ไม่ได้)", "error")
+            return
+
+        est = estimate_mumu_capacity(specs)
+        rec = est["recommended"]
+        bottleneck_txt = "RAM" if est["bottleneck"] == "RAM" else "CPU"
+
+        lines = [
+            f"🖥️  เครื่องนี้: CPU {specs['logical_cores']} คอร์ (จริง {specs['physical_cores']} คอร์)  ·  "
+            f"RAM รวม {specs['total_ram_gb']:g}GB  ·  ว่างตอนนี้ {specs['available_ram_gb']:g}GB",
+            "",
+            f"✅ แนะนำให้รันสูงสุด: {rec} จอ  (เต็มประสิทธิภาพ)",
+            f"     • คอขวดหลัก: {bottleneck_txt}",
+            f"     • เพดานจาก RAM: {est['ram_limit']} จอ   (3GB/จอ, กันระบบ {est['reserve_ram']:g}GB)",
+            f"     • เพดานจาก CPU: {est['cpu_limit']} จอ   (2 คอร์/จอ, กันระบบ {est['reserve_cores']} คอร์)",
+            f"🔋 ตอนนี้ RAM ว่างพอเปิดเพิ่มได้อีกราว: {est['open_now']} จอ",
+        ]
+
+        warn = []
+        if rec < 1:
+            warn.append("⚠️ สเปกเครื่องไม่พอรันแม้แต่ 1 จอภายใต้ค่านี้ — ลด RAM/จอ หรือเพิ่ม RAM เครื่อง")
+        if est["open_now"] < rec:
+            warn.append("ℹ️ ปิดโปรแกรมอื่นที่กิน RAM อยู่ จะเปิดได้ใกล้เพดานแนะนำมากขึ้น")
+        if warn:
+            lines.append("")
+            lines.extend(warn)
+
+        color = ACCENT_RED if rec < 1 else (ACCENT_GREEN if rec >= 1 else ACCENT_ORANGE)
+        self.capacity_result_lbl.configure(text="\n".join(lines), fg=color)
+        self.write_log(
+            f"🖥️ ขีดจำกัดเครื่อง: แนะนำ {rec} จอ (RAM≤{est['ram_limit']} / CPU≤{est['cpu_limit']}, "
+            f"คอขวด {bottleneck_txt})", "success")
+
     def validate_resolutions(self):
         devices = self.get_selected_devices()
         if not devices:
@@ -2040,6 +2564,27 @@ class MuMuGUI(tk.Tk):
                 json.dump(self.diamond_config, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.write_log(f"บันทึกการตั้งค่าระบบอ่านเพชรล้มเหลว: {e}", "error")
+
+    def load_guild_config(self):
+        """โหลดการตั้งค่าดึงรายชื่อสมาชิกชมรม (พื้นที่คอลัมน์ชื่อ) จาก guild_ocr.json"""
+        defaults = {"region": {"x": 0, "y": 0, "w": 0, "h": 0}}
+        try:
+            if os.path.exists(self.guild_config_file):
+                with open(self.guild_config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    defaults.update(data)
+        except Exception as e:
+            self.write_log(f"โหลดการตั้งค่าดึงรายชื่อชมรมขัดข้อง: {e}", "warning")
+        return defaults
+
+    def save_guild_config(self):
+        """บันทึกการตั้งค่าดึงรายชื่อสมาชิกชมรมลงไฟล์ guild_ocr.json"""
+        try:
+            with open(self.guild_config_file, "w", encoding="utf-8") as f:
+                json.dump(self.guild_config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.write_log(f"บันทึกการตั้งค่าดึงรายชื่อชมรมล้มเหลว: {e}", "error")
 
     def _build_screenshot_filename(self, pattern, account, device):
         """สร้างชื่อไฟล์ภาพจากแพทเทิร์น แทนที่ {EMAIL}/{PASSWORD}/{NAME}/{GROUP}/{DATE}/{TIME}/{DEVICE}
@@ -5445,8 +5990,178 @@ class MuMuGUI(tk.Tk):
                 "sleep": self._step_sleep,
                 "keyboard": self._step_keyboard,
                 "read_diamond": self._step_read_diamond,
+                "story_auto": self._step_story_auto,
+                "find_yellow_stage": self._step_find_yellow_stage,
             }
         return self._step_handlers
+
+    # ===== Story Auto: เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ) =====
+    def _story_button_templates(self, buttons_field=""):
+        """คืน list ของ (ชื่อ, path) ปุ่มที่จะกวาดหาในแต่ละด่าน
+        ถ้าไม่ระบุ -> ใช้ทุกไฟล์ templates/story_*.png"""
+        import glob as _glob
+        names = [b.strip() for b in (buttons_field or "").split(",") if b.strip()]
+        if not names:
+            names = sorted(os.path.basename(p) for p in _glob.glob(os.path.join(self.templates_dir, "story_*.png")))
+        out = []
+        for n in names:
+            p = os.path.join(self.templates_dir, n)
+            if os.path.exists(p):
+                out.append((n, p))
+        return out
+
+    def run_story_auto(self, device, max_stages=30, stage_timeout=240.0,
+                       threshold=0.7, scan_interval=1.2, buttons_field="",
+                       running_check=None):
+        """ลูปเล่นเนื้อเรื่อง: หา 'ด่านเหลือง' บนหน้าเลือกด่าน -> แตะเข้า -> กวาดกดปุ่ม
+        (ข้าม/ไปต่อ/รับ) จนกลับมาหน้าเลือกด่าน (เหลืองโผล่อีก) -> วนด่านถัดไป
+        จบเมื่อไม่พบด่านเหลือง (สุด story) หรือครบ max_stages
+
+        running_check: callable คืน True ถ้ายังให้รันต่อ (ดีฟอลต์ = self.macro_running)
+        คืนจำนวนด่านที่เคลียร์ได้
+        """
+        if running_check is None:
+            running_check = lambda: self.macro_running
+
+        btn_paths = self._story_button_templates(buttons_field)
+        # ปุ่มกวาด ไม่รวมรูปยืนยันหน้า map (story_map.png ใช้ตรวจ 'กลับถึง map' แยกต่างหาก)
+        map_path = os.path.join(self.templates_dir, "story_map.png")
+        has_map_tpl = os.path.exists(map_path)
+        btn_paths = [(n, p) for (n, p) in btn_paths if n != "story_map.png"]
+        self.write_log(
+            f"   🎮 [{device}] Story Auto เริ่ม (สูงสุด {max_stages} ด่าน) "
+            f"ปุ่มที่กวาด: {', '.join(b for b, _ in btn_paths) or '— (ยังไม่มี template story_*.png)'}"
+            f"{' | ใช้ story_map.png ยืนยันหน้า map' if has_map_tpl else ' | ยืนยัน map ด้วยกรอบเหลือง'}",
+            "warning")
+
+        def cap():
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            return data if ok else None
+
+        def on_map(data):
+            """อยู่หน้าเลือกด่านจริงไหม — ใช้ story_map.png ถ้ามี (แม่นกว่า), ไม่งั้นใช้กรอบเหลือง"""
+            if has_map_tpl:
+                f, _x, _y, _m = self.controller.find_image_in_bytes(data, map_path, threshold=max(0.65, threshold - 0.05))
+                return f
+            return find_yellow_frame(data)[0]
+
+        cleared = 0
+        for stage in range(int(max_stages)):
+            if not running_check():
+                break
+
+            data = cap()
+            if data is None:
+                self.write_log(f"   ❌ [{device}] แคปจอไม่ได้ -> หยุด Story Auto", "error")
+                break
+
+            found, cx, cy, _box = find_yellow_frame(data)
+            if not found:
+                self.write_log(
+                    f"   ✅ [{device}] ไม่พบด่านเหลือง (จบ story / ล็อกหมด / ไม่อยู่หน้าเลือกด่าน) "
+                    f"-> จบที่ {cleared} ด่าน", "success")
+                break
+
+            self.write_log(f"   ▶️ [{device}] ด่าน {stage + 1}: แตะด่านเหลือง ({cx},{cy})", "info")
+            self.controller.tap(device, cx, cy)
+            time.sleep(1.5)
+
+            # ลุยด่านจนกลับหน้าเลือกด่าน (เหลืองโผล่อีก) หรือ timeout
+            deadline = time.time() + float(stage_timeout)
+            left_map = False
+            returned = False
+            while time.time() < deadline:
+                if not running_check():
+                    return cleared
+                data = cap()
+                if data is None:
+                    time.sleep(scan_interval)
+                    continue
+
+                here_map = on_map(data)
+                if not left_map:
+                    if not here_map:
+                        left_map = True  # ออกจากหน้าเลือกด่านแล้ว (เข้าด่าน)
+                elif here_map:
+                    returned = True  # กลับถึงหน้าเลือกด่าน = ด่านจบ
+                    break
+
+                # กวาดปุ่ม: เจออันไหนกดอันนั้น (ข้าม/ไปต่อ/รับ/ปิด/ปัด)
+                tapped = False
+                for name, path in btn_paths:
+                    fnd, mx, my, _msg = self.controller.find_image_in_bytes(data, path, threshold=threshold)
+                    if fnd:
+                        if "swipe" in name:
+                            # interactive cutscene แบบปัดนิ้ว -> swipe ซ้ายไปขวา
+                            sw_y = my
+                            self.write_log(f"   👉 [{device}] ปัด '{name}' (y={sw_y})", "info")
+                            self.controller.swipe(device, 250, sw_y, 750, sw_y, duration=400)
+                        else:
+                            self.write_log(f"   👆 [{device}] กดปุ่ม '{name}' ({mx},{my})", "info")
+                            self.controller.tap(device, mx, my)
+                        tapped = True
+                        time.sleep(0.8)
+                        break
+                if not tapped:
+                    # --- OCR fallback: หาคำปุ่มบนจอ ---
+                    ocr_ok, ox, oy, oword = ocr_find_button(data)
+                    if ocr_ok:
+                        self.write_log(f"   🔤 [{device}] OCR เจอปุ่ม '{oword}' ({ox},{oy}) -> tap", "info")
+                        self.controller.tap(device, ox, oy)
+                        tapped = True
+                        time.sleep(0.8)
+                    elif self.gemini_api_key:
+                        # --- Gemini Vision fallback: ถาม AI ว่าควร tap ไหน ---
+                        sw, sh = 960, 540
+                        gok, gx, gy, greason = gemini_tap_suggestion(data, self.gemini_api_key, sw, sh)
+                        if gok:
+                            self.write_log(f"   🤖 [{device}] Gemini: {greason} -> tap ({gx},{gy})", "info")
+                            self.controller.tap(device, gx, gy)
+                            tapped = True
+                            time.sleep(0.8)
+                        else:
+                            self.write_log(f"   ⏳ [{device}] Gemini: {greason} (รอ auto-play)", "info")
+                if not tapped:
+                    # แมตช์เล่นเองอยู่ / รอโหลด
+                    time.sleep(scan_interval)
+
+            if returned:
+                cleared += 1
+                self.write_log(f"   🏁 [{device}] ด่าน {stage + 1} จบ -> กลับถึงหน้าเลือกด่าน (รวม {cleared} ด่าน)", "success")
+            else:
+                self.write_log(f"   ⌛ [{device}] ด่าน {stage + 1} เกิน {stage_timeout:g} วิ ยังไม่กลับหน้าเลือกด่าน -> หยุด Story Auto", "warning")
+                break
+
+        self.write_log(f"   🎉 [{device}] Story Auto จบ — เคลียร์ไป {cleared} ด่าน", "success")
+        return cleared
+
+    def _step_story_auto(self, ctx, step):
+        """step: เล่นเนื้อเรื่องอัตโนมัติทั้งชุดบนเครื่องนี้"""
+        self.run_story_auto(
+            ctx.device,
+            max_stages=int(step.get("max_stages", 30) or 30),
+            stage_timeout=float(step.get("stage_timeout", 240) or 240),
+            threshold=float(step.get("threshold", 0.78) or 0.78),
+            buttons_field=(step.get("buttons") or step.get("text") or ""),
+        )
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
+
+    def _step_find_yellow_stage(self, ctx, step):
+        """step: หา 'ด่านเหลือง' บนหน้าเลือกด่านแล้วแตะ (กดด่านถัดไป 1 ครั้ง)"""
+        device = ctx.device
+        ok, data = self.controller.capture_screenshot_bytes(device)
+        if not ok:
+            self.write_log(f"   ❌ [{device}] แคปจอไม่ได้ -> ข้าม", "error")
+            return
+        found, cx, cy, _box = find_yellow_frame(data)
+        if found:
+            self.write_log(f"   🎯 [{device}] เจอด่านเหลือง ({cx},{cy}) -> แตะ", "success")
+            ctx.record(self.controller.tap(device, cx, cy), "find_yellow_stage")
+        else:
+            self.write_log(f"   ⏭️ [{device}] ไม่พบด่านเหลืองบนจอ", "warning")
+        if ctx.step_delay > 0:
+            time.sleep(ctx.step_delay)
 
     def _step_tap(self, ctx, step):
         ctx.record(self.controller.tap(ctx.device, step["x"], step["y"]), "tap")
