@@ -223,6 +223,171 @@ def find_yellow_frame(screen_bytes, min_area_frac=0.008, h_lo=18, h_hi=34,
     return True, x + w // 2, y + h // 2, best
 
 
+def find_highlighted_stage(screen_bytes, half_card_w=100, thumb_up=45):
+    """หา 'ด่านที่ถูกไฮไลท์' บนหน้าเลือกด่าน โดยไม่พึ่ง AI — แม่นยำแม้ภาพประกอบด่านอื่น
+    มีโทนส้ม/เหลือง (ที่ทำให้ find_yellow_frame เลือกผิด)
+
+    หลักการ: 'กรอบเลือก' ของเกมเป็นสีเหลือง UI สว่างจัดมาก (V≈254) ซึ่งสว่างกว่าสีเหลือง
+    ในภาพศิลป์ (V≤243) — ใช้ threshold V สูงคัดเฉพาะกรอบ UI ออกมา แล้ว dilate แนวตั้งเชื่อม
+    'แขนกรอบมุมตัว L/[' ให้เป็นแท่งสูง ๆ (กรอบเลือกจะสูง h≥45; ดาวรางวัล/ไอคอนจะเตี้ย h<40)
+
+    - เจอกรอบซ้าย+ขวา (ด่านกลางจอ): จุดแตะ = กึ่งกลางระหว่างสองกรอบ
+    - เจอกรอบเดียว (ด่านริมจอถูกตัดขอบ): ดูแกนตั้งว่าเป็น '[' หรือ ']' แล้ว offset เข้าการ์ด
+
+    คืน (found, cx, cy)
+    """
+    if not screen_bytes:
+        return False, 0, 0
+    img = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False, 0, 0
+    sh, sw = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # เหลือง UI สว่างจัด: H 26-34, S 110-180, V≥246 (ตัดเหลืองภาพศิลป์ที่ V ต่ำกว่าออก)
+    mask = cv2.inRange(hsv, (26, 110, 246), (34, 180, 255))
+    # dilate แนวตั้งมาก แนวนอนน้อย -> เชื่อมแขนกรอบ '[' เป็นแท่งเดียว แต่ไม่รวมดาวที่เรียงแนวนอน
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 25))
+    dil = cv2.dilate(mask, kernel, iterations=1)
+
+    n, _lbl, stats, cent = cv2.connectedComponentsWithStats(dil, connectivity=8)
+    brackets = []
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        # กรอบเลือกเป็นเส้น '[' สูงและบาง: h≥45 (ต่างจากดาว/ไอคอน h<40) และ w≤50
+        # (ตัดไอคอนตัวละคร/วงแหวนกลมในจอแมตช์ที่กว้างกว่ามากออก)
+        if h >= 45 and w <= 50 and area >= 300:
+            brackets.append({"x": int(x), "y": int(y), "w": int(w), "h": int(h),
+                             "cx": int(cent[i][0]), "cy": int(cent[i][1])})
+    if not brackets:
+        return False, 0, 0
+
+    tallest = max(brackets, key=lambda b: b["h"])
+    # เอาเฉพาะกรอบที่อยู่แถว y เดียวกับกรอบสูงสุด (กรอบของการ์ดที่เลือกอยู่)
+    same = [b for b in brackets if abs(b["cy"] - tallest["cy"]) < 50]
+    left = min(same, key=lambda b: b["cx"])
+    right = max(same, key=lambda b: b["cx"])
+
+    if right["cx"] - left["cx"] > 80:
+        # เจอทั้งกรอบซ้ายและขวา -> การ์ดอยู่ตรงกลาง
+        card_cx = (left["cx"] + right["cx"]) // 2
+    else:
+        # เจอกรอบเดียว -> ดูว่าแกนตั้ง (spine) อยู่ซ้ายหรือขวาของกล่อง
+        b = tallest
+        col_sum = mask[b["y"]:b["y"] + b["h"], b["x"]:b["x"] + b["w"]].sum(axis=0)
+        spine = int(np.argmax(col_sum)) if col_sum.size else 0
+        if spine < b["w"] / 2:      # spine ซ้าย = '[' -> การ์ดอยู่ทางขวา
+            card_cx = b["cx"] + half_card_w
+        else:                        # spine ขวา = ']' -> การ์ดอยู่ทางซ้าย
+            card_cx = b["cx"] - half_card_w
+
+    card_cx = max(20, min(sw - 20, card_cx))
+    tap_y = max(20, tallest["cy"] - thumb_up)  # ขยับขึ้นเข้าหา thumbnail (พ้น label bar)
+    return True, card_cx, tap_y
+
+
+def find_swipe_glow(screen_bytes):
+    """หา 'ไอคอนบาสเรืองแสง' ของ cutscene แบบปัดนิ้ว (มีลูกศร >>>) — เชื่อถือได้กว่า template
+    เพราะ glow สีฟ้าอมขาวคงที่เสมอ ไม่ขึ้นกับพื้นหลังที่เปลี่ยนทุกฉาก (template story_swipe.png
+    match ไม่ค่อยติดเพราะพื้นหลังต่างกัน)
+
+    ตัวไอคอนเป็น 'วงกลม' ฟ้าสว่างจัด — คัดด้วย: ทรงกลม (fill≥0.6, w/h≈1), ขนาด 42-75px,
+    และอยู่ครึ่งล่างของจอ (y≥200 กันปุ่มย้อนกลับ ← สีฟ้ามุมซ้ายบน)
+
+    สำคัญ: ต้องแยกจาก 'จอยสติ๊ก (ปุ่มเดิน)' ตอนแมตช์ ที่เป็นลูกบาสน้ำเงินในวงแหวนเช่นกัน —
+    ตัวแยกคือ 'glow ฟ้าเรืองรอบลูกบอล' (halo): ไอคอนปัดมี halo cyan สูง (~0.22) ส่วนจอยสติ๊ก
+    เป็นลูกบอลตันขอบขาว ไม่มี glow (halo~0.07) ถ้า halo ต่ำ = จอยสติ๊ก (อยู่ในแมตช์ auto) -> ข้าม
+
+    คืน (found, cx, cy) จุดที่ควรเริ่มปัดนิ้ว
+    """
+    if not screen_bytes:
+        return False, 0, 0
+    img = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False, 0, 0
+    H, W = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    glow = cv2.inRange(hsv, (85, 40, 235), (115, 255, 255))
+    cnts, _ = cv2.findContours(glow, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # mask cyan สว่าง (สำหรับวัด halo รอบลูกบอล)
+    cyan = cv2.inRange(hsv, (85, 60, 225), (115, 255, 255)) > 0
+    yy, xx = np.ogrid[:H, :W]
+
+    best = None
+    best_area = 0
+    for c in cnts:
+        area = cv2.contourArea(c)
+        if area < 450:             # ลูกบอลเรืองแสงมีหลายขนาด (บางฉากเล็กแค่ ~37px)
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        if not (35 <= w <= 80 and 35 <= h <= 80):
+            continue
+        if not (0.65 <= w / h <= 1.5):
+            continue
+        # บางฉากลูกบอลเป็น 'วงแหวน' (ไส้ในเป็นลายบาส ไม่ใช่ฟ้า) fill ต่ำได้ -> ใช้แค่กันขยะจริงๆ
+        if area / (w * h) < 0.1:
+            continue
+        cx = int(x + w / 2)
+        cy = int(y + h / 2)
+        if cy < 100:               # มุมบนสุด = ปุ่ม back (y~40) ไม่ใช่ไอคอนโต้ตอบ
+            continue
+        # วัด halo: สัดส่วนพิกเซล cyan สว่างในวงแหวนรัศมี 22-42px รอบลูกบอล
+        dist = (xx - cx) ** 2 + (yy - cy) ** 2
+        ring = (dist >= 22 * 22) & (dist <= 42 * 42)
+        ring_n = int(ring.sum())
+        halo = float((ring & cyan).sum()) / ring_n if ring_n else 0.0
+        # ไอคอนปัด/แตะจริง มี glow ฟ้าเรือง (halo≈0.10-0.22); จอยสติ๊กแมตช์ halo≈0.07 -> ข้าม
+        if halo < 0.085:
+            continue
+        if area > best_area:
+            best_area = area
+            best = (cx, cy)
+    if best is None:
+        return False, 0, 0
+    return True, best[0], best[1]
+
+
+def in_match_autoplay(screen_bytes):
+    """ตรวจว่าอยู่ใน 'แมตช์ที่กำลัง auto-play' ไหม โดยดู 'จอยสติ๊ก (ปุ่มเดิน)' มุมซ้ายล่าง
+    = ลูกบาสน้ำเงินทรงกลม ขนาด ~44-60px แต่ 'ไม่มี glow ฟ้าเรือง' (halo ต่ำ) ต่างจากไอคอนปัด
+
+    ระหว่างแมตช์ เกมเล่นเองอยู่แล้ว ไม่ควรแตะ/ปัด/เรียก AI อะไรเลย — ใช้เช็คเพื่อ 'รอเฉยๆ'
+    คืน True ถ้าเจอจอยสติ๊ก (อยู่ในแมตช์)
+    """
+    if not screen_bytes:
+        return False
+    img = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False
+    H, W = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    glow = cv2.inRange(hsv, (85, 40, 235), (115, 255, 255))
+    cyan = cv2.inRange(hsv, (85, 60, 225), (115, 255, 255)) > 0
+    cnts, _ = cv2.findContours(glow, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    yy, xx = np.ogrid[:H, :W]
+    for c in cnts:
+        area = cv2.contourArea(c)
+        if area < 900:
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        if not (42 <= w <= 75 and 42 <= h <= 75):
+            continue
+        if not (0.7 <= w / h <= 1.4) or area / (w * h) < 0.6:
+            continue
+        cx, cy = int(x + w / 2), int(y + h / 2)
+        # จอยสติ๊กอยู่มุมซ้ายล่าง
+        if not (cx < W * 0.4 and cy > H * 0.55):
+            continue
+        dist = (xx - cx) ** 2 + (yy - cy) ** 2
+        ring = (dist >= 22 * 22) & (dist <= 42 * 42)
+        rn = int(ring.sum())
+        halo = float((ring & cyan).sum()) / rn if rn else 0.0
+        # ลูกบอลไม่มี glow ฟ้าเรือง (halo≈0.07) = จอยสติ๊ก; ถ้ามี glow = ไอคอนปัด (ไม่ใช่จอยสติ๊ก)
+        # ใช้เกณฑ์ 0.095 เท่ากับ find_swipe_glow เพื่อไม่ให้ทับซ้อนกัน
+        if halo < 0.095:
+            return True
+    return False
+
+
 _TESS_LANGS = None
 
 
@@ -1116,44 +1281,188 @@ def ocr_find_button(screen_bytes, keywords=None, lang=None, scale=2):
 
 
 # ===== Story Auto: Gemini Vision fallback =====
+# รายชื่อโมเดลที่จะลองเรียง (ใหม่สุดก่อน) เผื่อบาง key/บาง region ไม่รองรับบางรุ่น
+_GEMINI_MODEL_CANDIDATES = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-flash-latest",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+]
+_GEMINI_WORKING_MODEL = None  # แคชโมเดลที่ใช้ได้จริงกับ key นี้ (ต่อโปรเซส)
+
+# กัน rate-limit (429): เว้นช่วงขั้นต่ำระหว่างการเรียกแต่ละครั้ง + cooldown ยาวขึ้นถ้าโดน 429
+_GEMINI_MIN_INTERVAL = 4.0
+_GEMINI_LAST_CALL_TS = 0.0
+_GEMINI_COOLDOWN_UNTIL = 0.0
+
+
+def _extract_json_object(text):
+    """ดึงก้อน JSON object ตัวแรกจากข้อความ (เผื่อ Gemini พ่นข้อความอื่นแถมมาหรือมี code fence)
+    คืน dict หรือ None ถ้า parse ไม่ได้"""
+    if not text:
+        return None
+    cleaned = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text.strip())
+    m = re.search(r"\{.*\}", cleaned, re.S)
+    candidate = m.group(0) if m else cleaned
+    try:
+        return json.loads(candidate)
+    except Exception:
+        return None
+
+
+def _gemini_call(prompt_text, screen_bytes, api_key, timeout=15):
+    """เรียก Gemini Vision REST API ตรงๆ — ลองโมเดลใน _GEMINI_MODEL_CANDIDATES จนกว่าจะเจอตัวที่ใช้ได้
+    (แคชผลไว้ใน _GEMINI_WORKING_MODEL กันเรียกซ้ำทุกครั้ง) มี throttle กัน 429 คืน (ok, text_or_error)"""
+    global _GEMINI_WORKING_MODEL, _GEMINI_LAST_CALL_TS, _GEMINI_COOLDOWN_UNTIL
+    import urllib.request, urllib.error
+
+    now = time.time()
+    if now < _GEMINI_COOLDOWN_UNTIL:
+        return False, f"rate_limited (cooldown อีก {_GEMINI_COOLDOWN_UNTIL - now:.0f} วิ)"
+    if now - _GEMINI_LAST_CALL_TS < _GEMINI_MIN_INTERVAL:
+        return False, "rate_limited (throttle)"
+    _GEMINI_LAST_CALL_TS = now
+
+    b64 = base64.b64encode(screen_bytes).decode()
+
+    models_to_try = [_GEMINI_WORKING_MODEL] if _GEMINI_WORKING_MODEL else list(_GEMINI_MODEL_CANDIDATES)
+    last_err = ""
+    for model in models_to_try:
+        if not model:
+            continue
+        gen_config = {"temperature": 0, "maxOutputTokens": 300}
+        if "2.5" in model:
+            # thinkingBudget=0 ปิด thinking mode ของ gemini-2.5-* กันโดนกินโควต้า token ไปกับ
+            # การคิดภายใน จนเหลือ token ไม่พอสำหรับ JSON คำตอบจริง (เจอปัญหา "ตัดกลางคัน" บ่อย)
+            # รุ่นเก่า (1.5/2.0) ไม่รองรับฟิลด์นี้ เลยใส่แค่ตอนเรียกรุ่น 2.5 เท่านั้น
+            gen_config["thinkingConfig"] = {"thinkingBudget": 0}
+        payload = json.dumps({
+            "contents": [{
+                "parts": [
+                    {"text": prompt_text},
+                    {"inline_data": {"mime_type": "image/png", "data": b64}},
+                ]
+            }],
+            "generationConfig": gen_config,
+        }).encode()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode())
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            _GEMINI_WORKING_MODEL = model  # เจอตัวที่ใช้ได้แล้ว จำไว้ใช้ต่อ
+            return True, text
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code}: {e.reason} ({model})"
+            if e.code == 404:
+                continue  # โมเดลนี้ไม่มี/ถูกเลิกใช้ -> ลองตัวถัดไป
+            if e.code == 429:
+                _GEMINI_COOLDOWN_UNTIL = time.time() + 30.0  # โดน quota -> พักยาวกันยิงรัว
+            break  # error อื่น (เช่น 400/403 key ผิด/429) ไม่มีประโยชน์ที่จะลองโมเดลอื่น
+        except Exception as e:
+            last_err = str(e)
+            break
+    return False, last_err
+
+
+def _gemini_parse_normalized_point(obj, screen_w, screen_h):
+    """Gemini คืนพิกัดบนสเกล normalize 0-1000 เสมอ (ธรรมเนียมภายในของ Google เอง)
+    ไม่ว่าใน prompt จะบอกขนาดจอเป็น pixel เท่าไหร่ก็ตาม — แปลงกลับเป็น pixel จริงตรงนี้ที่เดียว"""
+    x = obj.get("x")
+    y = obj.get("y")
+    if x is None:
+        return None, None
+    x = int(round(int(x) / 1000.0 * screen_w))
+    y = int(round(int(y) / 1000.0 * screen_h))
+    x = max(0, min(screen_w - 1, x))
+    y = max(0, min(screen_h - 1, y))
+    return x, y
+
+
+_GEMINI_TAP_NO_TARGET_UNTIL = 0.0  # หลัง Gemini ยืนยันว่า "ไม่มีปุ่ม/แมตช์เล่นเอง" -> พักไม่ถามซ้ำสักพัก
+
+
 def gemini_tap_suggestion(screen_bytes, api_key, screen_w=960, screen_h=540):
     """ถาม Gemini Vision ว่าควร tap พิกัดไหนเพื่อเดินเรื่อง story ต่อ
-    คืน (found, cx, cy, reason)  — ใช้ REST API โดยตรง (ไม่ต้อง install package)"""
-    import urllib.request
+    คืน (found, cx, cy, reason)  — ใช้ REST API โดยตรง (ไม่ต้อง install package)
+
+    มี backoff: ถ้า Gemini เพิ่งยืนยันว่า 'ไม่มีปุ่ม/แมตช์กำลัง auto-play' จะไม่ถามซ้ำ
+    ไปอีก ~15 วิ (ระหว่างนั้น template+OCR ที่ฟรีอยู่แล้วยังคอยเช็คทุกรอบตามปกติ ถ้าเจอ
+    ปุ่มจะกดได้ทันทีไม่ต้องรอ Gemini) — กันยิง Gemini รัวๆ ทั้งที่คำตอบซ้ำเดิมตลอดช่วงแมตช์เล่นเอง"""
+    global _GEMINI_TAP_NO_TARGET_UNTIL
     try:
         if not api_key or not screen_bytes:
             return False, 0, 0, "no_key"
-        b64 = base64.b64encode(screen_bytes).decode()
+        now = time.time()
+        if now < _GEMINI_TAP_NO_TARGET_UNTIL:
+            return False, 0, 0, f"auto-play ยืนยันแล้ว รออีก {_GEMINI_TAP_NO_TARGET_UNTIL - now:.0f} วิ"
         prompt = (
-            f"This is a screenshot ({screen_w}x{screen_h}px) from a mobile RPG game story mode. "
+            "This is a screenshot from a mobile RPG game story mode. "
             "Identify the UI element I should tap to advance the story/cutscene. "
             "Look for: Skip button, Next button, OK/Close button, Claim reward button, "
             "or any interactive button/icon that progresses the narrative. "
             "If the match/battle is auto-playing (no button visible), reply with x=null. "
-            'Reply ONLY with valid JSON, no markdown: {"x": <int|null>, "y": <int>, "reason": "<short English description>"}'
+            "Return the tap point as x,y normalized to a 0-1000 scale (0,0 = top-left corner, "
+            "1000,1000 = bottom-right corner of the image), NOT raw pixel coordinates. "
+            "Reply with ONLY one line of compact JSON, no markdown, no extra text before or after. "
+            'The reason field must be under 6 words with no quote characters inside it. '
+            'Format: {"x": <int 0-1000|null>, "y": <int 0-1000>, "reason": "<short description>"}'
         )
-        payload = json.dumps({
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": "image/png", "data": b64}},
-                ]
-            }],
-            "generationConfig": {"temperature": 0, "maxOutputTokens": 128},
-        }).encode()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        # strip markdown fences if any
-        text = re.sub(r"^```[a-z]*\n?|\n?```$", "", text.strip())
-        obj = json.loads(text)
-        x = obj.get("x")
-        y = obj.get("y")
+        ok, text = _gemini_call(prompt, screen_bytes, api_key)
+        if not ok:
+            return False, 0, 0, text
+        obj = _extract_json_object(text)
+        if obj is None:
+            return False, 0, 0, f"bad_json: {text[:80]}"
         reason = obj.get("reason", "")
-        if x is None:
+        cx, cy = _gemini_parse_normalized_point(obj, screen_w, screen_h)
+        if cx is None:
+            _GEMINI_TAP_NO_TARGET_UNTIL = time.time() + 15.0
             return False, 0, 0, reason
-        return True, int(x), int(y), reason
+        return True, cx, cy, reason
+    except Exception as e:
+        return False, 0, 0, str(e)
+
+
+def gemini_find_stage(screen_bytes, api_key, screen_w=960, screen_h=540):
+    """ถาม Gemini Vision ว่า 'ด่านไหนบนหน้าเลือกด่าน (map) ที่ถูกไฮไลท์เป็นด่านถัดไปที่เล่นได้'
+    ใช้เมื่อ find_yellow_frame แยกไม่ออก (กรอบไฮไลท์ vs สีส้ม/เหลืองในภาพประกอบเอง)
+    ขอพิกัดแบบ normalize 0-1000 แล้วแปลงกลับเป็น pixel เอง (ดู _gemini_parse_normalized_point) —
+    แก้ปัญหาที่ Gemini เคยตอบพิกัดผิดสเกล (เช่น y เกินความสูงจอไปเยอะ)
+    คืน (found, cx, cy, reason)"""
+    try:
+        if not api_key or not screen_bytes:
+            return False, 0, 0, "no_key"
+        prompt = (
+            "This is a stage-select map screenshot from a mobile RPG game. "
+            "Multiple stage thumbnails are shown, each with a number label. "
+            "Exactly one stage is usually marked as the next playable stage — look for a "
+            "glowing/highlighted GOLD OR YELLOW BORDER OUTLINE around its thumbnail frame, "
+            "or a gold/yellow-filled number label badge (as opposed to a plain black/dark label). "
+            "Do NOT be fooled by stages whose artwork itself happens to contain warm orange/yellow "
+            "colors (like sunset or indoor lighting in the picture) — only the actual UI highlight "
+            "border/badge overlay counts, not the artwork's own colors. "
+            "Locked stages (with a padlock icon) are never the target. "
+            "Return the tap point (center of the correct highlighted stage thumbnail) as x,y "
+            "normalized to a 0-1000 scale (0,0 = top-left corner, 1000,1000 = bottom-right corner "
+            "of the image), NOT raw pixel coordinates. "
+            "If no stage appears highlighted, reply with x=null. "
+            "Reply with ONLY one line of compact JSON, no markdown, no extra text before or after. "
+            'The reason field must be under 6 words with no quote characters inside it. '
+            'Format: {"x": <int 0-1000|null>, "y": <int 0-1000>, "reason": "<short description>"}'
+        )
+        ok, text = _gemini_call(prompt, screen_bytes, api_key)
+        if not ok:
+            return False, 0, 0, text
+        obj = _extract_json_object(text)
+        if obj is None:
+            return False, 0, 0, f"bad_json: {text[:80]}"
+        reason = obj.get("reason", "")
+        cx, cy = _gemini_parse_normalized_point(obj, screen_w, screen_h)
+        if cx is None:
+            return False, 0, 0, reason
+        return True, cx, cy, reason
     except Exception as e:
         return False, 0, 0, str(e)
