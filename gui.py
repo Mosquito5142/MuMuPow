@@ -14,7 +14,8 @@ from mumu_controller import (
     get_host_specs, estimate_mumu_capacity, DEFAULT_MUMU_PROFILE,
     stitch_png_vertically, png_similarity,
     ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs,
-    find_yellow_frame, ocr_find_button, gemini_tap_suggestion,
+    find_yellow_frame, find_highlighted_stage, find_swipe_glow, in_match_autoplay,
+    ocr_find_button, gemini_tap_suggestion,
 )
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
@@ -346,8 +347,9 @@ class MuMuGUI(tk.Tk):
         # ระบบดึงรายชื่อสมาชิกชมรม — พื้นที่คอลัมน์ชื่อสำหรับครอปก่อน OCR
         self.guild_config_file = os.path.join(base_dir, "guild_ocr.json")
         self.guild_config = self.load_guild_config()
-        # Gemini API key สำหรับ Story Auto fallback (อ่านจาก env ก่อน, override ได้ใน Settings)
-        self.gemini_api_key = os.environ.get("GEMINI_API_KEY", "")
+        # Gemini API key สำหรับ Story Auto fallback (ลำดับ: ไฟล์ config -> env -> ว่าง), บันทึกได้จาก Settings
+        self.gemini_config_file = os.path.join(base_dir, "gemini_config.json")
+        self.gemini_api_key = self._load_gemini_api_key()
         self.account_checkboxes = {} # email -> BooleanVar
         self.group_checkboxes = {}   # group_name -> BooleanVar
         self.load_accounts()
@@ -1281,9 +1283,10 @@ class MuMuGUI(tk.Tk):
                 return
 
         max_stages = simpledialog.askinteger(
-            "Story Auto", "จะเล่นต่อเนื่องสูงสุดกี่ด่าน?", parent=self,
-            initialvalue=20, minvalue=1, maxvalue=200)
-        if not max_stages:
+            "Story Auto",
+            "จะเล่นต่อเนื่องสูงสุดกี่ด่าน?\n(ใส่ 0 = ไม่จำกัด รันจนกว่าจะกดหยุด)",
+            parent=self, initialvalue=0, minvalue=0, maxvalue=9999)
+        if max_stages is None:  # กด Cancel
             return
 
         if not messagebox.askyesno(
@@ -1756,7 +1759,7 @@ class MuMuGUI(tk.Tk):
 
         # Gemini API Key สำหรับ Story Auto fallback
         gem_outer, gem_box = self.make_panel(settings_frame, "Gemini API Key (Story Auto AI fallback)", fill="x", pady=10)
-        tk.Label(gem_box, text="ใส่ key เพื่อให้ AI ช่วยตัดสินใจเมื่อ template+OCR หาปุ่มไม่เจอ\nเว้นว่างเพื่อปิด (ใช้แค่ Template + OCR)",
+        tk.Label(gem_box, text="ใส่ key เพื่อให้ AI ช่วย 'เฉพาะตอนระบบติดค้าง' (จอนิ่งเกิน 12 วิ) เท่านั้น\nเรียกไม่เกิน 1 ครั้ง/25 วิ จึงแทบไม่กิน quota — เว้นว่างเพื่อปิด (ใช้ CV+OCR ล้วน)",
                  bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left").pack(anchor="w", pady=(0, 4))
         gem_row = tk.Frame(gem_box, bg=BG_CARD)
         gem_row.pack(fill="x")
@@ -1766,7 +1769,8 @@ class MuMuGUI(tk.Tk):
 
         def _save_gemini_key():
             self.gemini_api_key = self._gemini_key_var.get().strip()
-            messagebox.showinfo("บันทึก", "บันทึก Gemini API Key แล้ว (จนกว่าจะรีสตาร์ท)")
+            self._save_gemini_api_key_to_file()
+            messagebox.showinfo("บันทึก", "บันทึก Gemini API Key แล้ว (อยู่ถาวร ไม่หายแม้ปิดแอป/build ใหม่)")
         ModernButton(gem_row, text="บันทึก", command=_save_gemini_key, variant="subtle").pack(side="left")
 
         def _toggle_gem_show():
@@ -2585,6 +2589,26 @@ class MuMuGUI(tk.Tk):
                 json.dump(self.guild_config, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.write_log(f"บันทึกการตั้งค่าดึงรายชื่อชมรมล้มเหลว: {e}", "error")
+
+    def _load_gemini_api_key(self):
+        """โหลด Gemini API key: ไฟล์ gemini_config.json ก่อน -> env var GEMINI_API_KEY -> ว่าง"""
+        try:
+            if os.path.exists(self.gemini_config_file):
+                with open(self.gemini_config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and data.get("api_key"):
+                    return str(data["api_key"]).strip()
+        except Exception:
+            pass
+        return os.environ.get("GEMINI_API_KEY", "")
+
+    def _save_gemini_api_key_to_file(self):
+        """บันทึก Gemini API key ปัจจุบันลงไฟล์ gemini_config.json ให้อยู่ถาวรข้ามการรีสตาร์ท"""
+        try:
+            with open(self.gemini_config_file, "w", encoding="utf-8") as f:
+                json.dump({"api_key": self.gemini_api_key}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.write_log(f"บันทึก Gemini API Key ลงไฟล์ล้มเหลว: {e}", "error")
 
     def _build_screenshot_filename(self, pattern, account, device):
         """สร้างชื่อไฟล์ภาพจากแพทเทิร์น แทนที่ {EMAIL}/{PASSWORD}/{NAME}/{GROUP}/{DATE}/{TIME}/{DEVICE}
@@ -6010,6 +6034,63 @@ class MuMuGUI(tk.Tk):
                 out.append((n, p))
         return out
 
+    def _story_swipe_dirs(self, gx, screen_w=960):
+        """ลำดับทิศปัด 'ตามที่เห็นบนจอ' — จากทุกจอปัดที่เก็บมา เป้าปลายทาง (ลูกบอลเงา)
+        อยู่ฝั่งตรงข้ามกับบอลเรืองเสมอ (บอลซ้าย→ปัดขวา, บอลขวา→ปัดซ้าย)
+        จึงเรียงทิศแนวนอนเข้าหาฝั่งตรงข้ามก่อน แล้วค่อยทแยง/ตั้ง (วนต่อถ้าทิศแรกไม่เวิร์ก)"""
+        to_right = gx < screen_w / 2
+        primary = ("ขวา", 1.0, 0.0) if to_right else ("ซ้าย", -1.0, 0.0)
+        secondary = ("ซ้าย", -1.0, 0.0) if to_right else ("ขวา", 1.0, 0.0)
+        sgn = 1.0 if to_right else -1.0
+        return [
+            primary, secondary,
+            ("ทแยงลง", sgn * 0.7, 0.7), ("ทแยงขึ้น", sgn * 0.7, -0.7),
+            ("ทแยงลงกลับ", -sgn * 0.7, 0.7), ("ทแยงขึ้นกลับ", -sgn * 0.7, -0.7),
+            ("ลง", 0.0, 1.0), ("ขึ้น", 0.0, -1.0),
+        ]
+
+    def _story_swipe(self, device, gx, gy, attempt, length=340):
+        """ปัดนิ้วจากไอคอน (gx,gy) ตามทิศลำดับที่ attempt (ทิศแรก = เข้าหาฝั่งตรงข้ามของจอ)"""
+        dirs = self._story_swipe_dirs(gx)
+        name, dx, dy = dirs[attempt % len(dirs)]
+        ex = max(20, min(940, int(gx + dx * length)))
+        ey = max(20, min(520, int(gy + dy * length)))
+        self.write_log(f"   👉 [{device}] ปัดจากไอคอน ({gx},{gy}) ทิศ{name} -> ({ex},{ey})", "info")
+        self.controller.swipe(device, gx, gy, ex, ey, duration=450)
+
+    # ชุดกู้สถานการณ์เมื่อจอ 'ค้าง' (watchdog) — แตะจุดสากลที่มักเป็นปุ่มดำเนินต่อ วนไปทีละอย่าง
+    # เคสที่เราไม่รู้จัก (ปุ่ม/คัตซีนแบบใหม่) จะได้หลุดเองโดยไม่ต้องไล่เพิ่ม template
+    _STORY_RECOVERY = [
+        ("มุมข้ามขวาบน", 884, 32),
+        ("แตะกลางจอ", 480, 270),
+        ("ปุ่มล่างขวา", 834, 494),
+        ("แตะล่างกลาง", 480, 480),
+        ("มุมข้ามอีกจุด", 916, 30),
+    ]
+
+    def _story_recover(self, device, data, step):
+        """ทำ 1 การกู้สถานการณ์ (วนตาม step) เมื่อ watchdog ตรวจว่าจอค้าง:
+        (1) ถาม Gemini ครั้งเดียว (ถ้าตั้ง key ไว้ — เรียกเฉพาะตอนติดแบบนี้เท่านั้น ไม่ถี่เกิน
+            1 ครั้ง/25 วิ จึงแทบไม่กิน quota ต่างจากเดิมที่ยิงทุก 2 วิจนโดน 429)
+        (2) OCR หาคำปุ่ม 'ข้าม/OK/ตกลง' บนจอ
+        (3) แตะจุดสากลที่มักเป็นปุ่มดำเนินต่อ วนไปทีละจุด"""
+        if self.gemini_api_key and (time.time() - getattr(self, "_last_ai_rescue_ts", 0.0)) > 25.0:
+            self._last_ai_rescue_ts = time.time()
+            gok, gx, gy, greason = gemini_tap_suggestion(data, self.gemini_api_key, 960, 540)
+            if gok:
+                self.write_log(f"   🤖 [{device}] กันค้าง (AI): {greason} -> tap ({gx},{gy})", "warning")
+                self.controller.tap(device, gx, gy)
+                return
+            self.write_log(f"   🤖 [{device}] กันค้าง (AI): ไม่ได้คำตอบ ({greason}) -> ใช้วิธีสำรอง", "info")
+        ocr_ok, ox, oy, oword = ocr_find_button(data)
+        if ocr_ok:
+            self.write_log(f"   🛟 [{device}] กันค้าง: OCR เจอ '{oword}' ({ox},{oy}) -> tap", "warning")
+            self.controller.tap(device, ox, oy)
+            return
+        name, rx, ry = self._STORY_RECOVERY[step % len(self._STORY_RECOVERY)]
+        self.write_log(f"   🛟 [{device}] กันค้าง: แตะ{name} ({rx},{ry})", "warning")
+        self.controller.tap(device, rx, ry)
+
     def run_story_auto(self, device, max_stages=30, stage_timeout=240.0,
                        threshold=0.7, scan_interval=1.2, buttons_field="",
                        running_check=None):
@@ -6024,115 +6105,165 @@ class MuMuGUI(tk.Tk):
             running_check = lambda: self.macro_running
 
         btn_paths = self._story_button_templates(buttons_field)
-        # ปุ่มกวาด ไม่รวมรูปยืนยันหน้า map (story_map.png ใช้ตรวจ 'กลับถึง map' แยกต่างหาก)
-        map_path = os.path.join(self.templates_dir, "story_map.png")
-        has_map_tpl = os.path.exists(map_path)
         btn_paths = [(n, p) for (n, p) in btn_paths if n != "story_map.png"]
+        limit_str = "ไม่จำกัด (กดหยุดเอง)" if not max_stages else f"สูงสุด {max_stages} ด่าน"
         self.write_log(
-            f"   🎮 [{device}] Story Auto เริ่ม (สูงสุด {max_stages} ด่าน) "
-            f"ปุ่มที่กวาด: {', '.join(b for b, _ in btn_paths) or '— (ยังไม่มี template story_*.png)'}"
-            f"{' | ใช้ story_map.png ยืนยันหน้า map' if has_map_tpl else ' | ยืนยัน map ด้วยกรอบเหลือง'}",
+            f"   🎮 [{device}] Story Auto เริ่ม ({limit_str}) "
+            f"ปุ่มที่กวาด: {', '.join(b for b, _ in btn_paths) or '— (ยังไม่มี template story_*.png)'} "
+            f"| ตรวจหน้าเลือกด่านด้วยกรอบเลือก UI (ไม่พึ่ง AI)",
             "warning")
 
         def cap():
             ok, data = self.controller.capture_screenshot_bytes(device)
             return data if ok else None
 
-        def on_map(data):
-            """อยู่หน้าเลือกด่านจริงไหม — ใช้ story_map.png ถ้ามี (แม่นกว่า), ไม่งั้นใช้กรอบเหลือง"""
-            if has_map_tpl:
-                f, _x, _y, _m = self.controller.find_image_in_bytes(data, map_path, threshold=max(0.65, threshold - 0.05))
-                return f
-            return find_yellow_frame(data)[0]
-
+        # ===== ลูปเดียวรวมทุกสถานะ =====
+        # แต่ละรอบ 'ดูจอแล้วทำให้ถูกกับสิ่งที่เห็น' — ไม่แยกโหมด outer/inner (เดิมพอหลุด inner
+        # ตอนคัตซีน จะกลับไป outer ที่หาแต่ด่าน ทำให้ไม่จัดการคัตซีนแล้วค้าง)
+        # ลำดับ: (1) หน้าเลือกด่าน->แตะด่าน  (2) ในแมตช์->รอ  (3) คัตซีน/อื่นๆ->กดปุ่ม/แตะ/ปัด/กู้
         cleared = 0
-        for stage in range(int(max_stages)):
-            if not running_check():
-                break
+        in_stage = False          # แตะด่านแล้ว (กำลังเล่นด่านอยู่)
+        left_map_confirmed = False  # ยืนยันออกจากหน้าเลือกด่านแล้ว (กันนับซ้ำตอนจอ transition)
+        tap_stage_ts = 0.0
+        swipe_prev = None
+        swipe_attempt = 0
+        prev_frame = None
+        last_change_ts = time.time()
+        recover_step = 0
+        last_idle_log = 0.0
+        STUCK_SECONDS = 12.0
 
+        while running_check():
+            if max_stages and cleared >= int(max_stages):
+                break
             data = cap()
             if data is None:
-                self.write_log(f"   ❌ [{device}] แคปจอไม่ได้ -> หยุด Story Auto", "error")
-                break
+                self.write_log(f"   ⚠️ [{device}] แคปจอไม่ได้ -> รอแล้วลองใหม่", "warning")
+                time.sleep(2.0)
+                continue
 
-            found, cx, cy, _box = find_yellow_frame(data)
-            if not found:
-                self.write_log(
-                    f"   ✅ [{device}] ไม่พบด่านเหลือง (จบ story / ล็อกหมด / ไม่อยู่หน้าเลือกด่าน) "
-                    f"-> จบที่ {cleared} ด่าน", "success")
-                break
+            # Watchdog: จอเปลี่ยนไหม (2 ระดับ) — ขยับเล็ก (คัตซีนเล่นอยู่)=รีเซ็ตนาฬิกา, เปลี่ยนฉาก=รีเซ็ต recovery
+            if prev_frame is not None:
+                _sim = png_similarity(data, prev_frame)
+                if _sim < 0.95:
+                    last_change_ts = time.time()
+                if _sim < 0.85:
+                    recover_step = 0
+            prev_frame = data
 
-            self.write_log(f"   ▶️ [{device}] ด่าน {stage + 1}: แตะด่านเหลือง ({cx},{cy})", "info")
-            self.controller.tap(device, cx, cy)
-            time.sleep(1.5)
-
-            # ลุยด่านจนกลับหน้าเลือกด่าน (เหลืองโผล่อีก) หรือ timeout
-            deadline = time.time() + float(stage_timeout)
-            left_map = False
-            returned = False
-            while time.time() < deadline:
-                if not running_check():
-                    return cleared
-                data = cap()
-                if data is None:
-                    time.sleep(scan_interval)
-                    continue
-
-                here_map = on_map(data)
-                if not left_map:
-                    if not here_map:
-                        left_map = True  # ออกจากหน้าเลือกด่านแล้ว (เข้าด่าน)
-                elif here_map:
-                    returned = True  # กลับถึงหน้าเลือกด่าน = ด่านจบ
-                    break
-
-                # กวาดปุ่ม: เจออันไหนกดอันนั้น (ข้าม/ไปต่อ/รับ/ปิด/ปัด)
-                tapped = False
+            # ===== (0) ระหว่างเล่นด่าน: ให้ปุ่ม action ชนะกรอบเลือกด่านเสมอ =====
+            # กันเคส false-positive ของ find_highlighted_stage จากไอคอนสีเหลืองสว่างอื่นๆ
+            # ในหน้ารายละเอียดด่าน/คัตซีน (เช่นไอคอนรางวัล EXP/เหรียญทอง ที่ทำให้ตรวจกรอบผิด
+            # จนแตะด่านซ้ำที่เดิมไม่รู้จบ) — ถ้ากำลังอยู่ในด่านอยู่แล้วและเจอปุ่มจริง ให้กดปุ่มก่อนเสมอ
+            if in_stage:
+                btn_handled = False
                 for name, path in btn_paths:
+                    if "swipe" in name or "tap" in name:
+                        continue
                     fnd, mx, my, _msg = self.controller.find_image_in_bytes(data, path, threshold=threshold)
                     if fnd:
-                        if "swipe" in name:
-                            # interactive cutscene แบบปัดนิ้ว -> swipe ซ้ายไปขวา
-                            sw_y = my
-                            self.write_log(f"   👉 [{device}] ปัด '{name}' (y={sw_y})", "info")
-                            self.controller.swipe(device, 250, sw_y, 750, sw_y, duration=400)
-                        else:
-                            self.write_log(f"   👆 [{device}] กดปุ่ม '{name}' ({mx},{my})", "info")
-                            self.controller.tap(device, mx, my)
-                        tapped = True
+                        self.write_log(f"   👆 [{device}] กดปุ่ม '{name}' ({mx},{my})", "info")
+                        self.controller.tap(device, mx, my)
+                        btn_handled = True
+                        left_map_confirmed = True  # กดปุ่มสำเร็จ = ไม่ใช่หน้า map เปล่าแน่นอน
+                        last_change_ts = time.time()
                         time.sleep(0.8)
                         break
-                if not tapped:
-                    # --- OCR fallback: หาคำปุ่มบนจอ ---
-                    ocr_ok, ox, oy, oword = ocr_find_button(data)
-                    if ocr_ok:
-                        self.write_log(f"   🔤 [{device}] OCR เจอปุ่ม '{oword}' ({ox},{oy}) -> tap", "info")
-                        self.controller.tap(device, ox, oy)
-                        tapped = True
-                        time.sleep(0.8)
-                    elif self.gemini_api_key:
-                        # --- Gemini Vision fallback: ถาม AI ว่าควร tap ไหน ---
-                        sw, sh = 960, 540
-                        gok, gx, gy, greason = gemini_tap_suggestion(data, self.gemini_api_key, sw, sh)
-                        if gok:
-                            self.write_log(f"   🤖 [{device}] Gemini: {greason} -> tap ({gx},{gy})", "info")
-                            self.controller.tap(device, gx, gy)
-                            tapped = True
-                            time.sleep(0.8)
-                        else:
-                            self.write_log(f"   ⏳ [{device}] Gemini: {greason} (รอ auto-play)", "info")
-                if not tapped:
-                    # แมตช์เล่นเองอยู่ / รอโหลด
+                if btn_handled:
+                    continue
+
+            # ===== (1) หน้าเลือกด่าน: เจอกรอบเลือกด่าน =====
+            hf, hx, hy = find_highlighted_stage(data)
+            if hf:
+                # เพิ่งกลับจากด่าน (เคยเข้าด่าน + ออกจาก map แล้ว) = จบ 1 ด่าน
+                if in_stage and left_map_confirmed:
+                    cleared += 1
+                    self.write_log(f"   🏁 [{device}] ด่านจบ -> กลับถึงหน้าเลือกด่าน (รวม {cleared} ด่าน)", "success")
+                    in_stage = False
+                    left_map_confirmed = False
+                # เพิ่งแตะด่านไปแต่ยังไม่ทันออก map (< 6 วิ) = รอโหลด อย่าเพิ่งแตะซ้ำ
+                if in_stage and (time.time() - tap_stage_ts) < 6.0:
                     time.sleep(scan_interval)
+                    continue
+                # ยืนยันตำแหน่งนิ่งก่อนแตะ (กันจับผิดตอนจอ transition)
+                time.sleep(0.5)
+                data2 = cap()
+                h2, hx2, hy2 = find_highlighted_stage(data2) if data2 is not None else (False, 0, 0)
+                if not h2 or abs(hx2 - hx) > 30 or abs(hy2 - hy) > 30:
+                    continue
+                self.write_log(f"   ▶️ [{device}] แตะด่านเหลือง ({hx2},{hy2})", "info")
+                self.controller.tap(device, hx2, hy2)
+                in_stage = True
+                left_map_confirmed = False
+                tap_stage_ts = time.time()
+                last_change_ts = time.time()
+                swipe_prev = None
+                swipe_attempt = 0
+                time.sleep(1.5)
+                continue
 
-            if returned:
-                cleared += 1
-                self.write_log(f"   🏁 [{device}] ด่าน {stage + 1} จบ -> กลับถึงหน้าเลือกด่าน (รวม {cleared} ด่าน)", "success")
-            else:
-                self.write_log(f"   ⌛ [{device}] ด่าน {stage + 1} เกิน {stage_timeout:g} วิ ยังไม่กลับหน้าเลือกด่าน -> หยุด Story Auto", "warning")
-                break
+            # ไม่อยู่หน้าเลือกด่านแล้ว -> ถ้าเคยแตะด่าน ถือว่าออกจาก map แล้ว (พร้อมนับจบเมื่อกลับ)
+            if in_stage:
+                left_map_confirmed = True
 
-        self.write_log(f"   🎉 [{device}] Story Auto จบ — เคลียร์ไป {cleared} ด่าน", "success")
+            # ===== (2) ในแมตช์ auto (เจอจอยสติ๊ก) -> รอเฉยๆ ห้ามแตะ =====
+            if in_match_autoplay(data):
+                time.sleep(scan_interval)
+                continue
+
+            # ===== (3) คัตซีน/หน้าอื่น -> กดปุ่ม/แตะ/ปัด =====
+            tapped = False
+            for name, path in btn_paths:
+                if "swipe" in name or "tap" in name:
+                    continue  # ลูกบอลแตะ/ปัด ยกให้ glow handler จัดการรวม
+                fnd, mx, my, _msg = self.controller.find_image_in_bytes(data, path, threshold=threshold)
+                if fnd:
+                    self.write_log(f"   👆 [{device}] กดปุ่ม '{name}' ({mx},{my})", "info")
+                    self.controller.tap(device, mx, my)
+                    tapped = True
+                    time.sleep(0.8)
+                    break
+            if not tapped:
+                # ลูกบอลเรืองแสง (คัตซีนโต้ตอบ แตะ/ปัด): ครั้งที่ 0=แตะ, 1+=ปัดวนทีละทิศ
+                # ลูกบอลยังอยู่ที่เดิม = วิธีก่อนไม่เวิร์ก -> เลื่อนไปวิธี/ทิศถัดไป
+                gl_ok, gx, gy = find_swipe_glow(data)
+                if gl_ok:
+                    if swipe_prev and abs(gx - swipe_prev[0]) < 25 and abs(gy - swipe_prev[1]) < 25:
+                        swipe_attempt += 1
+                    else:
+                        swipe_attempt = 0
+                    swipe_prev = (gx, gy)
+                    if swipe_attempt == 0:
+                        self.write_log(f"   👆 [{device}] แตะไอคอนเรืองแสง ({gx},{gy})", "info")
+                        self.controller.tap(device, gx, gy)
+                    else:
+                        self._story_swipe(device, gx, gy, swipe_attempt - 1)
+                    tapped = True
+                    time.sleep(0.8)
+                else:
+                    swipe_prev = None
+            if not tapped:
+                ocr_ok, ox, oy, oword = ocr_find_button(data)
+                if ocr_ok:
+                    self.write_log(f"   🔤 [{device}] OCR เจอปุ่ม '{oword}' ({ox},{oy}) -> tap", "info")
+                    self.controller.tap(device, ox, oy)
+                    tapped = True
+                    time.sleep(0.8)
+            if not tapped:
+                time.sleep(scan_interval)
+
+            # Watchdog: จอนิ่งนานเกิน (ไม่ใช่ map/แมตช์ และไม่มีปุ่ม/ไอคอน) = ติดเคสไม่รู้จัก
+            # -> กู้สถานการณ์วนไป (แตะข้าม/กลางจอ ฯลฯ) ให้หลุดเอง; แจ้ง idle เป็นระยะ
+            if (time.time() - last_change_ts) > STUCK_SECONDS:
+                self._story_recover(device, data, recover_step)
+                recover_step += 1
+                last_change_ts = time.time() - (STUCK_SECONDS - 4.0)
+                if time.time() - last_idle_log > 20:
+                    self.write_log(f"   ⏳ [{device}] จอนิ่ง/ยังหาปุ่มไม่เจอ — กำลังลองกู้ (กดหยุดเองเมื่อพอ)", "info")
+                    last_idle_log = time.time()
+                time.sleep(1.0)
+
+        self.write_log(f"   🎉 [{device}] Story Auto หยุด — เคลียร์ไป {cleared} ด่าน", "success")
         return cleared
 
     def _step_story_auto(self, ctx, step):
