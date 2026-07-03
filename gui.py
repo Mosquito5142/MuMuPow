@@ -1263,7 +1263,9 @@ class MuMuGUI(tk.Tk):
         ModernButton(story_box, text="🎮 เริ่ม Story Auto", command=self.start_story_auto, variant="primary").pack(anchor="w", pady=(8, 0))
 
     def start_story_auto(self):
-        """เริ่มเล่นเนื้อเรื่องอัตโนมัติบนเครื่องที่เลือก (เครื่องแรก) แบบ background thread"""
+        """เริ่มเล่นเนื้อเรื่องอัตโนมัติบนทุกเครื่องที่เลือก พร้อมกัน (คนละ thread ต่อเครื่อง)
+        เหมือน pattern มาโครทั่วไป (ThreadPoolExecutor) — ก่อนหน้านี้ใช้แค่เครื่องแรกเสมอ"""
+        from concurrent.futures import ThreadPoolExecutor
         if self.macro_running:
             messagebox.showwarning("กำลังทำงานอยู่", "มีงานกำลังรันอยู่ กรุณาหยุดก่อน")
             return
@@ -1271,7 +1273,6 @@ class MuMuGUI(tk.Tk):
         if not devices:
             messagebox.showwarning("ยังไม่ได้เลือกเครื่อง", "กรุณาติ๊กเลือก Emulator อย่างน้อย 1 เครื่องก่อน")
             return
-        device = devices[0]
 
         btns = self._story_button_templates("")
         if not btns:
@@ -1291,9 +1292,9 @@ class MuMuGUI(tk.Tk):
 
         if not messagebox.askyesno(
             "เริ่ม Story Auto",
-            f"จะเริ่มเล่นเนื้อเรื่องอัตโนมัติบน [{device}] สูงสุด {max_stages} ด่าน\n\n"
-            "ตรวจว่าเกมอยู่ที่ 'หน้าเลือกด่าน' เห็นกรอบเหลืองของด่านถัดไปแล้ว\n"
-            "หยุดได้ตลอดด้วยปุ่ม 'หยุดทันที' ที่แท็บมาโคร"):
+            f"จะเริ่มเล่นเนื้อเรื่องอัตโนมัติพร้อมกัน {len(devices)} เครื่อง สูงสุด {max_stages} ด่าน/เครื่อง\n\n"
+            "ตรวจว่าทุกเครื่องอยู่ที่ 'หน้าเลือกด่าน' เห็นกรอบเหลืองของด่านถัดไปแล้ว\n"
+            "หยุดได้ตลอดด้วยปุ่ม 'หยุดทันที' ที่แท็บมาโคร (หยุดทุกเครื่องพร้อมกัน)"):
             return
 
         self.macro_running = True
@@ -1301,11 +1302,17 @@ class MuMuGUI(tk.Tk):
         self.stop_macro_btn.configure(state="normal")
         self.update_status_summary()
 
+        def per_device(dev):
+            try:
+                self.run_story_auto(dev, max_stages=max_stages)
+            except Exception as e:
+                self.write_log(f"❌ [{dev}] Story Auto ผิดพลาด: {e}", "error")
+
         def worker():
             try:
-                self.run_story_auto(device, max_stages=max_stages)
-            except Exception as e:
-                self.write_log(f"❌ Story Auto ผิดพลาด: {e}", "error")
+                self.write_log(f"🎮 เริ่ม Story Auto พร้อมกัน {len(devices)} เครื่อง...", "warning")
+                with ThreadPoolExecutor(max_workers=len(devices)) as executor:
+                    executor.map(per_device, devices)
             finally:
                 self.macro_running = False
                 self.after(0, lambda: self.run_macro_btn.configure(state="normal", bg=ACCENT_GREEN, text="รันมาโคร"))
@@ -6073,7 +6080,11 @@ class MuMuGUI(tk.Tk):
         (1) ถาม Gemini ครั้งเดียว (ถ้าตั้ง key ไว้ — เรียกเฉพาะตอนติดแบบนี้เท่านั้น ไม่ถี่เกิน
             1 ครั้ง/25 วิ จึงแทบไม่กิน quota ต่างจากเดิมที่ยิงทุก 2 วิจนโดน 429)
         (2) OCR หาคำปุ่ม 'ข้าม/OK/ตกลง' บนจอ
-        (3) แตะจุดสากลที่มักเป็นปุ่มดำเนินต่อ วนไปทีละจุด"""
+        (3) แตะจุดสากลที่มักเป็นปุ่มดำเนินต่อ วนไปทีละจุด
+
+        หมายเหตุ: throttle (_last_ai_rescue_ts) เป็นแบบ 'รวมทุกเครื่อง' โดยตั้งใจ — ตอนรัน
+        Story Auto หลายเครื่องพร้อมกัน ถ้าแยก throttle ต่อเครื่องจะเสี่ยงยิง Gemini พร้อมกัน
+        หลายครั้งตอนหลายเครื่องค้างพร้อมกัน จนโดน 429 (rate limit) เหมือนปัญหาที่เคยเจอมาก่อน"""
         if self.gemini_api_key and (time.time() - getattr(self, "_last_ai_rescue_ts", 0.0)) > 25.0:
             self._last_ai_rescue_ts = time.time()
             gok, gx, gy, greason = gemini_tap_suggestion(data, self.gemini_api_key, 960, 540)
