@@ -14,6 +14,7 @@ from mumu_controller import (
     get_host_specs, estimate_mumu_capacity, DEFAULT_MUMU_PROFILE,
     stitch_png_vertically, png_similarity,
     ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs,
+    set_tessdata_dir, guild_ocr_langs,
     find_yellow_frame, find_highlighted_stage, find_swipe_glow, in_match_autoplay,
     ocr_find_button, gemini_tap_suggestion,
 )
@@ -347,6 +348,15 @@ class MuMuGUI(tk.Tk):
         # ระบบดึงรายชื่อสมาชิกชมรม — พื้นที่คอลัมน์ชื่อสำหรับครอปก่อน OCR
         self.guild_config_file = os.path.join(base_dir, "guild_ocr.json")
         self.guild_config = self.load_guild_config()
+        # tessdata ของแอปเอง (มี tha/jpn/kor/chi_sim/chi_tra ที่โหลดเพิ่ม) — ให้ Tesseract อ่านชื่อหลายภาษาได้
+        self.guild_tessdata_dir = os.path.join(base_dir, "tessdata")
+        try:
+            if os.path.isdir(self.guild_tessdata_dir) and glob.glob(
+                os.path.join(self.guild_tessdata_dir, "*.traineddata")
+            ):
+                set_tessdata_dir(self.guild_tessdata_dir)
+        except Exception:
+            pass
         # Gemini API key สำหรับ Story Auto fallback (ลำดับ: ไฟล์ config -> env -> ว่าง), บันทึกได้จาก Settings
         self.gemini_config_file = os.path.join(base_dir, "gemini_config.json")
         self.gemini_api_key = self._load_gemini_api_key()
@@ -1242,13 +1252,15 @@ class MuMuGUI(tk.Tk):
             guild_box,
             text=("เปิดหน้า 'สมาชิกชมรม' ในเกม เลื่อนขึ้นบนสุด แล้วกดปุ่ม — ระบบจะเลื่อนลง+แคปทีละหน้าจนสุดล่าง "
                   "OCR เป็นรายชื่อ ตัดชื่อซ้ำให้ แล้วแสดงเป็นตัวอักษร (ก๊อปไปวางในเว็บ guild-check ช่อง 'วางรายชื่อเอง' ได้เลย)\n"
-                  "แนะนำกด '⚙️ ตั้งพื้นที่ชื่อ' ลากครอบเฉพาะคอลัมน์ชื่อก่อนสักครั้ง จะอ่านแม่นและไม่ปนเลขอันดับ/เลเวล"),
+                  "แนะนำกด '⚙️ ตั้งพื้นที่ชื่อ' ลากครอบเฉพาะคอลัมน์ชื่อก่อนสักครั้ง จะอ่านแม่นและไม่ปนเลขอันดับ/เลเวล\n"
+                  "หรือถ้าเลื่อน auto แล้วไม่ตรง ให้แคปเอง แล้วกด '🖼️ วางรูป → อ่านชื่อ' วางรูปด้วย Ctrl+V ได้เลย"),
             bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
         ).pack(anchor="w")
         guild_btn_row = tk.Frame(guild_box, bg=BG_CARD)
         guild_btn_row.pack(anchor="w", pady=(8, 0))
         ModernButton(guild_btn_row, text="⚙️ ตั้งพื้นที่ชื่อ", command=self.open_guild_region_setup, variant="accent").pack(side="left", padx=(0, 10))
-        ModernButton(guild_btn_row, text="📋 ดึงรายชื่อ (เป็นตัวอักษร)", command=self.grab_guild_members, variant="primary").pack(side="left")
+        ModernButton(guild_btn_row, text="📋 ดึงรายชื่อ (เป็นตัวอักษร)", command=self.grab_guild_members, variant="primary").pack(side="left", padx=(0, 10))
+        ModernButton(guild_btn_row, text="🖼️ วางรูป → อ่านชื่อ", command=self.open_guild_image_ocr, variant="subtle").pack(side="left")
 
         # 8. Story Auto — เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ)
         story_outer, story_box = self.make_panel(sync_frame, "เล่นเนื้อเรื่องอัตโนมัติ (Story Auto)", fill="x", pady=10)
@@ -1394,7 +1406,7 @@ class MuMuGUI(tk.Tk):
                 return
 
             # OCR ทุกหน้า -> รวมข้อความ -> แยกชื่อ + ตัดซ้ำ
-            lang = "tha+eng" if "tha" in available_tesseract_langs() else "eng"
+            lang = guild_ocr_langs()
             crop = region if has_region else None
             scale = 3 if has_region else 2
             texts = []
@@ -1472,6 +1484,240 @@ class MuMuGUI(tk.Tk):
 
         # คัดลอกให้อัตโนมัติเลยตั้งแต่เปิด
         copy_all()
+
+    def open_guild_image_ocr(self):
+        """วางรูป (Ctrl+V) หรือเปิดไฟล์รูปหน้าสมาชิกชมรม -> ลากครอบเฉพาะคอลัมน์ชื่อ (ถ้าต้องการ)
+        -> OCR เป็นรายชื่อ -> ตัดซ้ำ -> โชว์เป็นตัวอักษร (ก๊อปไปวางในเว็บ guild-check ได้เลย)
+
+        ทางเลือกแทนการเลื่อน+แคป auto สำหรับกรณีที่แคปเองแล้วแม่นกว่า"""
+        if not find_tesseract():
+            messagebox.showwarning(
+                "ไม่พบ Tesseract OCR",
+                "ระบบอ่านรายชื่อต้องใช้ Tesseract OCR ซึ่งยังไม่ได้ติดตั้ง\n\n"
+                "ติดตั้งโดยเปิด PowerShell แล้วรัน:\n    winget install UB-Mannheim.TesseractOCR\n\n"
+                "ติดตั้งเสร็จแล้วเปิดโปรแกรมนี้ใหม่")
+            return
+
+        import io
+        import cv2
+        import numpy as np
+        from PIL import ImageGrab
+
+        dialog = tk.Toplevel(self)
+        dialog.title("🖼️ วางรูปหน้าสมาชิกชมรม → อ่านชื่อ")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        state = {"orig": None, "bytes": None, "sx": 1.0, "rect_id": None, "region": None}
+        temp_disp = os.path.join(self.templates_dir, "guild_paste_disp.png")
+
+        def on_close():
+            try:
+                if os.path.exists(temp_disp):
+                    os.remove(temp_disp)
+            except Exception:
+                pass
+            dialog.grab_release()
+            dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+
+        left = tk.Frame(dialog, bg=BG_DARK)
+        left.pack(side="left", padx=15, pady=15)
+        canvas = tk.Canvas(left, width=860, height=560, bg="#000000", highlightthickness=1, highlightbackground=BG_PANEL)
+        canvas.pack()
+        tk.Label(left, text="วางรูปด้วย Ctrl+V หรือเปิดไฟล์ — 💡 แม่นสุดถ้าครอบ 'เฉพาะคอลัมน์ชื่อ ไม่เอา avatar' (ลากเมาส์คลุมสูงหลายแถว ชิดขวาพ้นไอคอน) ก่อนกดอ่าน",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), wraplength=840, justify="left").pack(anchor="w", pady=(6, 0))
+
+        right = tk.Frame(dialog, bg=BG_DARK, padx=15, pady=15)
+        right.pack(side="right", fill="both", expand=True)
+
+        tk.Label(right, text="วิธีใช้:\n1) แคปหน้าสมาชิกชมรม (แคปเองให้ชัด/ตรง)\n2) กด Ctrl+V วางรูป หรือ 'เปิดไฟล์รูป'\n3) (ถ้าต้องการ) ลากครอบเฉพาะคอลัมน์ชื่อ\n4) กด 'ดึงรายชื่อ'",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 8))
+
+        status = tk.Label(right, text="กด Ctrl+V เพื่อวางรูป หรือกด 'เปิดไฟล์รูป'", bg=BG_DARK, fg=ACCENT_ORANGE,
+                          font=("Segoe UI", 9), wraplength=250, justify="left")
+        status.pack(fill="x", pady=10)
+
+        def render():
+            img = state["orig"]
+            if img is None:
+                return
+            oh, ow = img.shape[:2]
+            sc = min(860.0 / ow, 560.0 / oh)
+            state["sx"] = sc
+            disp = cv2.resize(img, (max(1, int(ow * sc)), max(1, int(oh * sc))))
+            dh, dw = disp.shape[:2]
+            cv2.imwrite(temp_disp, disp)
+            canvas.configure(width=dw, height=dh)
+            photo = tk.PhotoImage(file=temp_disp)
+            canvas.delete("all")
+            canvas.create_image(0, 0, image=photo, anchor="nw")
+            canvas.image = photo
+            state["rect_id"] = None
+            reg = state["region"]
+            if reg and reg.get("w") and reg.get("h"):
+                canvas.create_rectangle(reg["x"] * sc, reg["y"] * sc,
+                                        (reg["x"] + reg["w"]) * sc, (reg["y"] + reg["h"]) * sc,
+                                        outline=ACCENT_GREEN, width=2)
+
+        def set_image(data):
+            arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if arr is None:
+                status.configure(text="❌ ถอดรหัสรูปไม่สำเร็จ ลองรูปอื่น", fg=ACCENT_RED)
+                return
+            state["bytes"] = data
+            state["orig"] = arr
+            state["region"] = None
+            render()
+            status.configure(text=f"🖼️ โหลดรูปแล้ว ({arr.shape[1]}x{arr.shape[0]}) — ลากครอบคอลัมน์ชื่อ (ถ้าต้องการ) แล้วกด 'ดึงรายชื่อ'", fg=ACCENT_GREEN)
+
+        def load_from_clipboard(*_, auto=False):
+            try:
+                obj = ImageGrab.grabclipboard()
+            except Exception as e:
+                if not auto:
+                    status.configure(text=f"❌ อ่าน Clipboard ไม่ได้: {e}", fg=ACCENT_RED)
+                return
+            if isinstance(obj, list):
+                paths = [p for p in obj if isinstance(p, str) and os.path.isfile(p)]
+                if not paths:
+                    if not auto:
+                        status.configure(text="❌ Clipboard เป็นไฟล์แต่ไม่พบไฟล์รูป", fg=ACCENT_RED)
+                    return
+                try:
+                    with open(paths[0], "rb") as f:
+                        set_image(f.read())
+                except Exception as e:
+                    status.configure(text=f"❌ เปิดไฟล์จาก Clipboard ไม่ได้: {e}", fg=ACCENT_RED)
+                return
+            if obj is None:
+                if not auto:
+                    status.configure(text="❌ ไม่มีรูปใน Clipboard — แคป/ก๊อปรูปก่อนแล้วกด Ctrl+V", fg=ACCENT_RED)
+                return
+            try:
+                if obj.mode not in ("RGB", "RGBA"):
+                    obj = obj.convert("RGB")
+                buf = io.BytesIO()
+                obj.save(buf, format="PNG")
+                set_image(buf.getvalue())
+            except Exception as e:
+                status.configure(text=f"❌ แปลงรูปจาก Clipboard ไม่ได้: {e}", fg=ACCENT_RED)
+
+        def load_from_file():
+            path = filedialog.askopenfilename(
+                parent=dialog, title="เลือกไฟล์รูปหน้าสมาชิกชมรม",
+                filetypes=[("รูปภาพ", "*.png *.jpg *.jpeg *.bmp *.webp"), ("ทั้งหมด", "*.*")])
+            if not path:
+                return
+            try:
+                with open(path, "rb") as f:
+                    set_image(f.read())
+            except Exception as e:
+                status.configure(text=f"❌ เปิดไฟล์ไม่ได้: {e}", fg=ACCENT_RED)
+
+        press = {"x": 0, "y": 0}
+
+        def on_press(e):
+            press["x"], press["y"] = e.x, e.y
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+                state["rect_id"] = None
+
+        def on_motion(e):
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+            state["rect_id"] = canvas.create_rectangle(press["x"], press["y"], e.x, e.y, outline=ACCENT_ORANGE, width=2)
+
+        def on_release(e):
+            if state["orig"] is None:
+                status.configure(text="วางรูปก่อน", fg=ACCENT_RED)
+                return
+            sx = state["sx"] or 1.0
+            x1, y1 = min(press["x"], e.x), min(press["y"], e.y)
+            x2, y2 = max(press["x"], e.x), max(press["y"], e.y)
+            rx, ry = int(x1 / sx), int(y1 / sx)
+            rw, rh = int((x2 - x1) / sx), int((y2 - y1) / sx)
+            if rw < 3 or rh < 3:
+                state["region"] = None
+                status.configure(text="ล้างกรอบแล้ว (จะอ่านทั้งรูป) — หรือลากครอบคอลัมน์ชื่อใหม่", fg=ACCENT_ORANGE)
+                render()
+                return
+            state["region"] = {"x": rx, "y": ry, "w": rw, "h": rh}
+            status.configure(text=f"✅ ครอบคอลัมน์ชื่อ: x={rx} y={ry} w={rw} h={rh}\nกด 'ดึงรายชื่อ'", fg=ACCENT_GREEN)
+            render()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_motion)
+        canvas.bind("<ButtonRelease-1>", on_release)
+        dialog.bind("<Control-v>", load_from_clipboard)
+        dialog.bind("<Control-V>", load_from_clipboard)
+
+        def run_ocr():
+            reg = state["region"]
+            lang = guild_ocr_langs()
+            # ปรับ scale ตามความกว้างของส่วนที่จะอ่าน — รูปคอลัมน์ชื่อมักแคบ (100-200px)
+            # ต้องขยายเยอะให้ตัวหนังสือใหญ่พอ Tesseract ถึงจะอ่านแม่น
+            src = state["orig"]
+            w = reg["w"] if reg else (src.shape[1] if src is not None else 0)
+            scale = max(2, min(6, round(480 / w))) if w else 4
+            ok, txt, _ = ocr_text_tesseract(state["bytes"], region=reg, lang=lang, psm=6, scale=scale)
+            names = extract_guild_member_names(txt) if ok else []
+            return names
+
+        def test_read():
+            if state["bytes"] is None:
+                status.configure(text="วางรูปก่อน (Ctrl+V) หรือเปิดไฟล์", fg=ACCENT_RED)
+                return
+            names = run_ocr()
+            if names:
+                preview = ", ".join(names[:6])
+                status.configure(text=f"🔍 อ่านได้ {len(names)} ชื่อ:\n{preview}{' ...' if len(names) > 6 else ''}", fg=ACCENT_GREEN)
+            else:
+                status.configure(text="🔍 อ่านชื่อไม่ได้ — ลองครอบเฉพาะคอลัมน์ชื่อ (ไม่เอาไอคอน/เลเวล)", fg=ACCENT_RED)
+
+        def do_grab():
+            if state["bytes"] is None:
+                status.configure(text="วางรูปก่อน (Ctrl+V) หรือเปิดไฟล์", fg=ACCENT_RED)
+                return
+            status.configure(text="⏳ กำลังอ่านชื่อ...", fg=ACCENT_ORANGE)
+            dialog.update()
+
+            def worker():
+                from datetime import datetime
+                names = run_ocr()
+                base_dir = os.path.dirname(self.accounts_file)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                out_dir = os.path.join(base_dir, "guild_members", stamp)
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                    with open(os.path.join(out_dir, "page_01.png"), "wb") as f:
+                        f.write(state["bytes"])
+                    with open(os.path.join(out_dir, "members.txt"), "w", encoding="utf-8") as f:
+                        f.write("\n".join(names))
+                except Exception:
+                    pass
+                self.write_log(f"🖼️ อ่านรายชื่อจากรูปได้ {len(names)} ชื่อ (ตัดซ้ำแล้ว)", "success")
+
+                def show():
+                    if not names:
+                        status.configure(text="🔍 อ่านชื่อไม่ได้ — ลองครอบเฉพาะคอลัมน์ชื่อ (ไม่เอาไอคอน/เลเวล)", fg=ACCENT_RED)
+                        return
+                    on_close()
+                    self._show_guild_names_window(names, out_dir, "รูปที่วาง", bool(state["region"]))
+                self.after(0, show)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        btns = tk.Frame(right, bg=BG_DARK)
+        btns.pack(fill="x", pady=(14, 0))
+        ModernButton(btns, text="📋 วางรูป (Ctrl+V)", command=load_from_clipboard, variant="accent").pack(fill="x", pady=3)
+        ModernButton(btns, text="📂 เปิดไฟล์รูป", command=load_from_file, variant="subtle").pack(fill="x", pady=3)
+        ModernButton(btns, text="🔍 ทดสอบอ่าน", command=test_read, variant="subtle").pack(fill="x", pady=3)
+        ModernButton(btns, text="📋 ดึงรายชื่อ", command=do_grab, variant="primary").pack(fill="x", pady=3)
+
+        # ลองวางจาก clipboard อัตโนมัติตอนเปิด (ถ้ามีรูปอยู่แล้ว — เงียบถ้าไม่มี)
+        dialog.after(200, lambda: load_from_clipboard(auto=True))
 
     def open_guild_region_setup(self):
         """ตั้งพื้นที่คอลัมน์ชื่อสมาชิกชมรม: จับภาพหน้าสมาชิก -> ลากครอบเฉพาะคอลัมน์ชื่อ -> ทดสอบอ่าน -> บันทึก"""
@@ -1610,7 +1856,7 @@ class MuMuGUI(tk.Tk):
             if int(reg.get("w", 0)) <= 0 or int(reg.get("h", 0)) <= 0:
                 status.configure(text="ยังไม่ได้ลากกรอบคอลัมน์ชื่อ", fg=ACCENT_RED)
                 return
-            lang = "tha+eng" if "tha" in available_tesseract_langs() else "eng"
+            lang = guild_ocr_langs()
             ok, txt, _ = ocr_text_tesseract(state["bytes"], region=reg, lang=lang, psm=6, scale=3)
             names = extract_guild_member_names(txt) if ok else []
             if names:

@@ -95,6 +95,23 @@ def test_extract_drops_too_short_or_numeric_noise():
     assert extract_guild_member_names("ab\n7\niv\n|") == []
 
 
+# ===== ชื่อหลายภาษา: ไทย/ญี่ปุ่น/เกาหลี/จีน =====
+def test_extract_keeps_cjk_and_thai_names():
+    text = "Himaru\nสมชาย\nサクラ\n김철수\n小明"
+    assert extract_guild_member_names(text) == ["Himaru", "สมชาย", "サクラ", "김철수", "小明"]
+
+
+def test_extract_joins_ocr_inserted_spaces_in_thai_and_cjk():
+    # Tesseract มักแทรกช่องว่างระหว่างตัวอักษรไทย/ญี่ปุ่น -> ต้องรวมกลับเป็นคำเดียว
+    assert extract_guild_member_names("ม า น ะ ชั ย") == ["มานะชัย"]
+    assert extract_guild_member_names("サク ラ") == ["サクラ"]
+
+
+def test_extract_keeps_two_char_cjk_name():
+    # ชื่อจีน/ญี่ปุ่น 2 ตัวอักษรเป็นชื่อจริง ต้องไม่ถูกตัดด้วยเกณฑ์ความยาวขั้นต่ำ
+    assert extract_guild_member_names("小明") == ["小明"]
+
+
 # ===== find_yellow_frame (หาด่านถัดไปบน map) =====
 def _png_with_rect(h, w, rect=None, color=(0, 255, 255), thickness=6, filled=False):
     img = np.full((h, w, 3), (120, 110, 100), dtype=np.uint8)  # พื้นเทาๆ
