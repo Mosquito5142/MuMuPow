@@ -389,10 +389,34 @@ def in_match_autoplay(screen_bytes):
 
 
 _TESS_LANGS = None
+_TESSDATA_DIR = None
+
+# ภาษาที่รองรับสำหรับอ่านชื่อสมาชิกชมรม (นอกจาก eng) — ไทย/ญี่ปุ่น/เกาหลี/จีน
+_GUILD_OCR_LANG_ORDER = ["eng", "tha", "jpn", "kor", "chi_sim", "chi_tra"]
+
+
+def set_tessdata_dir(path):
+    """ชี้ให้ Tesseract ใช้ traineddata จากโฟลเดอร์นี้ (สำหรับภาษาที่โหลดเพิ่มเอง เช่น jpn/kor/chi).
+    ส่ง None/"" เพื่อกลับไปใช้ tessdata มาตรฐานของระบบ"""
+    global _TESSDATA_DIR, _TESS_LANGS
+    _TESSDATA_DIR = path or None
+    _TESS_LANGS = None  # ล้างแคชภาษา จะได้อ่านรายการใหม่จากโฟลเดอร์ที่ตั้ง
+
+
+def _tessdata_args():
+    return ["--tessdata-dir", _TESSDATA_DIR] if _TESSDATA_DIR else []
+
+
+def guild_ocr_langs():
+    """สตริงภาษาสำหรับ OCR รายชื่อชมรม รวมทุกภาษาที่ติดตั้งไว้ (eng ก่อนเสมอ).
+    เช่น 'eng+tha+jpn+kor+chi_sim+chi_tra' — ถ้าไม่มีภาษาไหนก็ข้ามไป"""
+    have = available_tesseract_langs()
+    picked = [l for l in _GUILD_OCR_LANG_ORDER if l in have]
+    return "+".join(picked) if picked else "eng"
 
 
 def available_tesseract_langs():
-    """คืน set ของภาษาที่ Tesseract มี (แคชไว้). ใช้เลือกว่าจะ OCR ด้วย eng หรือ tha+eng"""
+    """คืน set ของภาษาที่ Tesseract มี (แคชไว้). ใช้เลือกว่าจะ OCR ด้วยภาษาใดบ้าง"""
     global _TESS_LANGS
     if _TESS_LANGS is not None:
         return _TESS_LANGS
@@ -403,7 +427,7 @@ def available_tesseract_langs():
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = subprocess.SW_HIDE
-            r = subprocess.run([cmd, "--list-langs"], capture_output=True, text=True,
+            r = subprocess.run([cmd, *_tessdata_args(), "--list-langs"], capture_output=True, text=True,
                                startupinfo=si, timeout=10)
             for line in (r.stdout or "").splitlines():
                 line = line.strip()
@@ -453,8 +477,8 @@ def ocr_text_tesseract(screen_bytes, region=None, lang="eng", psm=6, scale=2):
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         si.wShowWindow = subprocess.SW_HIDE
         res = subprocess.run(
-            [cmd, tmp, "stdout", "-l", lang, "--psm", str(psm)],
-            capture_output=True, startupinfo=si, timeout=30,
+            [cmd, *_tessdata_args(), tmp, "stdout", "-l", lang, "--psm", str(psm)],
+            capture_output=True, startupinfo=si, timeout=60,
         )
         txt = res.stdout.decode("utf-8", errors="ignore")
         return True, txt, txt
@@ -475,10 +499,42 @@ _GUILD_EXACT_LABELS = {
     "สมาชิก", "เลเวล", "สถานะ", "แรงค์", "ค้นหา", "ชมรม",
 }
 _GUILD_THAI_STATUS = [
-    "นาที", "ชั่วโมง", "ก่อน", "ออกจากชมรม", "กัปตัน", "ดาวรุ่ง", "แอคทีฟ",
+    "สมาชิก", "นาที", "ชั่วโมง", "ก่อน", "ออกจากชมรม", "กัปตัน", "ดาวรุ่ง", "แอคทีฟ",
     "โปรดใส่", "หน้าแรก", "เกมเพลย์", "บันทึกประจำวัน", "ข้ามเซิร์ฟ",
 ]
 _GUILD_EN_TIME = re.compile(r"\b(?:minutes?|hours?|ago)\b", re.I)
+
+# อักษร CJK/คานะ/ฮันกึล — ชื่อญี่ปุ่น/เกาหลี/จีน (นับเป็นตัวอักษรที่ยอมรับได้)
+_CJK_CHARS = "぀-ヿ㐀-鿿가-힣"
+# สคริปต์ที่ไม่มีช่องว่างในคำ (ไทย + CJK) — ใช้รวมช่องว่างที่ Tesseract แทรกผิด
+_GUILD_NOSPACE = "฀-๿" + _CJK_CHARS
+_GUILD_JOIN_SPACE = re.compile(r"(?<=[" + _GUILD_NOSPACE + r"])[ \t]+(?=[" + _GUILD_NOSPACE + r"])")
+_GUILD_CJK = re.compile("[" + _CJK_CHARS + "]")
+_GUILD_NAME_CHARS = re.compile(r"[A-Za-z0-9฀-๿" + _CJK_CHARS + "]")
+# ตัวอักษร/เลขที่ "ไม่ใช่ไทย" (ละติน/เลขอารบิก/CJK) — ใช้ดูว่าบรรทัดเป็นไทยล้วนไหม
+_NON_THAI_NAME = re.compile(r"[A-Za-z0-9" + _CJK_CHARS + "]")
+# สระ/วรรณยุกต์ไทย — คำไทยจริงต้องมีอย่างน้อยหนึ่งตัว (อักษรมั่วจากเส้นคั่นมักเป็นพยัญชนะล้วน)
+_THAI_VOWEL_MARK = set("ะัาำิีึืุูๅ็เแโใไ่้๊๋์ํ")
+_THAI_LETTER = re.compile(r"[ก-ฮ]")
+
+
+def _is_noise_line(line):
+    """ตรวจบรรทัด 'อักษรมั่ว' ที่มักมาจากเส้นคั่น/พื้นหลัง ไม่ใช่ชื่อจริง:
+    - อักษรตัวเดิมซ้ำๆ (เช่น 'รรรรรร', 'ーーーー', 'พรรรรร')
+    - ไทยล้วนที่ไม่มีสระเลย (พยัญชนะมั่ว เช่น 'พพลดด๓')"""
+    compact = re.sub(r"\s+", "", line)
+    if len(compact) < 4:
+        return False
+    uniq = set(compact)
+    if len(uniq) <= 2:
+        return True
+    if max(compact.count(c) for c in uniq) / len(compact) >= 0.55:
+        return True
+    # ไทยล้วน (ไม่มีละติน/เลข/CJK) แต่ไม่มีสระเลย -> อักษรมั่ว
+    if _THAI_LETTER.search(compact) and not _NON_THAI_NAME.search(compact):
+        if not any(c in _THAI_VOWEL_MARK for c in compact):
+            return True
+    return False
 
 
 def normalize_guild_name(value):
@@ -493,6 +549,8 @@ def _clean_ocr_line(line):
     s = unicodedata.normalize("NFKC", line)
     s = re.sub(r"^[|()\[\]{}\s]+|[|()\[\]{}\s]+$", "", s)
     s = re.sub(r"\s+", " ", s).strip()
+    # Tesseract มักแทรกช่องว่างระหว่างตัวอักษรไทย/ญี่ปุ่น/เกาหลี/จีน — รวมกลับให้เป็นคำเดียว
+    s = _GUILD_JOIN_SPACE.sub("", s)
     return s
 
 
@@ -506,7 +564,9 @@ def _extract_name_candidate(line):
 def _is_likely_member_name(line):
     if not line:
         return False
-    if len(line) < 3 or len(line) > 32:
+    # ชื่อ CJK มักสั้น (2 ตัวก็เป็นชื่อจริง เช่น 小明) — ผ่อนความยาวขั้นต่ำเมื่อมีอักษร CJK
+    min_len = 2 if _GUILD_CJK.search(line) else 3
+    if len(line) < min_len or len(line) > 32:
         return False
     low = line.lower()
     if low in _GUILD_EXACT_LABELS:
@@ -522,8 +582,10 @@ def _is_likely_member_name(line):
         return False
     if re.fullmatch(r"[ivxlcdm]+", line, re.I):
         return False
-    # ต้องมีตัวอักษรหรือตัวเลขอย่างน้อย 1 ตัว (ละติน/ไทย/เลข)
-    if not re.search(r"[A-Za-z0-9฀-๿]", line):
+    if _is_noise_line(line):
+        return False
+    # ต้องมีตัวอักษร/ตัวเลขอย่างน้อย 1 ตัว (ละติน/ไทย/เลข/ญี่ปุ่น/เกาหลี/จีน)
+    if not _GUILD_NAME_CHARS.search(line):
         return False
     return True
 
