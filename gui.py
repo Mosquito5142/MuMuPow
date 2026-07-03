@@ -1272,6 +1272,15 @@ class MuMuGUI(tk.Tk):
                   "แนะนำใส่ story_map.png (ครอปหัวข้อ 'บทที่..' หรือมุมจอหน้าเลือกด่าน) เพื่อยืนยัน 'กลับถึง map' ให้แม่นกว่ากรอบเหลือง · หยุดด้วยปุ่ม 'หยุดทันที'"),
             bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
         ).pack(anchor="w")
+
+        interval_row = tk.Frame(story_box, bg=BG_CARD)
+        interval_row.pack(anchor="w", fill="x", pady=(8, 0))
+        tk.Label(interval_row, text="ความถี่เช็คจอ (วิ):", bg=BG_CARD, fg=FG_WHITE, font=("Segoe UI", 9)).pack(side="left")
+        self._story_scan_interval_var = tk.StringVar(value="2.5")
+        ModernEntry(interval_row, textvariable=self._story_scan_interval_var, width=6).pack(side="left", padx=(6, 0))
+        tk.Label(interval_row, text="ยิ่งน้อย = ตอบสนองไวขึ้นแต่กิน CPU มากขึ้น (แนะนำ 2-3 วิ ถ้ารันหลายเครื่องพร้อมกัน)",
+                 bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic")).pack(side="left", padx=(8, 0))
+
         ModernButton(story_box, text="🎮 เริ่ม Story Auto", command=self.start_story_auto, variant="primary").pack(anchor="w", pady=(8, 0))
 
     def start_story_auto(self):
@@ -1302,9 +1311,18 @@ class MuMuGUI(tk.Tk):
         if max_stages is None:  # กด Cancel
             return
 
+        try:
+            scan_interval = float(self._story_scan_interval_var.get())
+            if scan_interval <= 0:
+                raise ValueError
+        except (ValueError, AttributeError):
+            scan_interval = 2.5
+            self.write_log("⚠️ ค่าความถี่เช็คจอไม่ถูกต้อง -> ใช้ค่าเริ่มต้น 2.5 วิ", "warning")
+
         if not messagebox.askyesno(
             "เริ่ม Story Auto",
-            f"จะเริ่มเล่นเนื้อเรื่องอัตโนมัติพร้อมกัน {len(devices)} เครื่อง สูงสุด {max_stages} ด่าน/เครื่อง\n\n"
+            f"จะเริ่มเล่นเนื้อเรื่องอัตโนมัติพร้อมกัน {len(devices)} เครื่อง สูงสุด {max_stages} ด่าน/เครื่อง "
+            f"(เช็คจอทุก {scan_interval:g} วิ)\n\n"
             "ตรวจว่าทุกเครื่องอยู่ที่ 'หน้าเลือกด่าน' เห็นกรอบเหลืองของด่านถัดไปแล้ว\n"
             "หยุดได้ตลอดด้วยปุ่ม 'หยุดทันที' ที่แท็บมาโคร (หยุดทุกเครื่องพร้อมกัน)"):
             return
@@ -1316,7 +1334,7 @@ class MuMuGUI(tk.Tk):
 
         def per_device(dev):
             try:
-                self.run_story_auto(dev, max_stages=max_stages)
+                self.run_story_auto(dev, max_stages=max_stages, scan_interval=scan_interval)
             except Exception as e:
                 self.write_log(f"❌ [{dev}] Story Auto ผิดพลาด: {e}", "error")
 
