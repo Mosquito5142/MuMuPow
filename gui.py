@@ -13,7 +13,7 @@ from mumu_controller import (
     MuMuController, find_element_center, list_ui_elements, find_tesseract,
     get_host_specs, estimate_mumu_capacity, DEFAULT_MUMU_PROFILE,
     stitch_png_vertically, png_similarity,
-    ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs,
+    ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs, names_match,
     set_tessdata_dir, guild_ocr_langs,
     find_yellow_frame, find_highlighted_stage, find_swipe_glow, in_match_autoplay,
     ocr_find_button, gemini_tap_suggestion,
@@ -122,7 +122,8 @@ def build_macro_step_summary(idx, step):
         delay_text = f"{delay:g}s" if isinstance(delay, (int, float)) else f"{delay}s"
 
     desc = step.get("desc") or ""
-    return f"{idx + 1:02d}  {label:<12}  {detail:<28}  {delay_text:<6}  {desc}"
+    anchor_mark = "📷" if step.get("anchor_img") else "  "  # มีภาพ anchor กันจอมั่ว
+    return f"{idx + 1:02d}{anchor_mark}{label:<12}  {detail:<28}  {delay_text:<6}  {desc}"
 
 
 def account_display_name(account):
@@ -348,6 +349,9 @@ class MuMuGUI(tk.Tk):
         # ระบบดึงรายชื่อสมาชิกชมรม — พื้นที่คอลัมน์ชื่อสำหรับครอปก่อน OCR
         self.guild_config_file = os.path.join(base_dir, "guild_ocr.json")
         self.guild_config = self.load_guild_config()
+        # ระบบรีเซ็ตเกมเมื่อบัญชีติดปัญหา (ปิดเกม+เปิดใหม่+เปิดช่อง login) กันโดมิโน่ในคิว
+        self.game_reset_file = os.path.join(base_dir, "game_reset.json")
+        self.game_reset_config = self.load_game_reset_config()
         # tessdata ของแอปเอง (มี tha/jpn/kor/chi_sim/chi_tra ที่โหลดเพิ่ม) — ให้ Tesseract อ่านชื่อหลายภาษาได้
         self.guild_tessdata_dir = os.path.join(base_dir, "tessdata")
         try:
@@ -978,6 +982,15 @@ class MuMuGUI(tk.Tk):
         ModernButton(primary_step_row, text="อัปเดต", command=self.update_step, variant="warning").pack(side="left", fill="x", expand=True)
         
         ModernButton(secondary_step_row, text="บันทึกพิกัดด้วยภาพ", command=self.open_visual_recorder, variant="primary").pack(fill="x", pady=(6, 4))
+
+        ModernButton(secondary_step_row, text="🧪 ทดสอบสเต็ปนี้ (แตะจริงบนจอ)", command=self.test_selected_step, variant="warning").pack(fill="x", pady=(6, 2))
+
+        anchor_row = tk.Frame(secondary_step_row, bg=BG_DARK)
+        anchor_row.pack(fill="x", pady=2)
+        ModernButton(anchor_row, text="📷 Anchor รอบจุดกด", command=self.capture_step_anchor, variant="subtle").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(anchor_row, text="🖼️ เลือกพื้นที่เอง", command=self.open_step_anchor_setup, variant="subtle").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(anchor_row, text="ลบ", command=self.clear_step_anchor, variant="subtle").pack(side="right")
+
         ModernButton(secondary_step_row, text="ล้างฟอร์ม", command=self.clear_form, variant="subtle").pack(fill="x", pady=2)
         
         form_panel.columnconfigure(0, weight=1)
@@ -2821,6 +2834,11 @@ class MuMuGUI(tk.Tk):
             "export_path": "diamond_export.json",
             "web_base_url": "",
             "auto_push": True,
+            # ยืนยันตัวตนก่อนเขียนเพชร (กันอ่านผิดจอ/เขียนผิดบัญชี):
+            # OCR ชื่อในเกมมุมซ้ายบน เทียบกับ ingamename ของบัญชี ถ้าไม่ตรง -> ไม่เขียน
+            "verify_name": True,
+            "name_region": {"x": 90, "y": 18, "w": 140, "h": 26},
+            "name_match_ratio": 0.72,
         }
         try:
             if os.path.exists(self.diamond_config_file):
@@ -2852,6 +2870,80 @@ class MuMuGUI(tk.Tk):
         except Exception as e:
             self.write_log(f"โหลดการตั้งค่าดึงรายชื่อชมรมขัดข้อง: {e}", "warning")
         return defaults
+
+    def load_game_reset_config(self):
+        """โหลดการตั้งค่ารีเซ็ตเกมเมื่อบัญชีติดปัญหา (game_reset.json)
+        ดีฟอลต์: ปิด/เปิดเกม Kuroko + 3 ทาปเปิดช่อง login ที่ผู้ใช้ให้มา"""
+        defaults = {
+            "enabled": True,
+            "package": "com.lmdgame.kuroko.sea",
+            "boot_wait": 35.0,          # รอเกม boot หลังเปิดใหม่ (วินาที)
+            "open_login_steps": [        # ลำดับกดจากหน้า home -> ช่องกรอก login โผล่
+                {"type": "tap", "x": "925", "y": "96", "delay": 5.0, "desc": "ไอดี"},
+                {"type": "tap", "x": "621", "y": "192", "delay": 1.0, "desc": "สลับ"},
+                {"type": "tap", "x": "478", "y": "387", "delay": 1.0, "desc": "ใช้เมล"},
+            ],
+        }
+        try:
+            if os.path.exists(self.game_reset_file):
+                with open(self.game_reset_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    defaults.update(data)
+        except Exception as e:
+            self.write_log(f"โหลดการตั้งค่ารีเซ็ตเกมขัดข้อง: {e}", "warning")
+        return defaults
+
+    def _reset_device_to_login(self, device):
+        """รีเซ็ตเกมบนจอนี้ให้กลับมา 'ช่องกรอก login' (ใช้เมื่อบัญชีติดปัญหากลางคัน)
+        ปิดเกม -> เปิดใหม่ -> รอ boot -> รันสเต็ปเปิดช่อง login -> พร้อมรับบัญชีถัดไป
+        คืน True ถ้าทำครบ (ไม่การันตีว่าถึงหน้า login เป๊ะ แต่ทำให้จอไม่ค้างสภาพเดิม)"""
+        cfg = self.game_reset_config or {}
+        if not cfg.get("enabled", True):
+            return False
+        pkg = (cfg.get("package") or "").strip()
+        if not pkg:
+            self.write_log(f"   ⚠️ [{device}] ยังไม่ได้ตั้งชื่อ package เกม -> ข้ามการรีเซ็ต", "warning")
+            return False
+        try:
+            self.write_log(f"   🔄 [{device}] รีเซ็ตเกม: ปิด {pkg} แล้วเปิดใหม่...", "warning")
+            self.controller.stop_app(device, pkg)
+            time.sleep(2.0)
+            self.controller.launch_app_by_package(device, pkg)
+
+            # รอ boot — poll จนแคปจอได้ต่อเนื่อง หรือครบ boot_wait
+            boot_wait = float(cfg.get("boot_wait", 35.0) or 35.0)
+            deadline = time.time() + boot_wait
+            while time.time() < deadline:
+                if not self.macro_running:
+                    return False
+                time.sleep(3.0)
+                ok, _ = self.controller.capture_screenshot_bytes(device)
+                if not ok:
+                    # เผื่อ ADB หลุดชั่วคราวตอน restart -> ลองต่อใหม่ 1 ครั้ง (safety net)
+                    self.controller.run_adb_cmd(["connect", device])
+            # รันสเต็ปเปิดช่อง login — รองรับ anchor (รอจนเห็นภาพก่อนกด ไม่กดตาบอด)
+            for st in cfg.get("open_login_steps", []):
+                if not self.macro_running:
+                    return False
+                if st.get("anchor_img"):
+                    gate = self._wait_for_step_anchor(device, st)
+                    if gate == "stopped":
+                        return False
+                    if gate == "missing":
+                        # หน้าไม่ตรง (boot ช้ากว่าคาด/สลับบัญชีไม่ขึ้น) -> กดต่อแบบ best-effort
+                        self.write_log(f"   ⚠️ [{device}] รีเซ็ต: ไม่เจอ anchor '{st.get('desc','')}' -> กดตามพิกัด", "warning")
+                try:
+                    x, y = int(float(st.get("x"))), int(float(st.get("y")))
+                    self.controller.tap(device, x, y)
+                    time.sleep(float(st.get("delay", 1.0) or 1.0))
+                except (TypeError, ValueError):
+                    continue
+            self.write_log(f"   ✅ [{device}] รีเซ็ตเกมเสร็จ -> พร้อมรับบัญชีถัดไป", "success")
+            return True
+        except Exception as e:
+            self.write_log(f"   ❌ [{device}] รีเซ็ตเกมล้มเหลว: {e}", "error")
+            return False
 
     def save_guild_config(self):
         """บันทึกการตั้งค่าดึงรายชื่อสมาชิกชมรมลงไฟล์ guild_ocr.json"""
@@ -5333,10 +5425,308 @@ class MuMuGUI(tk.Tk):
         if step is None:
             return
 
+        # คงข้อมูล anchor (ภาพ+ตั้งค่า) ที่ไม่ได้อยู่ในฟอร์มไว้ ไม่ให้หายตอนอัปเดตสเต็ป
+        old = self.macro_steps[idx] if idx < len(self.macro_steps) else {}
+        for k in ("anchor_img", "anchor_region", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+            if k in old:
+                step[k] = old[k]
+
         self.macro_steps[idx] = step
         self.refresh_listbox()
         self.step_listbox.selection_set(idx)
         self.write_log(f"อัปเดตขั้นตอนลำดับที่ {idx+1} สำเร็จแล้ว", "info")
+
+    def test_selected_step(self):
+        """ทดสอบสเต็ปที่เลือก — แตะ/ปัดพิกัดจริงบนจอทันที (ให้เห็นว่ากดตรงไหน)
+        ถ้าสเต็ปมี anchor จะเช็คก่อนว่าตอนนี้เจอภาพบนจอไหม (ยืนยันว่าอยู่หน้าถูก)"""
+        if self.macro_running:
+            messagebox.showwarning("กำลังรันอยู่", "หยุดมาโครก่อนถึงจะทดสอบสเต็ปได้")
+            return
+        selection = self.step_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("ยังไม่ได้เลือกสเต็ป", "คลิกเลือกสเต็ปในลิสต์ซ้ายก่อน แล้วค่อยกดทดสอบ")
+            return
+        idx = selection[0]
+        step = self.macro_steps[idx]
+        t = step.get("type", "")
+        if t not in ("tap", "swipe"):
+            messagebox.showinfo("ทดสอบได้เฉพาะ tap/swipe", f"สเต็ปชนิด '{t}' ยังไม่รองรับการทดสอบแบบแตะจริง\n(ใช้กับ tap/swipe ที่มีพิกัด)")
+            return
+
+        devices = self.get_selected_devices() or self.controller.get_connected_devices()
+        if not devices:
+            messagebox.showerror("ไม่พบอุปกรณ์", "ต้องมี Emulator เชื่อมต่อ + เปิดหน้าที่จะทดสอบไว้ก่อน")
+            return
+        device = devices[0]
+
+        # ถ้ามี anchor -> รายงานว่าตอนนี้เจอภาพบนจอไหม (ให้รู้ว่าอยู่หน้าถูกหรือเปล่า)
+        if step.get("anchor_img"):
+            import base64
+            try:
+                tb = base64.b64decode(step["anchor_img"])
+                ok, data = self.controller.capture_screenshot_bytes(device)
+                if ok:
+                    thr = float(step.get("anchor_threshold", 0.8) or 0.8)
+                    found, _x, _y, msg = self.controller.match_template_bytes(data, tb, thr)
+                    icon = "✅ เจอภาพ anchor" if found else "❌ ไม่เจอภาพ anchor (อาจอยู่ผิดหน้า)"
+                    self.write_log(f"   🔎 [{device}] ทดสอบ anchor สเต็ป {idx+1}: {icon} — {msg}", "info" if found else "warning")
+            except Exception:
+                pass
+
+        try:
+            if t == "tap":
+                x, y = int(float(step["x"])), int(float(step["y"]))
+                self.write_log(f"   🧪 [{device}] ทดสอบแตะสเต็ป {idx+1} ที่ ({x},{y})", "warning")
+                self.controller.tap(device, x, y)
+            else:  # swipe
+                x, y = int(float(step["x"])), int(float(step["y"]))
+                x2, y2 = int(float(step["x2"])), int(float(step["y2"]))
+                dur = int(float(step.get("duration", 300) or 300))
+                self.write_log(f"   🧪 [{device}] ทดสอบปัดสเต็ป {idx+1} ({x},{y})→({x2},{y2})", "warning")
+                self.controller.swipe(device, x, y, x2, y2, dur)
+        except (TypeError, ValueError, KeyError) as e:
+            messagebox.showerror("พิกัดไม่ถูกต้อง", f"สเต็ปนี้พิกัดไม่ครบ/ไม่ถูกต้อง: {e}")
+
+    def open_step_anchor_setup(self):
+        """เลือกพื้นที่ anchor เอง (ลากกรอบบนภาพจริง) — แยกจากจุดกด
+        ใช้ตอนจุดกดอยู่บนบริเวณที่ขยับได้ (เช่นตัวละครหน้า Home) แล้วอยากยืนยันหน้าด้วยจุดนิ่งแทน"""
+        if self.macro_running:
+            messagebox.showwarning("คำเตือน", "หยุดมาโครก่อนตั้งค่า", parent=self)
+            return
+        selection = self.step_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("ยังไม่ได้เลือกสเต็ป", "คลิกเลือกสเต็ป tap/swipe ในลิสต์ซ้ายก่อน")
+            return
+        idx = selection[0]
+        step = self.macro_steps[idx]
+        if step.get("type") not in ("tap", "swipe"):
+            messagebox.showwarning("ใช้ได้เฉพาะ tap/swipe", "Anchor ใช้กับสเต็ป tap/swipe เท่านั้น")
+            return
+        try:
+            tap_x, tap_y = int(float(step.get("x"))), int(float(step.get("y")))
+        except (TypeError, ValueError):
+            tap_x, tap_y = None, None
+
+        devices = self.get_selected_devices() or self.controller.get_connected_devices()
+        if not devices:
+            messagebox.showerror("ไม่พบอุปกรณ์", "ต้องมี Emulator เชื่อมต่อ + เปิดหน้าที่จะอัด anchor ไว้ก่อน")
+            return
+
+        import cv2, numpy as np, base64
+        dialog = tk.Toplevel(self)
+        dialog.title(f"🖼️ เลือกพื้นที่ Anchor — สเต็ป {idx+1}")
+        dialog.configure(bg=BG_DARK)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        state = {"orig": None, "bytes": None, "sx": 1.0, "rect_id": None,
+                 "region": None, "rect_shape": None}
+        temp_disp = os.path.join(self.templates_dir, "anchor_setup_disp.png")
+
+        def on_close():
+            try:
+                if os.path.exists(temp_disp):
+                    os.remove(temp_disp)
+            except Exception:
+                pass
+            dialog.grab_release()
+            dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+
+        left = tk.Frame(dialog, bg=BG_DARK); left.pack(side="left", padx=15, pady=15)
+        canvas = tk.Canvas(left, width=800, height=450, bg="#000000", highlightthickness=1, highlightbackground=BG_PANEL)
+        canvas.pack()
+        tk.Label(left, text="🔴 จุดแดง = ตำแหน่งที่จะกด | ลากกรอบเขียวครอบ 'จุดนิ่งที่ใช้ยืนยันหน้า' (ปุ่ม/ไอคอน/ข้อความ/เลข — อย่าเอาตัวละครที่ขยับ)",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), wraplength=790, justify="left").pack(anchor="w", pady=(6, 0))
+
+        right = tk.Frame(dialog, bg=BG_DARK, padx=15, pady=15); right.pack(side="right", fill="both", expand=True)
+        tk.Label(right, text="📱 Emulator:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        dev_var = tk.StringVar(value=devices[0])
+        ttk.Combobox(right, textvariable=dev_var, values=devices, state="readonly").pack(fill="x", pady=(2, 10))
+        tk.Label(right, text=f"สเต็ป {idx+1}: {step.get('desc','')}\nจุดกด: ({tap_x},{tap_y})",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(0, 8))
+        status = tk.Label(right, text="ลากกรอบครอบจุดนิ่ง แล้วกด 'ทดสอบ match'", bg=BG_DARK, fg=ACCENT_ORANGE,
+                          font=("Segoe UI", 9), wraplength=240, justify="left")
+        status.pack(fill="x", pady=10)
+
+        def render():
+            img = state["orig"]
+            if img is None:
+                return
+            oh, ow = img.shape[:2]
+            sc = min(800.0 / ow, 450.0 / oh)
+            state["sx"] = sc
+            disp = cv2.resize(img, (int(ow * sc), int(oh * sc)))
+            dh, dw = disp.shape[:2]
+            cv2.imwrite(temp_disp, disp)
+            canvas.configure(width=dw, height=dh)
+            photo = tk.PhotoImage(file=temp_disp)
+            canvas.delete("all")
+            canvas.create_image(0, 0, image=photo, anchor="nw")
+            canvas.image = photo
+            state["rect_id"] = None
+            # จุดกด (แดง)
+            if tap_x is not None:
+                mx, my = tap_x * sc, tap_y * sc
+                canvas.create_oval(mx - 6, my - 6, mx + 6, my + 6, outline="#ff3b3b", width=2)
+                canvas.create_line(mx - 12, my, mx + 12, my, fill="#ff3b3b", width=1)
+                canvas.create_line(mx, my - 12, mx, my + 12, fill="#ff3b3b", width=1)
+            # กรอบ anchor ที่เลือกไว้ (เขียว)
+            reg = state["region"]
+            if reg:
+                canvas.create_rectangle(reg["x"] * sc, reg["y"] * sc,
+                                        (reg["x"] + reg["w"]) * sc, (reg["y"] + reg["h"]) * sc,
+                                        outline=ACCENT_GREEN, width=2)
+
+        def capture():
+            ok, data = self.controller.capture_screenshot_bytes(dev_var.get())
+            if not ok:
+                status.configure(text=f"❌ จับภาพล้มเหลว: {data}", fg=ACCENT_RED); return
+            state["bytes"] = data
+            state["orig"] = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            render()
+            status.configure(text="📸 จับภาพแล้ว — ลากกรอบครอบจุดนิ่ง", fg=ACCENT_GREEN)
+
+        press = {"x": 0, "y": 0}
+
+        def on_press(e):
+            press["x"], press["y"] = e.x, e.y
+
+        def on_motion(e):
+            if state["rect_id"]:
+                canvas.delete(state["rect_id"])
+            state["rect_id"] = canvas.create_rectangle(press["x"], press["y"], e.x, e.y, outline=ACCENT_ORANGE, width=2)
+
+        def on_release(e):
+            if state["orig"] is None:
+                status.configure(text="จับภาพก่อน", fg=ACCENT_RED); return
+            sx = state["sx"] or 1.0
+            x1, y1 = min(press["x"], e.x), min(press["y"], e.y)
+            x2, y2 = max(press["x"], e.x), max(press["y"], e.y)
+            rx, ry = int(x1 / sx), int(y1 / sx)
+            rw, rh = int((x2 - x1) / sx), int((y2 - y1) / sx)
+            if rw < 8 or rh < 8:
+                status.configure(text="กรอบเล็กเกินไป ลากใหม่", fg=ACCENT_RED); return
+            state["region"] = {"x": rx, "y": ry, "w": rw, "h": rh}
+            render()
+            status.configure(text=f"✅ พื้นที่ anchor: x={rx} y={ry} w={rw} h={rh}\nกด 'ทดสอบ match' หรือ 'บันทึก'", fg=ACCENT_GREEN)
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_motion)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+        def _crop_bytes():
+            reg = state["region"]
+            if not reg or state["orig"] is None:
+                return None
+            img = state["orig"]
+            c = img[reg["y"]:reg["y"] + reg["h"], reg["x"]:reg["x"] + reg["w"]]
+            if c.size == 0:
+                return None
+            return cv2.imencode(".png", c)[1].tobytes()
+
+        def test_match():
+            tb = _crop_bytes()
+            if tb is None:
+                status.configure(text="ยังไม่ได้ลากกรอบ anchor", fg=ACCENT_RED); return
+            ok, data = self.controller.capture_screenshot_bytes(dev_var.get())
+            if not ok:
+                status.configure(text="แคปจอทดสอบไม่ได้", fg=ACCENT_RED); return
+            found, _x, _y, msg = self.controller.match_template_bytes(data, tb, 0.8)
+            if found:
+                status.configure(text=f"✅ match ผ่าน! {msg}\nพื้นที่นี้ใช้ได้ กด 'บันทึก'", fg=ACCENT_GREEN)
+            else:
+                status.configure(text=f"⚠️ {msg}\nถ้าจอไม่เปลี่ยนแต่ match ต่ำ = เลือกจุดที่ขยับ ลองเลือกจุดนิ่งกว่านี้", fg=ACCENT_ORANGE)
+
+        def save_and_close():
+            tb = _crop_bytes()
+            if tb is None:
+                status.configure(text="ยังไม่ได้ลากกรอบ anchor", fg=ACCENT_RED); return
+            step["anchor_img"] = base64.b64encode(tb).decode("ascii")
+            step["anchor_region"] = dict(state["region"])  # เก็บไว้เผื่อแก้ซ้ำ (โชว์กรอบเดิม)
+            step.setdefault("anchor_timeout", 8.0)
+            step.setdefault("anchor_threshold", 0.8)
+            step.setdefault("anchor_on_fail", "abort")
+            self.refresh_listbox()
+            self.step_listbox.selection_set(idx)
+            self.write_log(f"📷 ตั้งพื้นที่ Anchor สเต็ป {idx+1} แล้ว (อย่าลืมกด 'บันทึกโปรไฟล์' เพื่อเก็บลงไฟล์)", "success")
+            on_close()
+
+        btns = tk.Frame(right, bg=BG_DARK); btns.pack(fill="x", pady=(14, 0))
+        ModernButton(btns, text="📸 จับภาพใหม่", command=capture, variant="primary").pack(fill="x", pady=3)
+        ModernButton(btns, text="🔍 ทดสอบ match", command=test_match, variant="accent").pack(fill="x", pady=3)
+        ModernButton(btns, text="💾 บันทึก Anchor", command=save_and_close, variant="primary").pack(fill="x", pady=3)
+
+        # โหลดกรอบเดิม (ถ้าเคยตั้ง region ไว้) — เก็บ region ล่าสุดในสเต็ปด้วย เผื่อแก้ซ้ำ
+        if step.get("anchor_region"):
+            state["region"] = dict(step["anchor_region"])
+        dialog.after(200, capture)
+
+    def capture_step_anchor(self, box_w=170, box_h=90):
+        """อัด 'ภาพ anchor' ให้สเต็ปที่เลือก — แคปจอจริงแล้วครอปรอบจุดที่กด
+        ตอนรัน ระบบจะ 'รอจนเห็นภาพนี้บนจอ' ก่อนกด (จอช้า=รอ, จอไม่ตรง=หยุดกันมั่ว)"""
+        import base64
+        selection = self.step_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("ยังไม่ได้เลือกสเต็ป", "คลิกเลือกสเต็ปในลิสต์ซ้ายก่อน แล้วค่อยกดอัด Anchor")
+            return
+        idx = selection[0]
+        step = self.macro_steps[idx]
+        t = step.get("type", "")
+        if t not in ("tap", "swipe"):
+            messagebox.showwarning("ใช้ได้เฉพาะ tap/swipe", "Anchor ใช้กับสเต็ป tap หรือ swipe (จุดที่กด) เท่านั้น")
+            return
+        try:
+            cx = int(float(step.get("x")))
+            cy = int(float(step.get("y")))
+        except (TypeError, ValueError):
+            messagebox.showerror("ไม่มีพิกัด", "สเต็ปนี้ไม่มีพิกัด x,y ที่ถูกต้อง")
+            return
+
+        devices = self.get_selected_devices() or self.controller.get_connected_devices()
+        if not devices:
+            messagebox.showerror("ไม่พบอุปกรณ์", "ต้องมี Emulator เชื่อมต่อ + เปิดหน้าที่จะอัดภาพไว้ก่อน")
+            return
+        device = devices[0]
+        ok, data = self.controller.capture_screenshot_bytes(device)
+        if not ok:
+            messagebox.showerror("แคปจอไม่สำเร็จ", f"อ่านหน้าจอ [{device}] ไม่ได้: {data}")
+            return
+        try:
+            import cv2, numpy as np
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            h, w = img.shape[:2]
+            x1 = max(0, min(w - box_w, cx - box_w // 2))
+            y1 = max(0, min(h - box_h, cy - box_h // 2))
+            crop = img[y1:y1 + box_h, x1:x1 + box_w]
+            enc = cv2.imencode(".png", crop)[1].tobytes()
+            step["anchor_img"] = base64.b64encode(enc).decode("ascii")
+            step.setdefault("anchor_timeout", 8.0)
+            step.setdefault("anchor_threshold", 0.8)
+            step.setdefault("anchor_on_fail", "abort")
+        except Exception as e:
+            messagebox.showerror("ครอปภาพล้มเหลว", str(e))
+            return
+
+        self.refresh_listbox()
+        self.step_listbox.selection_set(idx)
+        self.step_listbox.see(idx)
+        self.write_log(f"📷 อัด Anchor ให้สเต็ป {idx+1} แล้ว (รอจนเห็นภาพนี้ก่อนกด | timeout 8วิ | ไม่เจอ=หยุดจอ)", "success")
+
+    def clear_step_anchor(self):
+        """ลบภาพ anchor ออกจากสเต็ปที่เลือก (กลับไปกดตามพิกัด/เวลาแบบเดิม)"""
+        selection = self.step_listbox.curselection()
+        if not selection:
+            return
+        idx = selection[0]
+        step = self.macro_steps[idx]
+        if not step.get("anchor_img"):
+            return
+        for k in ("anchor_img", "anchor_region", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+            step.pop(k, None)
+        self.refresh_listbox()
+        self.step_listbox.selection_set(idx)
+        self.write_log(f"ลบ Anchor ของสเต็ป {idx+1} แล้ว", "warning")
 
     def delete_step(self):
         selection = self.step_listbox.curselection()
@@ -6206,6 +6596,10 @@ class MuMuGUI(tk.Tk):
             result["duration"] = round(time.time() - run_start, 1)
             if result["errors"] and result["status"] == "completed":
                 result["status"] = "device_error"
+            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> รีเซ็ตเกมให้จอกลับมาช่อง login สะอาด
+            # กันโดมิโน่: ถ้าไม่รีเซ็ต บัญชีถัดไปในคิวจอนี้จะเริ่มจากจอค้าง แล้วพังต่อกันหมด
+            if result["status"] in ("device_error", "macro_error"):
+                self._reset_device_to_login(device)
             return result
 
         # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี
@@ -6251,6 +6645,26 @@ class MuMuGUI(tk.Tk):
             if step_delay > 0:
                 step_delay = step_delay * random.uniform(0.8, 1.4)
 
+            # === Anchor gate (ชั้น B): ถ้าสเต็ปมีภาพ anchor -> 'รอจนเห็นภาพนั้นบนจอ' ก่อนทำ ===
+            # กันปัญหาจอช้า/ค้างแล้วกดตาบอดจนมั่ว: จอช้า=รอจนตามทัน, จอไม่ตรง=ตามนโยบาย anchor_on_fail
+            if step.get("anchor_img"):
+                gate = self._wait_for_step_anchor(device, step)
+                if gate == "stopped":
+                    result["status"] = "stopped"
+                    return finish()
+                if gate == "missing":
+                    policy = step.get("anchor_on_fail", "abort")
+                    if policy == "skip":
+                        self.write_log(f"   ⏭️ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} ({desc}) -> ข้ามขั้นนี้", "warning")
+                        continue
+                    elif policy == "tap":
+                        self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
+                    else:  # abort — หยุดจอนี้ (กันรันมั่ว) จออื่นเดินต่อ + รายงานให้ตามเก็บ
+                        self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} ({desc}) -> หยุดจอนี้ กันรันมั่ว", "error")
+                        result["status"] = "device_error"
+                        result["error"] = f"anchor_fail: ขั้น {idx+1} {desc}"
+                        return finish()
+
             # ประมวลผลคำสั่งมาโคร ผ่านตาราง dispatch (handler ต่อชนิด step)
             ctx.step_delay = step_delay
             handler = handlers.get(t)
@@ -6263,6 +6677,40 @@ class MuMuGUI(tk.Tk):
                 return finish()
 
         return finish()
+
+    def _wait_for_step_anchor(self, device, step):
+        """รอจนเจอ 'ภาพ anchor' ของสเต็ปบนจอ (base64 ในฟิลด์ anchor_img)
+        คืน 'found' | 'missing' | 'stopped'
+          - found   = เจอภายใน timeout -> ทำสเต็ปต่อได้
+          - missing = ครบ timeout ยังไม่เจอ (จอไม่ตรงที่คาด)
+          - stopped = ผู้ใช้กดหยุดระหว่างรอ"""
+        import base64
+        b64 = step.get("anchor_img") or ""
+        try:
+            tmpl_bytes = base64.b64decode(b64)
+        except Exception:
+            return "found"  # anchor เสีย -> ไม่กั้น (ทำต่อ)
+        if not tmpl_bytes:
+            return "found"
+        timeout = float(step.get("anchor_timeout", 8.0) or 8.0)
+        threshold = float(step.get("anchor_threshold", 0.8) or 0.8)
+        deadline = time.time() + timeout
+        best = 0.0
+        while time.time() < deadline:
+            if not self.macro_running:
+                return "stopped"
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok:
+                found, _cx, _cy, msg = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
+                if found:
+                    return "found"
+                # เก็บค่าความคล้ายสูงสุดไว้ log (ดึงเลขจากข้อความ)
+                m = re.search(r"([0-9]*\.?[0-9]+)", msg or "")
+                if m:
+                    best = max(best, float(m.group(1)))
+            time.sleep(0.5)
+        self.write_log(f"   🔎 [{device}] anchor: รอ {timeout:g} วิ ยังไม่เจอ (คล้ายสุด {best:.2f}/{threshold:g})", "warning")
+        return "missing"
 
     # ===== Macro step handlers (dispatch table) =====
     def _get_step_handlers(self):
@@ -6448,7 +6896,11 @@ class MuMuGUI(tk.Tk):
                     continue
 
             # ===== (1) หน้าเลือกด่าน: เจอกรอบเลือกด่าน =====
+            # การ์ดกันพลาด: ถ้าจอนี้มี 'ลูกบอลเรืองแสง' = คัตซีนปัดนิ้ว ไม่ใช่หน้าเลือกด่านแน่นอน
+            # -> ห้ามเชื่อกรอบเลือกด่าน (กัน false-positive จากเส้นพื้น/ไอคอนในคัตซีน) ให้ตกไปที่ glow handler
             hf, hx, hy = find_highlighted_stage(data)
+            if hf and find_swipe_glow(data)[0]:
+                hf = False
             if hf:
                 # เพิ่งกลับจากด่าน (เคยเข้าด่าน + ออกจาก map แล้ว) = จบ 1 ด่าน
                 if in_stage and left_map_confirmed:
@@ -6960,6 +7412,47 @@ class MuMuGUI(tk.Tk):
         if ctx.step_delay > 0:
             time.sleep(ctx.step_delay)
 
+    def _verify_diamond_identity(self, device, account, who, data):
+        """ยืนยันว่า 'จอนี้คือบัญชีที่ถูกต้อง และอยู่หน้า Home จริง' ก่อนเขียนเพชร
+        OCR ชื่อในเกมมุมซ้ายบน เทียบกับ ingamename ของบัญชี — ลองซ้ำได้ (จออาจยังโหลด/ยังไม่นิ่ง)
+
+        คืน (ok, data_ล่าสุด) — ok=False = ไม่ควรเขียนเพชร (log เหตุผลไว้แล้ว)
+        ปิดการตรวจได้ด้วย diamond_config['verify_name']=False (หรือบัญชีไม่มี ingamename = เตือนแล้วปล่อยผ่าน)
+        """
+        cfg = self.diamond_config or {}
+        if not cfg.get("verify_name", True):
+            return True, data  # ปิดการตรวจ -> เขียนเลย (พฤติกรรมเดิม)
+
+        expected = (account.get("ingamename") or account.get("name") or "").strip()
+        if not expected:
+            self.write_log(f"   ⚠️ [{device}] {who}: บัญชีไม่มี ingamename เทียบ -> ข้ามการยืนยัน (เขียนแบบ best-effort)", "warning")
+            return True, data
+
+        name_region = cfg.get("name_region") or {"x": 90, "y": 18, "w": 140, "h": 26}
+        min_ratio = float(cfg.get("name_match_ratio", 0.72) or 0.72)
+        langs = available_tesseract_langs()
+        lang = "tha+eng" if "tha" in langs else "eng"
+
+        last_seen = ""
+        for attempt in range(3):
+            ok, txt, _ = ocr_text_tesseract(data, region=name_region, lang=lang, psm=7, scale=3)
+            seen = (txt or "").strip().replace("\n", " ")
+            if seen:
+                last_seen = seen
+            if ok and seen and names_match(expected, seen, min_ratio=min_ratio):
+                return True, data
+            # ยังไม่ตรง -> รอจอนิ่งแล้วแคปใหม่ (สูงสุด 3 ครั้ง)
+            if attempt < 2:
+                time.sleep(1.5)
+                cok, cdata = self.controller.capture_screenshot_bytes(device)
+                if cok:
+                    data = cdata
+
+        self.write_log(
+            f"   ⛔ [{device}] {who}: ชื่อในเกมไม่ตรงกับบัญชี (คาด '{expected}' เห็น '{last_seen or '—'}') "
+            f"-> ไม่เขียนเพชร (กันข้อมูลเพี้ยน/ผิดบัญชี)", "error")
+        return False, data
+
     def _step_read_diamond(self, ctx, step):
         """อ่านจำนวนเพชรของแอคเคานต์รอบนี้ แล้วเก็บไว้ (จะ export/push เข้าเว็บตอนจบรัน)
 
@@ -6984,6 +7477,12 @@ class MuMuGUI(tk.Tk):
         if not ok:
             self.write_log(f"   ⏭️ [{device}] {who}: อ่านเพชรไม่ได้ (แคปจอไม่สำเร็จ) -> ข้าม", "warning")
             return
+
+        # ===== ยาม: ยืนยันตัวตนก่อนเขียนเพชร (กันอ่านผิดจอ/เขียนผิดบัญชี) =====
+        # OCR ชื่อในเกมมุมซ้ายบน เทียบกับ ingamename ของบัญชีที่ควรอยู่จอนี้ — ลองซ้ำได้ (จออาจยังโหลด)
+        verify_ok, data = self._verify_diamond_identity(device, account, who, data)
+        if not verify_ok:
+            return  # log อธิบายเหตุผลไว้ในเมธอดแล้ว (ไม่เขียนเพชร)
 
         rok, number, _raw = self.controller.read_number_tesseract(data, region)
         if not rok or number is None:

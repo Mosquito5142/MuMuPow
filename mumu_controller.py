@@ -253,17 +253,21 @@ def find_highlighted_stage(screen_bytes, half_card_w=100, thumb_up=45):
     brackets = []
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        # กรอบเลือกเป็นเส้น '[' สูงและบาง: h≥45 (ต่างจากดาว/ไอคอน h<40) และ w≤50
-        # (ตัดไอคอนตัวละคร/วงแหวนกลมในจอแมตช์ที่กว้างกว่ามากออก)
-        if h >= 45 and w <= 50 and area >= 300:
+        # กรอบเลือกเป็นเส้น '[' สูงและ 'มีแขน' (หนา): h≥45, กว้าง 18-50 (กรอบจริงวัดได้ w≈26-28
+        # ทุกจอ เพราะมีแขนบน/ล่าง) และ area≥600 — ตัด 'เส้นพื้นไม้/รอยต่อกระเบื้อง' ในคัตซีนที่เป็น
+        # เส้นตั้งบางๆ (w≈9, area≈350) ซึ่งเคยถูกจับผิดเป็นกรอบเดียวจนแตะกลางจอผิดด่าน
+        if h >= 45 and 18 <= w <= 50 and area >= 600:
             brackets.append({"x": int(x), "y": int(y), "w": int(w), "h": int(h),
-                             "cx": int(cent[i][0]), "cy": int(cent[i][1])})
+                             "area": int(area), "cx": int(cent[i][0]), "cy": int(cent[i][1])})
     if not brackets:
         return False, 0, 0
 
-    tallest = max(brackets, key=lambda b: b["h"])
-    # เอาเฉพาะกรอบที่อยู่แถว y เดียวกับกรอบสูงสุด (กรอบของการ์ดที่เลือกอยู่)
-    same = [b for b in brackets if abs(b["cy"] - tallest["cy"]) < 50]
+    # เลือก 'กรอบหลัก' = อันที่ area ใหญ่สุด (กรอบเลือกจริงมักหนา/ใหญ่กว่าจุดสว่างในภาพศิลป์)
+    tallest = max(brackets, key=lambda b: b["area"])
+    # จัดกลุ่มกรอบของ 'การ์ดเดียวกัน': ต้อง cy ใกล้กันจริง (<15) และ cx ห่างไม่เกินความกว้างการ์ด
+    # (<260) — กัน false-positive จุดสว่างในภาพด่านอื่นถูกจับรวมจนจุดกึ่งกลางเพี้ยนไปคนละด่าน
+    same = [b for b in brackets
+            if abs(b["cy"] - tallest["cy"]) < 15 and abs(b["cx"] - tallest["cx"]) < 260]
     left = min(same, key=lambda b: b["cx"])
     right = max(same, key=lambda b: b["cx"])
 
@@ -335,8 +339,12 @@ def find_swipe_glow(screen_bytes):
         ring = (dist >= 22 * 22) & (dist <= 42 * 42)
         ring_n = int(ring.sum())
         halo = float((ring & cyan).sum()) / ring_n if ring_n else 0.0
-        # ไอคอนปัด/แตะจริง มี glow ฟ้าเรือง (halo≈0.10-0.22); จอยสติ๊กแมตช์ halo≈0.07 -> ข้าม
-        if halo < 0.085:
+        # halo ใช้แยก 'ลูกบอลปัด vs จอยสติ๊ก' ได้เฉพาะในโซนจอยสติ๊ก (ซ้ายล่าง) เท่านั้น —
+        # จอยสติ๊ก (ปุ่มเดิน) อยู่มุมซ้ายล่างเสมอ ลูกบอลปัดที่อยู่ 'นอกโซนนั้น' (บน/ขวา/กลาง)
+        # ไม่มีทางเป็นจอยสติ๊ก จึงไม่ต้องเข้มเรื่อง glow (ลูกเล็ก ~35px จะ halo ต่ำ 0.06 ทั้งที่
+        # เรืองแสงจริง เพราะวงวัด halo 22-42px หลุดออกนอกตัวลูก) — เคยทำให้พลาดคัตซีน 'เก็บลูกบอล'
+        in_joystick_zone = (cx < W * 0.42 and cy > H * 0.5)
+        if halo < (0.085 if in_joystick_zone else 0.03):
             continue
         if area > best_area:
             best_area = area
@@ -386,6 +394,47 @@ def in_match_autoplay(screen_bytes):
         if halo < 0.095:
             return True
     return False
+
+
+def normalize_ingame_name(value):
+    """ทำชื่อในเกมให้เป็นรูปมาตรฐานเพื่อเทียบ: NFKC, ตัวพิมพ์เล็ก, ตัดช่องว่าง/สัญลักษณ์ที่ OCR
+    มักเพี้ยน (เช่น ) ] | . _ -) ออก — ใช้เทียบ ingamename ที่บันทึกไว้ vs ที่ OCR อ่านจากจอ"""
+    v = unicodedata.normalize("NFKC", str(value or "")).lower()
+    # เก็บเฉพาะตัวอักษร/ตัวเลข (รองรับ unicode/ไทย) ตัดช่องว่าง+สัญลักษณ์ที่ OCR มักเพี้ยนออกทั้งหมด
+    v = re.sub(r"[^\w]|_", "", v, flags=re.UNICODE)
+    return v.strip()
+
+
+# OCR มักสับสนตัวอักษร↔ตัวเลขที่รูปคล้ายกัน (ใช้เฉพาะตอนเทียบชื่อที่เป็น 'ตัวเลขล้วน')
+_OCR_LETTER_TO_DIGIT = str.maketrans({
+    "o": "0", "q": "0", "i": "1", "l": "1", "z": "2", "s": "5",
+    "b": "8", "g": "9", "t": "7",
+})
+
+
+def names_match(expected, actual, min_ratio=0.72):
+    """ชื่อในเกม 'ตรงกัน' ไหม (ทน OCR เพี้ยนเล็กน้อย แต่ยังกันสลับบัญชีได้)
+    - ตรงเป๊ะ / ฝั่งหนึ่งเป็นสับเซ็ตของอีกฝั่ง (OCR มีขยะปน) -> ตรง
+    - ชื่อเป็น 'ตัวเลขล้วน' (เช่น player ID) -> แก้ OCR สับสน (O→0 ฯลฯ) แล้วเทียบเป๊ะ
+      (ไม่ใช้ fuzzy เพราะ ID ที่ต่างกันแค่หลักเดียวจะ ratio สูงจนหลุด = เขียนผิดบัญชี)
+    - ชื่อตัวอักษร -> วัดความคล้าย (difflib ratio) >= min_ratio
+    คืน True/False. ถ้าฝั่งใดว่างหลัง normalize -> False (เทียบไม่ได้ = ถือว่าไม่ตรง)"""
+    import difflib
+    e = normalize_ingame_name(expected)
+    a = normalize_ingame_name(actual)
+    if not e or not a:
+        return False
+    if e == a:
+        return True
+    if e.isdigit():
+        # แก้ตัวอักษรที่ OCR สับสน -> ตัวเลข แล้วเอาเฉพาะตัวเลข เทียบเป๊ะ
+        a_digits = re.sub(r"\D", "", a.translate(_OCR_LETTER_TO_DIGIT))
+        return a_digits == e
+    # ชื่อตัวอักษร: สับเซ็ต (ฝั่งสั้นต้องยาวพอ >=4 กันชื่อสั้นไปตรงกับขยะยาว) หรือ fuzzy
+    shorter = e if len(e) <= len(a) else a
+    if len(shorter) >= 4 and (e in a or a in e):
+        return True
+    return difflib.SequenceMatcher(None, e, a).ratio() >= min_ratio
 
 
 _TESS_LANGS = None
@@ -1006,6 +1055,13 @@ class MuMuController:
         """Stops an application on the specified device (package name)."""
         return self.run_adb_cmd(["-s", device_id, "shell", "am", "force-stop", package])
 
+    def launch_app_by_package(self, device_id, package):
+        """เปิดแอปด้วยชื่อ package อย่างเดียว (ไม่ต้องรู้ activity) ผ่าน monkey LAUNCHER
+        ใช้กับระบบรีเซ็ตเกม (ปิดแล้วเปิดใหม่) เวลาบัญชีติดปัญหา"""
+        return self.run_adb_cmd(
+            ["-s", device_id, "shell", "monkey", "-p", package,
+             "-c", "android.intent.category.LAUNCHER", "1"])
+
     # Multi-device action runners (Parallelized)
     def run_parallel_action(self, devices, action_func, *args):
         """Runs action_func(device_id, *args) on all specified devices in parallel."""
@@ -1100,6 +1156,19 @@ class MuMuController:
                 return False, 0, 0, "Empty screenshot data"
             screen = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
             template = cv2.imread(template_path)
+            return self._match_template(screen, template, threshold)
+        except Exception as e:
+            return False, 0, 0, str(e)
+
+    def match_template_bytes(self, screen_bytes, template_bytes, threshold=0.8):
+        """เทียบ 'ภาพ anchor' (PNG bytes) กับสกรีนช็อต (PNG bytes) — ทั้งคู่อยู่ในหน่วยความจำ
+        ใช้กับระบบ anchor ที่เก็บภาพเป็น base64 ในสเต็ป (ไม่ต้องเขียนไฟล์)
+        คืน (found, cx, cy, msg) — cx,cy = จุดกึ่งกลางที่ match เจอ (ไว้ relocate ถ้าต้องการ)"""
+        try:
+            if not screen_bytes or not template_bytes:
+                return False, 0, 0, "Empty screenshot or template"
+            screen = cv2.imdecode(np.frombuffer(screen_bytes, np.uint8), cv2.IMREAD_COLOR)
+            template = cv2.imdecode(np.frombuffer(template_bytes, np.uint8), cv2.IMREAD_COLOR)
             return self._match_template(screen, template, threshold)
         except Exception as e:
             return False, 0, 0, str(e)
