@@ -122,7 +122,8 @@ def build_macro_step_summary(idx, step):
         delay_text = f"{delay:g}s" if isinstance(delay, (int, float)) else f"{delay}s"
 
     desc = step.get("desc") or ""
-    anchor_mark = "📷" if step.get("anchor_img") else "  "  # มีภาพ anchor กันจอมั่ว
+    # 🎯 = กดตรงที่เจอภาพ (ตามปุ่มที่ขยับ), 📷 = แค่รอภาพยืนยันหน้าแล้วกดพิกัดเดิม
+    anchor_mark = "🎯" if step.get("anchor_tap") else ("📷" if step.get("anchor_img") else "  ")
     return f"{idx + 1:02d}{anchor_mark}{label:<12}  {detail:<28}  {delay_text:<6}  {desc}"
 
 
@@ -322,6 +323,12 @@ class MuMuGUI(tk.Tk):
         self.script_sets = {}
         self.templates_dir = os.path.join(base_dir, "templates")
         os.makedirs(self.templates_dir, exist_ok=True)
+        # โฟลเดอร์เก็บ 'รายงานจุดที่ติด' ตอนรัน auto (ภาพหน้าจอ + ข้อมูลขั้น) ไว้ย้อนดูภายหลัง
+        self.error_reports_dir = os.path.join(base_dir, "error_reports")
+        self._active_profile_name = ""  # ชื่อสคริปต์ที่กำลังรัน (สแนปช็อตตอนกดรัน ให้ worker อ่านได้)
+        # สถานะรันสดต่อจอ (device -> status/account/step/done_count) ให้การ์ดความคืบหน้าหน้าแรกอ่านได้
+        # เขียนจาก worker thread แต่ key ของแต่ละจอแยกกัน (ไม่มี thread ไหนแก้ key เดียวกันพร้อมกัน) จึงไม่ต้อง lock
+        self._device_run_state = {}
 
         # ตัวแปรสำหรับการรันแบบแบ่งเซ็ต
         self.pause_between_sets = tk.BooleanVar(value=False)
@@ -371,6 +378,7 @@ class MuMuGUI(tk.Tk):
         # ตัวแปรสำหรับการเลือกอุปกรณ์ Emulator
         self.device_checkboxes = {} # device_id -> BooleanVar
         self.device_frames = {}     # device_id -> tk.Frame
+        self.device_dot_labels = {} # device_id -> tk.Label (จุดสถานะสดข้างชื่อจอ)
         self.log_expanded = tk.BooleanVar(value=True)
 
         # กำหนดสไตล์วิดเจ็ตมาตรฐาน
@@ -569,7 +577,7 @@ class MuMuGUI(tk.Tk):
 
         subtitle_lbl = tk.Label(
             header,
-            text="Operational console for multi-emulator automation",
+            text="คุมและบอทหลายจอพร้อมกัน",
             bg=BG_PANEL,
             fg=FG_MUTED,
             font=("Segoe UI", 10),
@@ -582,10 +590,9 @@ class MuMuGUI(tk.Tk):
         content_frame = tk.Frame(self, bg=BG_DARK)
         content_frame.pack(fill="both", expand=True, padx=12, pady=12)
 
-        # สร้างแถบด้านซ้ายจัดการอุปกรณ์
+        # แถบไอคอนซ้ายสุด (สลับหน้า) -> แถบจัดการอุปกรณ์ -> เนื้อหาหลัก
+        self.build_nav_rail(content_frame)
         self.build_sidebar(content_frame)
-
-        # สร้างแถบแท็บด้านขวาสำหรับฟังก์ชันต่างๆ
         self.build_tabs_panel(content_frame)
 
         # 3. แผงคอนโซล Log บันทึกระบบด้านล่างสุด
@@ -646,6 +653,32 @@ class MuMuGUI(tk.Tk):
             )
         )
 
+        # ป้ายเชื่อมต่อจอในแถบซ้าย (เช็คว่าต่อ MuMu ครบยัง)
+        if hasattr(self, "conn_status_lbl"):
+            if total_devices > 0:
+                self.conn_status_lbl.configure(
+                    text=f"🟢 เชื่อมต่อ {total_devices} จอ (เลือก {selected_devices})", fg=ACCENT_GREEN)
+            else:
+                self.conn_status_lbl.configure(text="🔌 ยังไม่พบจอ — กดสแกนพอร์ต", fg=ACCENT_ORANGE)
+
+        # การ์ด 'พร้อมรันไหม?' บนหน้าแรก
+        if hasattr(self, "_pf_devices"):
+            steps = len(self.macro_steps)
+            ok_c, no_c = ACCENT_GREEN, ACCENT_ORANGE
+            self._pf_devices.configure(text=f"{'✓' if selected_devices else '✗'} จอที่เลือก: {selected_devices} จอ",
+                                       fg=ok_c if selected_devices else no_c)
+            self._pf_accounts.configure(text=f"{'✓' if selected_accounts else '✗'} บัญชีที่จะทำ: {selected_accounts} รหัส",
+                                        fg=ok_c if selected_accounts else no_c)
+            self._pf_script.configure(text=f"{'✓' if steps else '✗'} สคริปต์: {profile_name or '-'} · {steps} สเต็ป",
+                                      fg=ok_c if steps else no_c)
+            warns = []
+            if not selected_devices: warns.append("ยังไม่เลือกจอ (ติ๊กทางซ้าย)")
+            if not selected_accounts: warns.append("ยังไม่เลือกบัญชี (แท็บบัญชี)")
+            if not steps: warns.append("ยังไม่มีสคริปต์")
+            self._pf_warn.configure(text=("⚠️ " + " · ".join(warns)) if warns else "✅ พร้อมรันแล้ว",
+                                    fg=no_c if warns else ok_c)
+
+
     def build_sidebar(self, parent):
         sidebar = tk.Frame(parent, bg=BG_PANEL, width=260)
         sidebar.pack(fill="y", side="left", padx=(0, 12))
@@ -661,6 +694,11 @@ class MuMuGUI(tk.Tk):
 
         scan_btn = ModernButton(btn_frame, text="สแกนพอร์ต", command=self.scan_devices, variant="accent")
         scan_btn.pack(fill="x", side="top", pady=2)
+
+        # ป้ายสถานะการเชื่อมต่อจอ (เช็คได้ทันทีว่าต่อ MuMu ครบยัง)
+        self.conn_status_lbl = tk.Label(sidebar, text="🔌 ยังไม่พบจอ", bg=BG_PANEL, fg=ACCENT_ORANGE,
+                                        font=("Segoe UI", 10, "bold"), anchor="w")
+        self.conn_status_lbl.pack(fill="x", padx=15, pady=(6, 0))
 
         # กล่องสำหรับระบุพอร์ตเองแมนนวล
         conn_frame = tk.Frame(sidebar, bg=BG_PANEL)
@@ -698,33 +736,242 @@ class MuMuGUI(tk.Tk):
         scrollbar.pack(side="right", fill="y")
         self.bind_canvas_mousewheel(self.device_canvas)
 
+    # นิยามหน้า: key -> (ไอคอน, ป้ายชื่อ, ฟังก์ชันสร้างเนื้อหา, ปักไว้ล่างแถบไหม)
+    _NAV_PAGES = [
+        ("home", "▶", "หน้าแรก", "build_home_tab", False),
+        ("accounts", "👥", "บัญชี", "build_accounts_tab", False),
+        ("script", "✏️", "สคริปต์", "build_macro_tab", False),
+        ("other", "🔧", "อื่นๆ", "build_sync_tab", False),
+        ("settings", "⚙️", "ตั้งค่า", "build_settings_tab", True),
+    ]
+
     def build_tabs_panel(self, parent):
-        self.notebook = ttk.Notebook(parent)
-        self.notebook.pack(fill="both", expand=True, side="right")
+        """สร้างพื้นที่เนื้อหาหลัก — สลับหน้าด้วยแถบไอคอนซ้าย (build_nav_rail) แทนแท็บบน
+        เก็บเป็น Frame ธรรมดาต่อหน้า (ไม่ใช้ ttk.Notebook) โชว์/ซ่อนเองผ่าน select_page()"""
+        content = tk.Frame(parent, bg=BG_DARK)
+        content.pack(fill="both", expand=True, side="right")
 
-        # แท็บ 1: ระบบจัดการบอทมาโครแบบกำหนดเอง
-        macro_tab = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(macro_tab, text=" 📥 บอทล็อกอินและปิดโฆษณา ")
-        self.build_macro_tab(macro_tab)
+        self._pages = {}
+        self._page_order = [k for k, *_ in self._NAV_PAGES]
+        for key, _icon, _label, builder_name, _pin_bottom in self._NAV_PAGES:
+            page = tk.Frame(content, bg=BG_DARK)
+            getattr(self, builder_name)(page)
+            self._pages[key] = page
+        self.settings_tab = self._pages["settings"]     # เผื่อโค้ดเดิมอ้างชื่อนี้
+        self._accounts_tab_widget = self._pages["accounts"]
 
-        # แท็บ 2: แผงจัดการบัญชีผู้ใช้
-        accounts_tab = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(accounts_tab, text=" 👥 จัดการบัญชี ")
-        self.build_accounts_tab(accounts_tab)
+        self.select_page("home")
 
-        # แท็บ 3: แผงควบคุมแมนนวลแบบ Broadcast
-        sync_tab = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(sync_tab, text=" 🖱️ สั่งการพร้อมกันแบบแมนนวล ")
-        self.build_sync_tab(sync_tab)
+    def select_page(self, key):
+        """สลับไปแสดงหน้า key (ซ่อนหน้าอื่นทั้งหมด) + ไฮไลท์ปุ่มแถบไอคอนซ้ายให้ตรง"""
+        if key not in self._pages:
+            return
+        self._current_page = key
+        for k, page in self._pages.items():
+            if k == key:
+                page.pack(fill="both", expand=True)
+            else:
+                page.pack_forget()
+        for k, (frame, icon_lbl, text_lbl) in getattr(self, "_nav_items", {}).items():
+            active = (k == key)
+            bg = BG_HOVER if active else BG_PANEL
+            fg = ACCENT_BLUE if active else FG_MUTED
+            frame.configure(bg=bg)
+            icon_lbl.configure(bg=bg, fg=fg)
+            text_lbl.configure(bg=bg, fg=fg)
+        # สลับมาแท็บบัญชีตอนกำลังรันอยู่ -> รีเฟรชจุดสถานะ 🔵กำลังทำ ให้ตรงปัจจุบัน
+        if key == "accounts" and self.macro_running:
+            self.refresh_accounts_ui()
 
-        # แท็บ 4: ตั้งค่าระบบ
-        settings_tab = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(settings_tab, text=" ⚙️ ตั้งค่าโปรแกรม ")
-        self.build_settings_tab(settings_tab)
+    def build_nav_rail(self, parent):
+        """แถบไอคอนซ้ายสุด (แทนแท็บบน) — คลิกสลับหน้า, 'ตั้งค่า' ปักไว้ล่างสุด"""
+        rail = tk.Frame(parent, bg=BG_PANEL, width=72)
+        rail.pack(fill="y", side="left", padx=(0, 12))
+        rail.pack_propagate(False)
+
+        mark = tk.Label(rail, text="🎮", bg=BG_PANEL, fg=ACCENT_BLUE, font=("Segoe UI", 18))
+        mark.pack(pady=(16, 10))
+
+        self._nav_items = {}
+
+        def add_item(key, icon, label, side="top"):
+            item = tk.Frame(rail, bg=BG_PANEL, cursor="hand2")
+            item.pack(fill="x", side=side, pady=2)
+            icon_lbl = tk.Label(item, text=icon, bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 15))
+            icon_lbl.pack(pady=(8, 0))
+            text_lbl = tk.Label(item, text=label, bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 8))
+            text_lbl.pack(pady=(0, 8))
+            for w in (item, icon_lbl, text_lbl):
+                w.bind("<Button-1>", lambda e, k=key: self.select_page(k))
+            self._nav_items[key] = (item, icon_lbl, text_lbl)
+
+        for key, icon, label, _builder, pin_bottom in self._NAV_PAGES:
+            add_item(key, icon, label, side="bottom" if pin_bottom else "top")
+
+    def build_home_tab(self, parent):
+        """หน้าแรก: เลือกสคริปต์ที่จะรัน + ปุ่มรัน/หยุด + ความคืบหน้าต่อจอ (เรียก logic เดิม)"""
+        parent.configure(bg=BG_DARK)
+        main_pane = tk.Frame(parent, bg=BG_DARK)
+        main_pane.pack(fill="both", expand=True)
+
+        # ซ้าย: เลือกสคริปต์ + ปุ่มรัน/หยุด + ตัวเลือกการรัน
+        left = tk.Frame(main_pane, bg=BG_CARD, width=380, highlightthickness=1, highlightbackground=LINE_SOFT)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 12))
+        pad = tk.Frame(left, bg=BG_CARD); pad.pack(fill="x", padx=16, pady=16)
+        tk.Label(pad, text="เลือกสคริปต์ที่จะรัน", bg=BG_CARD, fg=FG_WHITE,
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        tk.Label(pad, text="1) ติ๊กจอทางซ้าย   2) เลือกสคริปต์   3) กดรัน", bg=BG_CARD, fg=FG_MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
+        self.profile_cb = ttk.Combobox(pad, state="readonly", font=("Segoe UI", 11))
+        self.profile_cb.pack(fill="x", ipady=4)
+        self.profile_cb.bind("<<ComboboxSelected>>", self.on_profile_select)
+
+        # การ์ด 'พร้อมรันไหม?' — เช็คก่อนกดว่าตั้งครบ (เติมช่องว่าง + กันกดรันแล้วไม่มีอะไรเกิด)
+        pf = tk.Frame(left, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT)
+        pf.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(pf, text="พร้อมรันไหม?", bg=BG_PANEL, fg=FG_WHITE,
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
+        self._pf_devices = tk.Label(pf, text="", bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 10), anchor="w")
+        self._pf_devices.pack(fill="x", padx=12, pady=1)
+        self._pf_accounts = tk.Label(pf, text="", bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 10), anchor="w")
+        self._pf_accounts.pack(fill="x", padx=12, pady=1)
+        self._pf_script = tk.Label(pf, text="", bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 10), anchor="w")
+        self._pf_script.pack(fill="x", padx=12, pady=1)
+        self._pf_warn = tk.Label(pf, text="", bg=BG_PANEL, fg=ACCENT_ORANGE, font=("Segoe UI", 9),
+                                 anchor="w", wraplength=330, justify="left")
+        self._pf_warn.pack(fill="x", padx=12, pady=(4, 10))
+
+        self.build_run_controls(left)
+
+        # ขวา: ความคืบหน้าต่อจอ (จำลองสถานะให้ดูระหว่างรัน)
+        right = tk.Frame(main_pane, bg=BG_CARD, width=320, highlightthickness=1, highlightbackground=LINE_SOFT)
+        right.pack(side="right", fill="both")
+        right.pack_propagate(False)
+        tk.Label(right, text="ความคืบหน้าต่อจอ", bg=BG_CARD, fg=FG_WHITE,
+                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(14, 2))
+        tk.Label(right, text="แต่ละจอทำรหัสไหน/สถานะ (ดูรายละเอียดเต็มที่ Log)", bg=BG_CARD,
+                 fg=FG_MUTED, font=("Segoe UI", 8)).pack(anchor="w", padx=14, pady=(0, 6))
+        ModernButton(right, text="📁 เปิดรายงานปัญหา (ภาพจุดที่ติด)", command=self.open_error_reports_folder,
+                     variant="subtle", font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 8))
+        self.home_progress_frame = tk.Frame(right, bg=BG_CARD)
+        self.home_progress_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        self._home_progress_sig = None
+        self._tick_home_progress()
+
+    def build_run_controls(self, parent):
+        """การ์ดปุ่มรัน + ตัวเลือกการรัน (stagger/anchor/pause/sequential/run/stop) —
+        แยกออกมาให้หน้าแรกเรียกใช้ ปุ่ม/ตัวแปรยังเป็น self.* เดิม โค้ดรันไม่ต้องแก้"""
+        run_card = tk.Frame(parent, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT, padx=12, pady=12)
+        run_card.pack(side="bottom", fill="x", padx=12, pady=(12, 12))
+
+        # หมายเหตุ: ตัดช่อง 'หน่วงเริ่มแต่ละจอ' + 'รันทีละจอ' ออก (เคยไว้ชะลอตอนสมัคร แต่ captcha
+        # เด้งที่ 5 ครั้งอยู่ดี เลยไร้ผล) — logic เบื้องหลังยังอยู่ (self.run_sequentially ดีฟอลต์ False
+        # = รันขนานปกติ, ส่วน stagger มี hasattr guard ในตัวรัน) เผื่ออยากเปิดคืนภายหลัง
+        anchor_frame = tk.Frame(run_card, bg=BG_PANEL)
+        anchor_frame.pack(fill="x", pady=2)
+        tk.Label(anchor_frame, text="🖼️ ความถี่เช็ค Anchor (วิ):", bg=BG_PANEL, fg=FG_WHITE,
+                 font=("Segoe UI", 10)).pack(side="left")
+        self._anchor_poll_interval = 0.5
+        self._anchor_poll_var = tk.StringVar(value="0.5")
+        self._anchor_poll_var.trace_add("write", lambda *a: self._update_anchor_poll())
+        ModernEntry(anchor_frame, textvariable=self._anchor_poll_var, width=8).pack(side="left", padx=10)
+        tk.Label(anchor_frame, text="มาก = กิน CPU น้อยลง แนะนำ 1-2 ถ้ารันหลายจอ",
+                 bg=BG_PANEL, fg=FG_MUTED, font=("Segoe UI", 9, "italic")).pack(side="left")
+
+        self.pause_chk = self.make_checkbutton(run_card,
+            "⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
+            variable=self.pause_between_sets, bg=BG_PANEL, activebackground=BG_PANEL)
+        self.pause_chk.pack(anchor="w", pady=(5, 8))
+
+        self.run_macro_btn = ModernButton(run_card, text="▶  รัน", command=self.start_macro_flow,
+                 variant="primary", font=("Segoe UI", 12, "bold"), height=2)
+        self.run_macro_btn.pack(fill="x", pady=2)
+        self.stop_macro_btn = ModernButton(run_card, text="■  หยุดทันที", command=self.stop_macro_flow,
+                 variant="danger", font=("Segoe UI", 12, "bold"), height=2)
+        self.stop_macro_btn.pack(fill="x", pady=2)
+        self.stop_macro_btn.configure(state="disabled")
+
+    # สถานะ -> (label ไทย, สีจุด, สีตัวหนังสือสถานะ)
+    _STATUS_STYLE = {
+        "queued":  ("รอคิว", FG_MUTED, FG_MUTED),
+        "running": ("กำลังรัน", ACCENT_BLUE, ACCENT_BLUE),
+        "done":    ("เสร็จแล้ว", ACCENT_GREEN, "#2DD4A7"),
+        "stopped": ("หยุดแล้ว", FG_MUTED, FG_MUTED),
+        "stuck":   ("ติด · บันทึกแล้ว", ACCENT_RED, "#F87171"),
+    }
+
+    def _mini_bar(self, parent, frac, color, width=140, height=6):
+        """แถบความคืบหน้าบางๆ (ไม่มี widget bar สำเร็จรูปใน Tkinter — ประกอบเองจาก Frame ซ้อน)"""
+        frac = max(0.0, min(1.0, frac))
+        track = tk.Frame(parent, bg=BG_PANEL, width=width, height=height)
+        track.pack_propagate(False)
+        if frac > 0:
+            tk.Frame(track, bg=color, width=max(2, int(width * frac)), height=height).place(x=0, y=0)
+        return track
+
+    def _tick_home_progress(self):
+        """รีเฟรชการ์ดความคืบหน้าต่อจอบนหน้าแรก (รีสร้างเฉพาะตอนข้อมูลเปลี่ยน กันกระพริบ)
+        แสดงละเอียดแบบ: สถานะ/บัญชี/ขั้นที่กำลังทำ (N/total)/จำนวนบัญชีที่ทำสำเร็จ/แถบความคืบหน้า"""
+        if not hasattr(self, "home_progress_frame") or not self.home_progress_frame.winfo_exists():
+            return
+        self._refresh_device_dots()
+        devices = [d for d, v in self.device_checkboxes.items() if v.get()] or list(self.device_checkboxes)
+        active = getattr(self, "device_active_accounts", {}) or {}
+        run_state = getattr(self, "_device_run_state", {}) or {}
+        sig = (self.macro_running, tuple(devices), tuple(
+            (run_state.get(d, {}).get("status"), run_state.get(d, {}).get("account_name"),
+             run_state.get(d, {}).get("step_idx"), run_state.get(d, {}).get("done_count"),
+             account_display_name(active.get(d)) if active.get(d) else "")
+            for d in devices))
+        if sig != self._home_progress_sig:
+            self._home_progress_sig = sig
+            for w in self.home_progress_frame.winfo_children():
+                w.destroy()
+            if not devices:
+                tk.Label(self.home_progress_frame, text="ยังไม่ได้เลือกจอ — ติ๊กจอทางซ้าย",
+                         bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=4)
+            for d in devices:
+                st = run_state.get(d)
+                acc = active.get(d)
+                if st:  # โหมดรันที่เดินสถานะละเอียดไว้ (คิวปกติ)
+                    label, dot, status_fg = self._STATUS_STYLE.get(st["status"], ("-", FG_MUTED, FG_MUTED))
+                    who = st.get("account_name") or "-"
+                    step_idx, step_total = st.get("step_idx", 0), st.get("step_total", 0)
+                    step_desc = st.get("step_desc", "")
+                    done_c, total_c = st.get("done_count", 0), st.get("total_accounts", 0)
+                    frac = (step_idx / step_total) if step_total else 0.0
+                else:  # โหมดอื่น (sequential/pause-between-sets) — ยังไม่เดินสถานะละเอียด ใช้ข้อมูลย่อ
+                    running = self.macro_running and acc is not None
+                    label = "กำลังรัน" if running else ("รอคิว" if self.macro_running else "ยังไม่เริ่ม")
+                    dot = ACCENT_BLUE if running else FG_MUTED
+                    status_fg = dot
+                    who = account_display_name(acc) if acc else "-"
+                    step_idx = step_total = done_c = total_c = 0
+                    step_desc = ""
+                    frac = 0.0
+
+                card = tk.Frame(self.home_progress_frame, bg=BG_INPUT, highlightthickness=1, highlightbackground=LINE_SOFT)
+                card.pack(fill="x", pady=3)
+                top = tk.Frame(card, bg=BG_INPUT); top.pack(fill="x", padx=8, pady=(6, 0))
+                tk.Label(top, text="●", bg=BG_INPUT, fg=dot, font=("Segoe UI", 10)).pack(side="left")
+                tk.Label(top, text=d.replace("127.0.0.1:", "จอ "), bg=BG_INPUT, fg=FG_WHITE,
+                         font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 6))
+                tk.Label(top, text=label, bg=BG_INPUT, fg=status_fg, font=("Segoe UI", 8, "bold")).pack(side="left")
+                if total_c:
+                    tk.Label(top, text=f"{done_c} / {total_c}", bg=BG_INPUT, fg=FG_MUTED,
+                             font=("Segoe UI", 8)).pack(side="right")
+
+                mid = tk.Frame(card, bg=BG_INPUT); mid.pack(fill="x", padx=8, pady=(1, 4))
+                step_txt = f"{who} · {step_desc} ({step_idx}/{step_total})" if step_total else who
+                tk.Label(mid, text=step_txt, bg=BG_INPUT, fg=FG_MUTED, font=("Segoe UI", 8),
+                         anchor="w", wraplength=260).pack(side="left", fill="x", expand=True)
+                if step_total:
+                    self._mini_bar(mid, frac, dot).pack(side="right", padx=(6, 0))
+        self.after(1200 if self.macro_running else 2500, self._tick_home_progress)
 
     def build_macro_tab(self, parent):
         parent.configure(bg=BG_DARK)
-        
+
         main_pane = tk.Frame(parent, bg=BG_DARK)
         main_pane.pack(fill="both", expand=True, padx=0, pady=0)
         
@@ -732,16 +979,10 @@ class MuMuGUI(tk.Tk):
         left_panel = tk.Frame(main_pane, bg=BG_CARD, width=360, highlightthickness=1, highlightbackground=LINE_SOFT)
         left_panel.pack(side="left", fill="both", expand=True, padx=(0, 12))
         
-        # กรอบเลือกโปรไฟล์
-        prof_lbl_frame = tk.Frame(left_panel, bg=BG_CARD)
-        prof_lbl_frame.pack(fill="x", pady=5)
-        
-        tk.Label(prof_lbl_frame, text="เลือกโปรไฟล์มาโคร:", bg=BG_CARD, fg=FG_WHITE).pack(side="left", anchor="w")
-        
-        self.profile_cb = ttk.Combobox(prof_lbl_frame, state="readonly", width=20)
-        self.profile_cb.pack(side="left", padx=5)
-        self.profile_cb.bind("<<ComboboxSelected>>", self.on_profile_select)
-        
+        # (ตัวเลือกโปรไฟล์ 'เลือกสคริปต์ที่จะรัน' ย้ายไปหน้าแรก — ที่นี่เหลือแค่บันทึก/แก้ไข)
+        tk.Label(left_panel, text="แก้ไขสคริปต์ที่โหลดอยู่ (เลือกสคริปต์ได้ที่หน้าแรก)",
+                 bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic")).pack(anchor="w", pady=(5, 2))
+
         # ฟิลด์ป้อนชื่อบันทึกโปรไฟล์
         prof_act_frame = tk.Frame(left_panel, bg=BG_CARD)
         prof_act_frame.pack(fill="x", pady=2)
@@ -760,7 +1001,8 @@ class MuMuGUI(tk.Tk):
 
         quick_builder_frame = self.make_toolbar(left_panel)
         ModernButton(quick_builder_frame, text="สร้างสคริปต์เร็ว", command=self.open_quick_builder_dialog, variant="warning").pack(side="left", fill="x", expand=True, padx=(0, 6))
-        ModernButton(quick_builder_frame, text="จัดการ Sets", command=self.open_script_sets_dialog, variant="accent").pack(side="left", fill="x", expand=True)
+        ModernButton(quick_builder_frame, text="จัดการ Sets", command=self.open_script_sets_dialog, variant="accent").pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ModernButton(quick_builder_frame, text="🔀 ผังงาน", command=self.open_flow_view, variant="primary").pack(side="left", fill="x", expand=True)
         
         # ลิสต์ขั้นตอนการทำงาน (Listbox) - ป้องกันการหลุดการเลือกด้วย exportselection=False
         list_frame = tk.Frame(left_panel, bg=BG_CARD)
@@ -799,73 +1041,8 @@ class MuMuGUI(tk.Tk):
         right_panel.pack(side="right", fill="both")
         right_panel.pack_propagate(False)
         
-        # ปุ่มสำหรับสั่งรันคำสั่งบอทมาโคร (ปักหมุดไว้ด้านล่างตลอด ไม่ต้องเลื่อนหา)
-        run_card = tk.Frame(right_panel, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT, padx=12, pady=12)
-        run_card.pack(side="bottom", fill="x", padx=0, pady=(12, 0))
-        
-        # ช่องตั้งค่าการดีเลย์ปล่อยรันแต่ละจอ
-        stagger_frame = tk.Frame(run_card, bg=BG_PANEL)
-        stagger_frame.pack(fill="x", pady=2)
-        self.use_stagger_delay = tk.BooleanVar(value=False)
-        self.stagger_chk = self.make_checkbutton(
-            stagger_frame,
-            "⏳ หน่วงเริ่มแต่ละจอ (วิ):",
-            variable=self.use_stagger_delay,
-            bg=BG_PANEL,
-            activebackground=BG_PANEL,
-        )
-        self.stagger_chk.pack(side="left")
-        self.stagger_delay_entry = ModernEntry(stagger_frame, width=8)
-        self.stagger_delay_entry.pack(side="left", padx=10)
-        self.stagger_delay_entry.insert(0, "30.0")
-        
-        self.pause_chk = self.make_checkbutton(
-            run_card,
-            "⏸️ หยุดรอตรวจทานทีละชุด (Pause between sets)",
-            variable=self.pause_between_sets,
-            bg=BG_PANEL,
-            activebackground=BG_PANEL,
-        )
-        self.pause_chk.pack(anchor="w", pady=5)
+        # (ปุ่มรัน + ตัวเลือกการรัน ย้ายไปหน้าแรกแล้ว — build_run_controls)
 
-        self.sequential_chk = self.make_checkbutton(
-            run_card,
-            "รันทีละจอจนจบ",
-            variable=self.run_sequentially,
-            bg=BG_PANEL,
-            activebackground=BG_PANEL,
-        )
-        self.sequential_chk.pack(anchor="w", pady=(0, 3))
-
-        tk.Label(
-            run_card,
-            text="เหมาะกับสมัครรหัส ลดการเริ่มหลายจอพร้อมกัน",
-            bg=BG_PANEL,
-            fg=FG_MUTED,
-            font=("Segoe UI", 8),
-        ).pack(anchor="w", pady=(0, 6))
-        
-        self.run_macro_btn = ModernButton(
-            run_card,
-            text="รันมาโคร",
-            command=self.start_macro_flow,
-            variant="primary",
-            font=("Segoe UI", 11, "bold"),
-            height=2,
-        )
-        self.run_macro_btn.pack(fill="x", pady=2)
-        
-        self.stop_macro_btn = ModernButton(
-            run_card,
-            text="หยุดทันที",
-            command=self.stop_macro_flow,
-            variant="danger",
-            font=("Segoe UI", 11, "bold"),
-            height=2,
-        )
-        self.stop_macro_btn.pack(fill="x", pady=2)
-        self.stop_macro_btn.configure(state="disabled")
-        
         # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มได้
         right_canvas = tk.Canvas(right_panel, bg=BG_CARD, highlightthickness=0)
         right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
@@ -1042,7 +1219,18 @@ class MuMuGUI(tk.Tk):
         self.batch_move_group_entry.insert(0, "ทั่วไป")
         
         ModernButton(batch_frame, text="ย้ายกลุ่ม", command=self.move_selected_accounts, variant="accent", font=("Segoe UI", 9, "bold")).pack(side="left", padx=6)
-        
+
+        # แถวเลือกด่วนตามสถานะรอบก่อน — รันซ้ำเฉพาะที่ตกได้ทันที
+        filter_frame = tk.Frame(left_panel, bg=BG_CARD)
+        filter_frame.pack(fill="x", pady=2)
+        tk.Label(filter_frame, text="เลือกด่วน:", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9)).pack(side="left", padx=(0, 6))
+        ModernButton(filter_frame, text="🔴 ที่พลาด", command=lambda: self.select_accounts_by_status("failed"),
+                     variant="subtle", font=("Segoe UI", 9)).pack(side="left", padx=(0, 6))
+        ModernButton(filter_frame, text="⚪ ที่ยังไม่เสร็จ", command=lambda: self.select_accounts_by_status("pending"),
+                     variant="subtle", font=("Segoe UI", 9)).pack(side="left", padx=(0, 6))
+        tk.Label(filter_frame, text="🟢เสร็จ 🔴พลาด 🔵กำลังทำ ⚪ยังไม่ทำ", bg=BG_CARD, fg=FG_MUTED,
+                 font=("Segoe UI", 8)).pack(side="right")
+
         # กล่องรายการบัญชีพร้อม Scrollbar
         list_container = tk.Frame(left_panel, bg=BG_CARD, bd=0)
         list_container.pack(fill="both", expand=True, padx=12, pady=(0, 12))
@@ -1139,32 +1327,32 @@ class MuMuGUI(tk.Tk):
         # วาดรายการบัญชีที่มีอยู่
         self.refresh_accounts_ui()
 
-    def build_sync_tab(self, parent):
-        # สร้าง Canvas และ Scrollbar เพื่อให้แท็บควบคุมแมนนวลเลื่อนขึ้น-ลงได้
-        canvas = tk.Canvas(parent, bg=BG_DARK, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        
-        # แท็บสำหรับการคลิก/พิมพ์ แบบเรียลไทม์
-        sync_frame = tk.Frame(canvas, bg=BG_DARK, padx=20, pady=20)
-        sync_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        window_id = canvas.create_window((0, 0), window=sync_frame, anchor="nw")
-        canvas.bind('<Configure>', lambda event: canvas.itemconfigure(window_id, width=event.width))
-        
-        canvas.configure(yscrollcommand=scrollbar.set)
+    def _scroll_subtab(self, notebook, title):
+        """สร้างแท็บย่อยที่เลื่อนขึ้น-ลงได้ คืน 'เฟรมเนื้อหา' ข้างใน (ใช้แยกหมวดในแท็บอื่นๆ)"""
+        outer = tk.Frame(notebook, bg=BG_DARK)
+        notebook.add(outer, text=title)
+        canvas = tk.Canvas(outer, bg=BG_DARK, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=BG_DARK, padx=20, pady=20)
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        wid = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(wid, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        sb.pack(side="right", fill="y")
         self.bind_canvas_mousewheel(canvas)
+        return inner
 
-        # รายละเอียดคำอธิบายแท็บ
-        desc_lbl = tk.Label(sync_frame, text="Manual Sync Console", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold"))
-        desc_lbl.pack(anchor="w", pady=(0, 5))
-        
-        info_lbl = tk.Label(sync_frame, text="ส่งคำสั่งเดียวกันไปยัง Emulator ที่เลือกไว้ทางซ้าย", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 10))
-        info_lbl.pack(anchor="w", pady=(0, 20))
+    def build_sync_tab(self, parent):
+        # จัดเป็นแท็บย่อย 3 หมวด ลดความรกจากสกรอลยาว: แมนนวล / เครื่องมือ / Story Auto
+        sub = ttk.Notebook(parent)
+        sub.pack(fill="both", expand=True)
+        sync_frame = self._scroll_subtab(sub, " 🖱️ แมนนวล + ถ่ายจอ ")
+        tools_frame = self._scroll_subtab(sub, " 🛠️ เครื่องมือ ")
+        story_frame = self._scroll_subtab(sub, " 📖 Story Auto ")
+
+        tk.Label(sync_frame, text="ส่งคำสั่งเดียวกันไปทุกจอที่เลือกทางซ้าย (คลิก/พิมพ์/ปุ่ม/ถ่ายจอ)",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 14))
 
         # ส่วนของแผงดำเนินการ Grid
         control_grid = tk.Frame(sync_frame, bg=BG_DARK)
@@ -1236,8 +1424,8 @@ class MuMuGUI(tk.Tk):
         ModernButton(diamond_btn_frame, text="⚙️ ตั้งค่าพื้นที่เพชร", command=self.open_diamond_setup, variant="subtle").pack(side="left", padx=8)
         ModernButton(diamond_btn_frame, text="🔗 เติม id เว็บ (จับคู่ชื่อ)", command=self.backfill_web_ids, variant="subtle").pack(side="left", padx=8)
 
-        # 5. กล่องรันคำสั่ง ADB แบบแมนนวลเอง
-        raw_outer, raw_box = self.make_panel(sync_frame, "ADB Shell", fill="x", pady=10)
+        # 5. กล่องรันคำสั่ง ADB แบบแมนนวลเอง (หมวดเครื่องมือ)
+        raw_outer, raw_box = self.make_panel(tools_frame, "ADB Shell", fill="x", pady=10)
 
         tk.Label(raw_box, text="ใส่เฉพาะคำสั่งหลัง shell เช่น wm size", bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic")).pack(anchor="w")
         
@@ -1251,7 +1439,7 @@ class MuMuGUI(tk.Tk):
         ModernButton(cmd_input_frame, text="รัน", command=self.send_custom_cmd, variant="warning").pack(side="right")
 
         # 6. ดู element บนจอ (UI Inspector) — เช็คว่าหน้าจอนี้ใช้ tap_text ได้ไหม
-        ui_outer, ui_box = self.make_panel(sync_frame, "ดู Element บนจอ (UI Inspector)", fill="x", pady=10)
+        ui_outer, ui_box = self.make_panel(tools_frame, "ดู Element บนจอ (UI Inspector)", fill="x", pady=10)
         tk.Label(
             ui_box,
             text="อ่าน element บนหน้าจอของเครื่องที่เลือก (เครื่องแรก) — ถ้าเห็นข้อความ/ปุ่ม = ใช้ step 'กดตามข้อความ' ได้, ถ้าว่าง = เป็นหน้าจอเกมต้องใช้รูป",
@@ -1260,7 +1448,7 @@ class MuMuGUI(tk.Tk):
         ModernButton(ui_box, text="ดู Element บนจอ", command=self.inspect_ui, variant="accent").pack(anchor="w", pady=(8, 0))
 
         # 7. ดึงรายชื่อสมาชิกชมรม (Guild Member Grabber) — เลื่อน+แคปจนสุด รวมเป็นรูปเดียวให้เว็บ
-        guild_outer, guild_box = self.make_panel(sync_frame, "ดึงรายชื่อสมาชิกชมรม (ส่งเข้าเว็บ guild-check)", fill="x", pady=10)
+        guild_outer, guild_box = self.make_panel(tools_frame, "ดึงรายชื่อสมาชิกชมรม (ส่งเข้าเว็บ guild-check)", fill="x", pady=10)
         tk.Label(
             guild_box,
             text=("เปิดหน้า 'สมาชิกชมรม' ในเกม เลื่อนขึ้นบนสุด แล้วกดปุ่ม — ระบบจะเลื่อนลง+แคปทีละหน้าจนสุดล่าง "
@@ -1276,7 +1464,7 @@ class MuMuGUI(tk.Tk):
         ModernButton(guild_btn_row, text="🖼️ วางรูป → อ่านชื่อ", command=self.open_guild_image_ocr, variant="subtle").pack(side="left")
 
         # 8. Story Auto — เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ)
-        story_outer, story_box = self.make_panel(sync_frame, "เล่นเนื้อเรื่องอัตโนมัติ (Story Auto)", fill="x", pady=10)
+        story_outer, story_box = self.make_panel(story_frame, "เล่นเนื้อเรื่องอัตโนมัติ (Story Auto)", fill="x", pady=10)
         tk.Label(
             story_box,
             text=("เปิดเกมค้างไว้ที่ 'หน้าเลือกด่าน' (ให้เห็นกรอบเหลืองของด่านถัดไป) แล้วกดเริ่ม — ระบบจะแตะด่านเหลือง "
@@ -1989,10 +2177,20 @@ class MuMuGUI(tk.Tk):
         scrollbar.pack(side="right", fill="y")
         self.bind_canvas_mousewheel(canvas)
 
-        tk.Label(settings_frame, text="Settings Console", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 15))
+        tk.Label(settings_frame, text="ตั้งค่า", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        tk.Label(settings_frame, text="ค่าระบบและการเชื่อมต่อ · ถูกจำถาวรลงไฟล์ config", bg=BG_DARK, fg=FG_MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 12))
+
+        # การ์ดตั้งค่าหลักจัดเป็นตาราง 2 คอลัมน์ (กระชับกว่าเรียงเต็มความกว้างทีละอัน)
+        grid_frame = tk.Frame(settings_frame, bg=BG_DARK)
+        grid_frame.pack(fill="x")
+        grid_frame.columnconfigure(0, weight=1, uniform="settings_col")
+        grid_frame.columnconfigure(1, weight=1, uniform="settings_col")
+        WRAP = 320
 
         # ที่อยู่ ADB.exe
-        path_outer, path_box = self.make_panel(settings_frame, "ไฟล์ระบบ", fill="x", pady=10)
+        path_outer, path_box = self.make_panel(grid_frame, "ไฟล์ระบบ", manager=None)
+        path_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=6)
 
         tk.Label(path_box, text="ที่อยู่ไฟล์ ADB.exe (Path):", bg=BG_CARD, fg=FG_WHITE).pack(anchor="w")
         
@@ -2006,7 +2204,8 @@ class MuMuGUI(tk.Tk):
         ModernButton(adb_path_frame, text="บันทึกและโหลดใหม่", command=self.save_adb_path, variant="primary").pack(side="right")
 
         # ตั้งค่าพอร์ต ADB (ADB Port Settings)
-        port_outer, port_box = self.make_panel(settings_frame, "พอร์ต ADB", fill="x", pady=10)
+        port_outer, port_box = self.make_panel(grid_frame, "พอร์ต ADB", manager=None)
+        port_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=6)
 
         tk.Label(port_box, text="นำเข้าหรือดูพอร์ต Emulator สำหรับสแกนและควบคุม", bg=BG_CARD, fg=FG_WHITE).pack(anchor="w")
 
@@ -2042,9 +2241,10 @@ class MuMuGUI(tk.Tk):
         ModernButton(port_btn_frame, text="ดูพอร์ตปัจจุบัน", command=show_current_ports, variant="subtle").pack(side="left")
 
         # Gemini API Key สำหรับ Story Auto fallback
-        gem_outer, gem_box = self.make_panel(settings_frame, "Gemini API Key (Story Auto AI fallback)", fill="x", pady=10)
+        gem_outer, gem_box = self.make_panel(grid_frame, "Gemini API Key (Story Auto)", manager=None)
+        gem_outer.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=6)
         tk.Label(gem_box, text="ใส่ key เพื่อให้ AI ช่วย 'เฉพาะตอนระบบติดค้าง' (จอนิ่งเกิน 12 วิ) เท่านั้น\nเรียกไม่เกิน 1 ครั้ง/25 วิ จึงแทบไม่กิน quota — เว้นว่างเพื่อปิด (ใช้ CV+OCR ล้วน)",
-                 bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left").pack(anchor="w", pady=(0, 4))
+                 bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=WRAP).pack(anchor="w", pady=(0, 4))
         gem_row = tk.Frame(gem_box, bg=BG_CARD)
         gem_row.pack(fill="x")
         self._gemini_key_var = tk.StringVar(value=self.gemini_api_key)
@@ -2062,7 +2262,8 @@ class MuMuGUI(tk.Tk):
         ModernButton(gem_row, text="แสดง/ซ่อน", command=_toggle_gem_show, variant="subtle").pack(side="left", padx=(4, 0))
 
         # ขีดจำกัดเครื่อง — ตรวจว่ารัน MuMu ได้สูงสุดกี่จอ
-        cap_outer, cap_box = self.make_panel(settings_frame, "ขีดจำกัดเครื่อง — รันได้กี่จอ", fill="x", pady=10)
+        cap_outer, cap_box = self.make_panel(grid_frame, "ขีดจำกัดเครื่อง — รันได้กี่จอ", manager=None)
+        cap_outer.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=6)
 
         p = DEFAULT_MUMU_PROFILE
         tk.Label(
@@ -2074,7 +2275,7 @@ class MuMuGUI(tk.Tk):
                 f"(จอ FPS-cap เบา จึงเผื่อแชร์คอร์ได้ {p['cpu_oversubscribe']:g} เท่า)"
             ),
             bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"),
-            justify="left", wraplength=700,
+            justify="left", wraplength=WRAP,
         ).pack(anchor="w", pady=(0, 8))
 
         ModernButton(cap_box, text="🖥️ ตรวจขีดจำกัดเครื่องนี้", command=self.check_machine_capacity, variant="primary").pack(anchor="w")
@@ -2082,28 +2283,48 @@ class MuMuGUI(tk.Tk):
         self.capacity_result_lbl = tk.Label(
             cap_box, text="กดปุ่มด้านบนเพื่อตรวจสเปกเครื่องและจำนวนจอที่แนะนำ",
             bg=BG_CARD, fg=FG_WHITE, font=("Consolas", 10),
-            justify="left", anchor="w", wraplength=700,
+            justify="left", anchor="w", wraplength=WRAP,
         )
         self.capacity_result_lbl.pack(anchor="w", fill="x", pady=(10, 0))
 
         # ระบบตรวจสอบความเหมาะสมของขนาดจอและ DPI
-        diag_outer, diag_box = self.make_panel(settings_frame, "ตรวจสอบ Emulator", fill="x", pady=10)
+        diag_outer, diag_box = self.make_panel(grid_frame, "ตรวจสอบ Emulator", manager=None)
+        diag_outer.grid(row=2, column=0, sticky="nsew", padx=(0, 6), pady=6)
 
         ModernButton(diag_box, text="ตรวจสอบความละเอียดและ DPI", command=self.validate_resolutions, variant="primary").pack(anchor="w")
-        
+
         diag_lbl = tk.Label(
-            diag_box, 
-            text="หมายเหตุ: พิกัดมาโครทั้งหมดถูกคำนวณบนขนาดหน้าจอเป้าหมาย กว้าง 960 / สูง 540 และค่า DPI 160 หากตั้งค่า Emulator ไม่ตรง คำสั่งคลิกอาจคลาดเคลื่อนไม่ตรงปุ่มจริง ปุ่มนี้จะช่วยสแกนขนาดหน้าจอปัจจุบันและรายงานให้ทราบความเข้ากันได้", 
-            bg=BG_CARD, 
-            fg=FG_MUTED, 
+            diag_box,
+            text="หมายเหตุ: พิกัดมาโครทั้งหมดถูกคำนวณบนขนาดหน้าจอเป้าหมาย กว้าง 960 / สูง 540 และค่า DPI 160 หากตั้งค่า Emulator ไม่ตรง คำสั่งคลิกอาจคลาดเคลื่อนไม่ตรงปุ่มจริง ปุ่มนี้จะช่วยสแกนขนาดหน้าจอปัจจุบันและรายงานให้ทราบความเข้ากันได้",
+            bg=BG_CARD,
+            fg=FG_MUTED,
             font=("Segoe UI", 9, "italic"),
             justify="left",
-            wraplength=700
+            wraplength=WRAP
         )
         diag_lbl.pack(anchor="w", pady=(10, 0))
 
-        # ตัวช่วยวิเคราะห์พิกัดมาโคร (Pointer Location Helper)
-        helper_outer, helper_box = self.make_panel(settings_frame, "ตัวช่วยหาพิกัด", fill="x", pady=10)
+        # คีย์บอร์ดภาษาไทย/Unicode (ADBKeyboard) — ย้ายมาอยู่ในตาราง 2 คอลัมน์ (แถวเดียวกับตรวจสอบ Emulator)
+        kb_outer, kb_box = self.make_panel(grid_frame, "พิมพ์ภาษาไทย/Unicode (ADBKeyboard)", manager=None)
+        kb_outer.grid(row=2, column=1, sticky="nsew", padx=(6, 0), pady=6)
+
+        kb_btn_row = tk.Frame(kb_box, bg=BG_CARD)
+        kb_btn_row.pack(anchor="w", pady=5)
+        ModernButton(kb_btn_row, text="เปิดใช้คีย์บอร์ดไทย", command=self.setup_adb_keyboard, variant="primary").pack(side="left", padx=(0, 10))
+        ModernButton(kb_btn_row, text="คืนคีย์บอร์ดเดิม", command=self.restore_keyboard, variant="subtle").pack(side="left")
+
+        tk.Label(
+            kb_box,
+            text=(
+                "step 'พิมพ์ข้อความ' รองรับ ASCII ได้เลย แต่ภาษาไทย/Unicode ต้องเปิดใช้ ADBKeyboard ก่อน\n"
+                "วิธี: วางไฟล์ ADBKeyboard.apk ไว้ในโฟลเดอร์เดียวกับโปรแกรม แล้วเลือกเครื่อง → กด 'เปิดใช้คีย์บอร์ดไทย'\n"
+                "เล่นเองด้วยมือเมื่อไรให้กด 'คืนคีย์บอร์ดเดิม'"
+            ),
+            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=WRAP,
+        ).pack(anchor="w", pady=(8, 0))
+
+        # ตัวช่วยวิเคราะห์พิกัดมาโคร (Pointer Location Helper) — เต็มความกว้าง ใต้ตาราง 2 คอลัมน์
+        helper_outer, helper_box = self.make_panel(settings_frame, "ตัวช่วยหาพิกัด", fill="x", pady=(6, 10))
 
         btn_row = tk.Frame(helper_box, bg=BG_CARD)
         btn_row.pack(anchor="w", pady=5)
@@ -2121,25 +2342,6 @@ class MuMuGUI(tk.Tk):
             wraplength=700
         )
         helper_lbl.pack(anchor="w", pady=(5, 0))
-
-        # คีย์บอร์ดภาษาไทย/Unicode (ADBKeyboard)
-        kb_outer, kb_box = self.make_panel(settings_frame, "พิมพ์ภาษาไทย/Unicode (ADBKeyboard)", fill="x", pady=10)
-
-        kb_btn_row = tk.Frame(kb_box, bg=BG_CARD)
-        kb_btn_row.pack(anchor="w", pady=5)
-        ModernButton(kb_btn_row, text="เปิดใช้คีย์บอร์ดไทย", command=self.setup_adb_keyboard, variant="primary").pack(side="left", padx=(0, 10))
-        ModernButton(kb_btn_row, text="คืนคีย์บอร์ดเดิม", command=self.restore_keyboard, variant="subtle").pack(side="left")
-
-        tk.Label(
-            kb_box,
-            text=(
-                "step 'พิมพ์ข้อความ' รองรับ ASCII ได้เลย แต่ภาษาไทย/Unicode (เช่น ingamename ไทย) ต้องเปิดใช้ ADBKeyboard ก่อน\n"
-                "วิธี: วางไฟล์ ADBKeyboard.apk ไว้ในโฟลเดอร์เดียวกับโปรแกรม (ดาวน์โหลดจาก github.com/senzhk/ADBKeyBoard) "
-                "แล้วเลือกเครื่อง → กด 'เปิดใช้คีย์บอร์ดไทย' (ติดตั้ง+ตั้งเป็นคีย์บอร์ดปัจจุบันให้อัตโนมัติ)\n"
-                "เล่นเองด้วยมือเมื่อไรให้กด 'คืนคีย์บอร์ดเดิม'"
-            ),
-            bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="left", wraplength=700,
-        ).pack(anchor="w", pady=(8, 0))
 
     def _app_base_dir(self):
         """โฟลเดอร์ของโปรแกรม (รองรับทั้งรันสคริปต์และไฟล์ .exe ที่ build แล้ว)"""
@@ -2290,7 +2492,13 @@ class MuMuGUI(tk.Tk):
             messagebox.showerror("ข้อผิดพลาด", "พาร์ท ADB ว่างเปล่าไม่ได้")
             return
         self.controller.adb_path = new_path
-        self.write_log(f"บันทึกเส้นทาง ADB ใหม่เรียบร้อยแล้ว: {new_path}", "warning")
+        ok, info = self.controller.persist_adb_path(new_path)
+        if ok:
+            self.write_log(f"บันทึกเส้นทาง ADB แล้ว (จำไว้ถาวร ไม่ต้องกรอกใหม่ทุกครั้ง): {new_path}", "success")
+        else:
+            self.write_log(f"ตั้งค่า ADB แล้ว แต่บันทึกไฟล์ไม่สำเร็จ (รอบหน้าอาจต้องกรอกใหม่): {info}", "warning")
+        if not os.path.exists(new_path):
+            messagebox.showwarning("เตือน", f"บันทึกแล้ว แต่ไม่พบไฟล์ตามพาธนี้จริง:\n{new_path}\nตรวจสอบว่าพิมพ์ถูกต้อง")
         self.scan_devices()
 
     def open_port_config_dialog(self):
@@ -2500,7 +2708,7 @@ class MuMuGUI(tk.Tk):
             ModernButton(
                 self.device_scroll_frame,
                 text="ไปตั้งค่าพอร์ต",
-                command=lambda: self.notebook.select(3),
+                command=lambda: self.select_page("settings"),
                 bg=BG_INPUT,
                 activebg="#444444",
                 font=("Segoe UI", 9, "bold")
@@ -2541,21 +2749,42 @@ class MuMuGUI(tk.Tk):
 
             # ปุ่มกากบาทตัดการเชื่อมต่อทีละจอ
             disc_btn = tk.Button(
-                frame, 
-                text="X", 
-                command=lambda d=dev: self.disconnect_one(d), 
+                frame,
+                text="X",
+                command=lambda d=dev: self.disconnect_one(d),
                 bg="#E74C3C",
-                fg=FG_WHITE, 
+                fg=FG_WHITE,
                 activebackground="#c0392b",
                 activeforeground=FG_WHITE,
                 relief="flat",
-                bd=0, 
+                bd=0,
                 font=("Segoe UI", 8, "bold"),
                 width=2
             )
             disc_btn.pack(side="right", padx=5, pady=5)
 
+            # จุดสถานะสด (เขียว=ต่ออยู่เฉยๆ, ฟ้า=กำลังรัน, แดง=ติดปัญหาล่าสุด) — รีเฟรชสีเองใน _tick_home_progress
+            dot = tk.Label(frame, text="●", bg=BG_CARD, fg=ACCENT_GREEN, font=("Segoe UI", 9))
+            dot.pack(side="right", padx=(0, 4))
+            self.device_dot_labels[dev] = dot
+
+        self._refresh_device_dots()
         self.update_status_summary()
+
+    def _refresh_device_dots(self):
+        """อัปเดตสีจุดสถานะข้างชื่อจอในแถบซ้าย ให้ตรงกับสถานะรันสดล่าสุด (เรียกซ้ำได้บ่อยๆ แบบเบา
+        เพราะแค่ reconfigure Label ที่มีอยู่แล้ว ไม่ต้องสร้าง widget ใหม่)"""
+        run_state = getattr(self, "_device_run_state", {}) or {}
+        for dev, dot in getattr(self, "device_dot_labels", {}).items():
+            try:
+                if not dot.winfo_exists():
+                    continue
+            except Exception:
+                continue
+            st = run_state.get(dev, {}).get("status")
+            color = {"running": ACCENT_BLUE, "stuck": ACCENT_RED, "queued": FG_MUTED,
+                     "stopped": FG_MUTED}.get(st, ACCENT_GREEN)
+            dot.configure(fg=color)
 
     def disconnect_one(self, device_id):
         def worker():
@@ -2927,7 +3156,7 @@ class MuMuGUI(tk.Tk):
                 if not self.macro_running:
                     return False
                 if st.get("anchor_img"):
-                    gate = self._wait_for_step_anchor(device, st)
+                    gate, _ax, _ay = self._wait_for_step_anchor(device, st)
                     if gate == "stopped":
                         return False
                     if gate == "missing":
@@ -3792,13 +4021,33 @@ class MuMuGUI(tk.Tk):
         except Exception as e:
             self.write_log(f"บันทึกข้อมูลบัญชีล้มเหลว: {e}", "error")
 
+    def select_accounts_by_status(self, kind):
+        """ติ๊กเลือกบัญชีตามสถานะรอบก่อน — failed=ที่พลาด, pending=ที่ยังไม่เสร็จ (ยังไม่ทำ+พลาด+หยุด)
+        ใช้รันซ้ำเฉพาะที่ตก โดยไม่ต้องไล่ติ๊กเอง"""
+        fail = {"device_error", "macro_error", "error"}
+        n = 0
+        for a in self.accounts:
+            st = (a.get("last_status") or "").lower()
+            want = (st in fail) if kind == "failed" else (st != "completed")
+            a["checked"] = want
+            if want:
+                n += 1
+        self.save_accounts()
+        self.refresh_accounts_ui()
+        self.write_log(f"เลือกบัญชี{'ที่พลาด' if kind == 'failed' else 'ที่ยังไม่เสร็จ'} {n} รหัส", "info")
+
     def refresh_accounts_ui(self):
         """วาดการ์ดลิสต์รายชื่อไอดีแบบจัดกลุ่มบนแท็บจัดการบัญชีใหม่"""
         for widget in self.acc_scroll_frame.winfo_children():
             widget.destroy()
-            
+
         self.account_checkboxes.clear()
         self.group_checkboxes.clear()
+        # สแนปช็อตอีเมลที่ 'กำลังทำอยู่ตอนนี้' (จอไหนถืออยู่) ให้จุดสถานะ 🔵 ถูกต้อง ณ ตอนวาด
+        self._active_account_emails = {
+            (a.get("email") or "").strip().lower()
+            for a in getattr(self, "device_active_accounts", {}).values() if a
+        }
         
         if not self.accounts:
             lbl = tk.Label(self.acc_scroll_frame, text="ไม่มีบัญชีในคิวระบบ\nกรุณาเพิ่มบัญชีเกมด้านขวามือ", bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 9, "italic"), justify="center")
@@ -3975,6 +4224,16 @@ class MuMuGUI(tk.Tk):
                     font=("Segoe UI", 9)
                 )
                 chk.pack(side="left", padx=5, pady=5)
+
+                # จุดสถานะ: 🔵กำลังทำ (จอไหนกำลังรันบัญชีนี้อยู่ตอนนี้) ชนะสถานะเก่าเสมอ
+                # ไม่งั้นดูรอบล่าสุด: 🟢เสร็จ 🔴พลาด ⚪ยังไม่ทำ (รวม 'หยุดกลางคัน' เข้าไว้ในนี้ด้วย)
+                if self.macro_running and email and email.strip().lower() in getattr(self, "_active_account_emails", set()):
+                    _dot = "🔵"
+                else:
+                    _st = (acc.get("last_status") or "").lower()
+                    _dot = ("🟢" if _st == "completed" else
+                            "🔴" if _st in ("device_error", "macro_error", "error") else "⚪")
+                tk.Label(frame, text=_dot, bg=BG_SURFACE, font=("Segoe UI", 9)).pack(side="left", padx=(0, 2), pady=5)
 
                 summary_lbl = tk.Label(
                     frame,
@@ -5427,7 +5686,7 @@ class MuMuGUI(tk.Tk):
 
         # คงข้อมูล anchor (ภาพ+ตั้งค่า) ที่ไม่ได้อยู่ในฟอร์มไว้ ไม่ให้หายตอนอัปเดตสเต็ป
         old = self.macro_steps[idx] if idx < len(self.macro_steps) else {}
-        for k in ("anchor_img", "anchor_region", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+        for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
             if k in old:
                 step[k] = old[k]
 
@@ -5460,6 +5719,7 @@ class MuMuGUI(tk.Tk):
         device = devices[0]
 
         # ถ้ามี anchor -> รายงานว่าตอนนี้เจอภาพบนจอไหม (ให้รู้ว่าอยู่หน้าถูกหรือเปล่า)
+        anchor_hit = None
         if step.get("anchor_img"):
             import base64
             try:
@@ -5467,7 +5727,9 @@ class MuMuGUI(tk.Tk):
                 ok, data = self.controller.capture_screenshot_bytes(device)
                 if ok:
                     thr = float(step.get("anchor_threshold", 0.8) or 0.8)
-                    found, _x, _y, msg = self.controller.match_template_bytes(data, tb, thr)
+                    found, ax, ay, msg = self.controller.match_template_bytes(data, tb, thr)
+                    if found:
+                        anchor_hit = (ax, ay)
                     icon = "✅ เจอภาพ anchor" if found else "❌ ไม่เจอภาพ anchor (อาจอยู่ผิดหน้า)"
                     self.write_log(f"   🔎 [{device}] ทดสอบ anchor สเต็ป {idx+1}: {icon} — {msg}", "info" if found else "warning")
             except Exception:
@@ -5476,6 +5738,12 @@ class MuMuGUI(tk.Tk):
         try:
             if t == "tap":
                 x, y = int(float(step["x"])), int(float(step["y"]))
+                # โหมดกดตามภาพ: ย้ายจุดกดไปตรงที่เจอ anchor (เหมือนตอนรันจริง)
+                reg = step.get("anchor_region")
+                if step.get("anchor_tap") and anchor_hit and reg:
+                    x = int(round(anchor_hit[0] + (x - (reg["x"] + reg["w"] / 2.0))))
+                    y = int(round(anchor_hit[1] + (y - (reg["y"] + reg["h"] / 2.0))))
+                    self.write_log(f"   🎯 [{device}] (โหมดกดตามภาพ) จุดกดจริง -> ({x},{y})", "info")
                 self.write_log(f"   🧪 [{device}] ทดสอบแตะสเต็ป {idx+1} ที่ ({x},{y})", "warning")
                 self.controller.tap(device, x, y)
             else:  # swipe
@@ -5486,6 +5754,159 @@ class MuMuGUI(tk.Tk):
                 self.controller.swipe(device, x, y, x2, y2, dur)
         except (TypeError, ValueError, KeyError) as e:
             messagebox.showerror("พิกัดไม่ถูกต้อง", f"สเต็ปนี้พิกัดไม่ครบ/ไม่ถูกต้อง: {e}")
+
+    def open_flow_view(self):
+        """มุมมองผังงาน (flowchart จริง): anchor = ข้าวหลามตัด 'เจอภาพ?' (เจอ→ลงล่างกด,
+        ไม่เจอ→แยกออก ข้าม/หยุด), ขั้นปกติ = สี่เหลี่ยม, เริ่ม/จบ = แคปซูลเขียว, หยุด = แดง
+        คลิกกล่อง = เลือกขั้นนั้น (ไปแก้ในฟอร์มหลัก) + แถบเครื่องมือ แทรก/ลบ/สลับ"""
+        if not self.macro_steps:
+            messagebox.showinfo("ยังไม่มีสคริปต์", "โหลด/สร้างสคริปต์ก่อน (เลือกที่หน้าแรก) แล้วค่อยเปิดผังงาน")
+            return
+        TYPE_TH = {
+            "tap": "แตะ", "swipe": "ปัด", "text": "พิมพ์", "keyevent": "ปุ่มระบบ", "sleep": "รอเวลา",
+            "start_app": "เปิดแอป", "stop_app": "ปิดแอป", "detect_image": "เจอรูปแล้วกด",
+            "wait_for_image": "รอรูป", "tap_text": "กดตามข้อความ", "wait_for_text": "รอข้อความ",
+            "screenshot": "ถ่ายจอ", "clear_ads_loop": "ปิดโฆษณาวน", "fetch_otp": "ดึง OTP",
+            "keyboard": "คีย์บอร์ด", "read_diamond": "อ่านเพชร", "story_auto": "เล่นเนื้อเรื่อง",
+            "find_yellow_stage": "ด่านเหลือง", "run_set": "ชุดคำสั่ง",
+        }
+        GREEN, ORANGE, BLUE, RED, GRAY, SEL = "#4CAF50", "#ED9F27", "#4472C4", "#E53935", "#8DA0B8", "#FFD54F"
+
+        dlg = tk.Toplevel(self)
+        dlg.title("🔀 ผังงานสคริปต์")
+        dlg.configure(bg=BG_DARK)
+        dlg.geometry("740x820")
+        dlg.transient(self)
+        state = {"sel": None}
+
+        tb = tk.Frame(dlg, bg=BG_PANEL); tb.pack(fill="x")
+        sel_lbl = tk.Label(tb, text="คลิกกล่องในผังเพื่อเลือกขั้น", bg=BG_PANEL, fg=FG_WHITE,
+                           font=("Segoe UI", 9, "bold"))
+        sel_lbl.pack(side="left", padx=12, pady=6)
+
+        def op(kind):
+            i = state["sel"]
+            if i is None:
+                messagebox.showinfo("ยังไม่เลือก", "คลิกเลือกขั้นในผังก่อน", parent=dlg); return
+            if kind == "ins":
+                self.macro_steps.insert(i + 1, {"type": "tap", "x": "0", "y": "0", "delay": 0.5,
+                                                "desc": "ขั้นใหม่ (แก้พิกัด/ชนิด)"})
+                state["sel"] = i + 1
+            elif kind == "del":
+                self.macro_steps.pop(i)
+                state["sel"] = (min(i, len(self.macro_steps) - 1) if self.macro_steps else None)
+            elif kind in ("up", "down"):
+                j = i + (-1 if kind == "up" else 1)
+                if 0 <= j < len(self.macro_steps):
+                    self.macro_steps[i], self.macro_steps[j] = self.macro_steps[j], self.macro_steps[i]
+                    state["sel"] = j
+            self.refresh_listbox()
+            if state["sel"] is not None:
+                select(state["sel"], center=False)
+            else:
+                draw()
+        for txt, k in (("＋ แทรก", "ins"), ("▲", "up"), ("▼", "down"), ("🗑 ลบ", "del")):
+            ModernButton(tb, text=txt, command=lambda kk=k: op(kk), variant="subtle",
+                         font=("Segoe UI", 9)).pack(side="left", padx=3, pady=4)
+
+        def test_sel():
+            """ทดสอบขั้นที่เลือกในผัง — แตะจริงบนจอ (ดูการขยับ) ใช้ตัวเดียวกับปุ่มทดสอบในฟอร์ม"""
+            if state["sel"] is None:
+                messagebox.showinfo("ยังไม่เลือก", "คลิกเลือกกล่องในผังก่อน แล้วค่อยกดทดสอบ", parent=dlg)
+                return
+            try:
+                self.step_listbox.selection_clear(0, tk.END)
+                self.step_listbox.selection_set(state["sel"])
+            except Exception:
+                pass
+            self.test_selected_step()
+        ModernButton(tb, text="🧪 ทดสอบขั้นนี้ (แตะจริงบนจอ)", command=test_sel,
+                     variant="warning", font=("Segoe UI", 9)).pack(side="right", padx=8, pady=4)
+
+        wrap = tk.Frame(dlg, bg=BG_DARK); wrap.pack(fill="both", expand=True)
+        cv = tk.Canvas(wrap, bg=BG_DARK, highlightthickness=0)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=cv.yview)
+        hsb = ttk.Scrollbar(dlg, orient="horizontal", command=cv.xview)
+        cv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.pack(side="right", fill="y")
+        cv.pack(side="left", fill="both", expand=True)
+        hsb.pack(fill="x", side="bottom")
+        cv.bind("<MouseWheel>", lambda e: cv.yview_scroll(int(-e.delta / 120), "units"))
+
+        CX = 300
+
+        def select(i, center=True):
+            state["sel"] = i
+            s = self.macro_steps[i]
+            sel_lbl.configure(text=f"เลือกขั้น {i + 1}: {(s.get('desc') or s.get('type',''))[:34]}")
+            try:
+                self.step_listbox.selection_clear(0, tk.END)
+                self.step_listbox.selection_set(i)
+                self.step_listbox.see(i)
+                self.on_listbox_select(None)
+            except Exception:
+                pass
+            draw()
+
+        def shape(cx, cy, kind, fill, text, i, hw, hh):
+            outline = SEL if (i is not None and state["sel"] == i) else fill
+            ow = 3 if (i is not None and state["sel"] == i) else 1
+            tag = f"n{i}"
+            if kind == "diamond":
+                cv.create_polygon(cx, cy - hh, cx + hw, cy, cx, cy + hh, cx - hw, cy,
+                                  fill=fill, outline=outline, width=ow, tags=tag)
+            else:
+                cv.create_rectangle(cx - hw, cy - hh, cx + hw, cy + hh, fill=fill, outline=outline, width=ow, tags=tag)
+            cv.create_text(cx, cy, text=text, fill="#ffffff", font=("Segoe UI", 9), width=hw * 2 - 12, tags=tag)
+            if i is not None and i >= 0:
+                cv.tag_bind(tag, "<Button-1>", lambda e, ix=i: select(ix))
+
+        def down(y1, y2, label=None):
+            cv.create_line(CX, y1, CX, y2, fill=GRAY, width=2, arrow=tk.LAST)
+            if label:
+                cv.create_text(CX + 16, (y1 + y2) // 2, text=label, fill=GRAY, font=("Segoe UI", 8), anchor="w")
+
+        def draw():
+            cv.delete("all")
+            n = len(self.macro_steps)
+            cys = [150 + i * 100 for i in range(n)]
+            ye = 150 + n * 100
+            shape(CX, 45, "pill", GREEN, "เริ่ม (บัญชีถัดไป)", -1, 95, 20)
+            prev_bottom = 65
+            for i, step in enumerate(self.macro_steps):
+                cy = cys[i]
+                anchored = bool(step.get("anchor_img"))
+                th = TYPE_TH.get(step.get("type", "tap"), step.get("type", ""))
+                mark = ("🎯" if step.get("anchor_tap") else "📷") if anchored else ""
+                label = f"{i + 1}. {mark}{step.get('desc') or th}"
+                if anchored:
+                    down(prev_bottom, cy - 34, "เจอ→ทำ")
+                    shape(CX, cy, "diamond", ORANGE, label, i, 100, 34)
+                    prev_bottom = cy + 34
+                    onf = step.get("anchor_on_fail", "abort")
+                    if onf == "abort":
+                        cv.create_line(CX + 100, cy, 445, cy, fill=RED, width=2, arrow=tk.LAST)
+                        cv.create_rectangle(445, cy - 20, 650, cy + 20, fill=RED, outline=RED)
+                        cv.create_text(547, cy, text="หยุดจอ + รีเซ็ตเกม", fill="#fff", font=("Segoe UI", 9))
+                        cv.create_text(420, cy - 11, text="No", fill=GRAY, font=("Segoe UI", 8))
+                    elif onf == "skip":
+                        nx = cys[i + 1] if i + 1 < n else ye
+                        cv.create_line(CX + 100, cy, 430, cy, 430, nx, CX + 92, nx,
+                                       fill=ORANGE, width=2, arrow=tk.LAST)
+                        cv.create_text(440, cy - 11, text="No→ข้าม", fill=ORANGE, font=("Segoe UI", 8), anchor="w")
+                    else:
+                        cv.create_text(CX + 108, cy, text="No→กดเลย", fill=BLUE, font=("Segoe UI", 8), anchor="w")
+                else:
+                    down(prev_bottom, cy - 22)
+                    shape(CX, cy, "rect", BLUE, label, i, 88, 22)
+                    prev_bottom = cy + 22
+            down(prev_bottom, ye - 20)
+            shape(CX, ye, "pill", GREEN, "จบ → บัญชีถัดไป", -1, 95, 20)
+            bb = cv.bbox("all")
+            if bb:
+                cv.configure(scrollregion=(0, 0, max(bb[2] + 20, 720), bb[3] + 20))
+
+        draw()
 
     def open_step_anchor_setup(self):
         """เลือกพื้นที่ anchor เอง (ลากกรอบบนภาพจริง) — แยกจากจุดกด
@@ -5548,6 +5969,14 @@ class MuMuGUI(tk.Tk):
         status = tk.Label(right, text="ลากกรอบครอบจุดนิ่ง แล้วกด 'ทดสอบ match'", bg=BG_DARK, fg=ACCENT_ORANGE,
                           font=("Segoe UI", 9), wraplength=240, justify="left")
         status.pack(fill="x", pady=10)
+
+        # โหมด 'กดตรงที่เจอภาพ': ให้ลากกรอบเขียวครอบ 'ตัวปุ่ม' เอง แล้วเวลารันจะกดตรงที่เจอปุ่ม
+        # (ตามปุ่ม/ป็อปอัพที่เลื่อนตำแหน่งได้) แทนพิกัดแดงตายตัว — แม่นกว่ามากในหน้ารับของ
+        anchor_tap_var = tk.BooleanVar(value=bool(step.get("anchor_tap")))
+        self.make_checkbutton(right, "🎯 กดตรงที่เจอภาพนี้ (ตามปุ่มที่ขยับ ไม่ยึดพิกัดแดง)",
+                              anchor_tap_var, bg=BG_DARK).pack(anchor="w", pady=(0, 4))
+        tk.Label(right, text="เปิดโหมดนี้: ลากกรอบเขียวครอบ 'ปุ่มที่จะกด' โดยตรง", bg=BG_DARK,
+                 fg=FG_MUTED, font=("Segoe UI", 8, "italic"), wraplength=240, justify="left").pack(anchor="w")
 
         def render():
             img = state["orig"]
@@ -5644,13 +6073,30 @@ class MuMuGUI(tk.Tk):
                 status.configure(text="ยังไม่ได้ลากกรอบ anchor", fg=ACCENT_RED); return
             step["anchor_img"] = base64.b64encode(tb).decode("ascii")
             step["anchor_region"] = dict(state["region"])  # เก็บไว้เผื่อแก้ซ้ำ (โชว์กรอบเดิม)
-            step.setdefault("anchor_timeout", 8.0)
+            step["anchor_tap"] = bool(anchor_tap_var.get())  # กดตรงที่เจอภาพ (ตามปุ่มที่ขยับ)
+            try:
+                step["anchor_timeout"] = max(0.0, float(timeout_var.get()))
+            except (TypeError, ValueError):
+                step["anchor_timeout"] = 8.0
+            step["anchor_on_fail"] = onfail_var.get() or "abort"
             step.setdefault("anchor_threshold", 0.8)
-            step.setdefault("anchor_on_fail", "abort")
             self.refresh_listbox()
             self.step_listbox.selection_set(idx)
             self.write_log(f"📷 ตั้งพื้นที่ Anchor สเต็ป {idx+1} แล้ว (อย่าลืมกด 'บันทึกโปรไฟล์' เพื่อเก็บลงไฟล์)", "success")
             on_close()
+
+        # ตั้งค่า anchor: ไม่เจอภาพแล้วทำยังไง + รอสูงสุดกี่วิ — ใช้ทำ 'if แบบลูกโซ่ skip'
+        cfgf = tk.Frame(right, bg=BG_DARK); cfgf.pack(fill="x", pady=(10, 0))
+        tk.Label(cfgf, text="ถ้าไม่เจอภาพ:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        onfail_var = tk.StringVar(value=step.get("anchor_on_fail", "abort"))
+        ttk.Combobox(cfgf, textvariable=onfail_var, state="readonly", width=10,
+                     values=["abort", "skip", "tap"]).grid(row=0, column=1, sticky="w", padx=6)
+        tk.Label(cfgf, text="รอสูงสุด(วิ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        timeout_var = tk.StringVar(value=str(step.get("anchor_timeout", 8.0)))
+        tk.Entry(cfgf, textvariable=timeout_var, width=8, bg=BG_INPUT, fg=FG_WHITE,
+                 insertbackground=FG_WHITE, relief="flat").grid(row=1, column=1, sticky="w", padx=6, pady=(5, 0))
+        tk.Label(right, text="🔀 if แบบลูกโซ่: ตั้ง 'skip' + 'รอสั้น 1-2วิ' หลายสเต็ปต่อกัน (เจอแบบไหนกดแบบนั้น)",
+                 bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 8, "italic"), wraplength=240, justify="left").pack(anchor="w", pady=(3, 0))
 
         btns = tk.Frame(right, bg=BG_DARK); btns.pack(fill="x", pady=(14, 0))
         ModernButton(btns, text="📸 จับภาพใหม่", command=capture, variant="primary").pack(fill="x", pady=3)
@@ -5722,7 +6168,7 @@ class MuMuGUI(tk.Tk):
         step = self.macro_steps[idx]
         if not step.get("anchor_img"):
             return
-        for k in ("anchor_img", "anchor_region", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+        for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
             step.pop(k, None)
         self.refresh_listbox()
         self.step_listbox.selection_set(idx)
@@ -5785,6 +6231,7 @@ class MuMuGUI(tk.Tk):
         # ดึงบัญชีที่เลือก
         checked_accounts = [acc for acc in self.accounts if acc.get("checked", True)]
         profile_name = self.profile_cb.get() or "กำหนดเอง"
+        self._active_profile_name = profile_name  # สแนปช็อตให้ worker/รายงานปัญหาใช้ (อ่าน Tk var ข้ามเธรดไม่ปลอดภัย)
 
         # ===== ตรวจ checkpoint: เสนอ 'รันต่อจากที่ค้าง' =====
         is_resume = False
@@ -6119,6 +6566,13 @@ class MuMuGUI(tk.Tk):
                     for acc in checked_accounts:
                         account_queue.put(acc)
 
+                    # ตั้งสถานะเริ่มต้นของทุกจอเป็น 'รอคิว' ให้การ์ดความคืบหน้าหน้าแรกเห็นทันทีตอนกดรัน
+                    total_accounts = len(checked_accounts)
+                    for dev in devices:
+                        self._device_run_state[dev] = {"status": "queued", "account_name": "-",
+                            "step_idx": 0, "step_total": 0, "step_desc": "รอคิว",
+                            "done_count": 0, "total_accounts": total_accounts}
+
                     # ฟังก์ชันการทำงานของแต่ละจอ
                     def device_worker(dev):
                         idx = devices.index(dev)
@@ -6129,11 +6583,17 @@ class MuMuGUI(tk.Tk):
                                 acc = account_queue.get_nowait()
                             except queue.Empty:
                                 break
-                            
+
                             email = acc.get("email")
                             self.write_log(f"🔄 [{dev}] หยิบบัญชี: {email} มารันมาโคร...", "warning")
-                            self._collect_result(self.execute_device_macro(dev, acc, highlight))
+                            result = self.execute_device_macro(dev, acc, highlight)
+                            self._collect_result(result)
+                            if result.get("status") == "completed":
+                                self._device_run_state[dev]["done_count"] += 1
                             account_queue.task_done()
+                        # ไม่มีบัญชีเหลือ (หรือถูกสั่งหยุด) — ปิดสถานะจอนี้ให้ชัดเจน
+                        self._device_run_state[dev]["status"] = "done" if self.macro_running else "stopped"
+                        self._device_run_state[dev]["step_desc"] = ""
 
                     with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                         executor.map(device_worker, devices)
@@ -6558,6 +7018,48 @@ class MuMuGUI(tk.Tk):
             
         return None
 
+    def _save_failure_report(self, device, account, idx, total, step, reason):
+        """บันทึก 'จุดที่ติด' ตอนรัน auto: แคปภาพหน้าจอ ณ ตอนนั้น + ข้อมูล (บัญชี/สคริปต์/ขั้นที่เท่าไหร่/
+        เหตุผล) ลง error_reports/ เพื่อย้อนดูภายหลังว่าติดตรงไหน ภาพตอนนั้นเป็นยังไง"""
+        try:
+            import datetime, json as _json
+            now = datetime.datetime.now()
+            folder = os.path.join(self.error_reports_dir, now.strftime("%Y%m%d"))
+            os.makedirs(folder, exist_ok=True)
+            port = str(device).split(":")[-1]
+            img_path = os.path.join(folder, f"{now.strftime('%H%M%S')}_{port}_step{idx+1}.png")
+            saved = ""
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok and data:
+                with open(img_path, "wb") as f:
+                    f.write(data)
+                saved = img_path
+            rec = {
+                "time": now.strftime("%Y-%m-%d %H:%M:%S"), "device": device,
+                "email": (account or {}).get("email", ""),
+                "name": account_display_name(account) if account else "",
+                "profile": getattr(self, "_active_profile_name", ""),
+                "step": idx + 1, "total": total,
+                "step_type": step.get("type", ""), "step_desc": step.get("desc", ""),
+                "reason": reason, "image": saved,
+            }
+            with open(os.path.join(self.error_reports_dir, "report.jsonl"), "a", encoding="utf-8") as f:
+                f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
+            self.write_log(f"   📸 [{device}] บันทึกจุดที่ติด: ขั้น {idx+1}/{total} "
+                           f"'{step.get('desc','')}' ({reason}) -> {saved or 'แคปจอไม่ได้'}", "warning")
+            return saved
+        except Exception as e:
+            self.write_log(f"   ⚠️ [{device}] บันทึกรายงานปัญหาไม่สำเร็จ: {e}", "warning")
+            return ""
+
+    def open_error_reports_folder(self):
+        """เปิดโฟลเดอร์รายงานปัญหา (ภาพจุดที่ติดตอนรัน auto) ให้เลือกดูได้"""
+        try:
+            os.makedirs(self.error_reports_dir, exist_ok=True)
+            os.startfile(self.error_reports_dir)
+        except Exception as e:
+            messagebox.showinfo("รายงานปัญหา", f"โฟลเดอร์: {self.error_reports_dir}\n({e})")
+
     def execute_device_macro(self, device, account, highlight=True):
         """รันสคริปต์มาโครบน Emulator จอเดียวกับบัญชีที่กำหนด
 
@@ -6567,6 +7069,10 @@ class MuMuGUI(tk.Tk):
         if not hasattr(self, 'device_active_accounts'):
             self.device_active_accounts = {}
         self.device_active_accounts[device] = account
+        # อัปเดตสถานะสดของจอนี้ (คงค่า done_count/total_accounts เดิมไว้ ถ้าเคยตั้งจากคิวหลัก)
+        st = self._device_run_state.setdefault(device, {"done_count": 0, "total_accounts": 0})
+        st.update({"status": "running", "account_name": account_display_name(account) if account else "-",
+                   "step_idx": 0, "step_total": 0, "step_desc": "กำลังเริ่ม…"})
 
         run_start = time.time()
         result = {
@@ -6592,13 +7098,19 @@ class MuMuGUI(tk.Tk):
                 self.write_log(f"   ❌ [{device}] คำสั่ง {label} ล้มเหลว: {out}", "error")
             return ok
 
+        progress = {"idx": -1, "step": None, "total": 0}  # ขั้นล่าสุดที่ทำ (ให้รายงานปัญหารู้ว่าติดตรงไหน)
+
         def finish():
             result["duration"] = round(time.time() - run_start, 1)
             if result["errors"] and result["status"] == "completed":
                 result["status"] = "device_error"
-            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> รีเซ็ตเกมให้จอกลับมาช่อง login สะอาด
+            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> บันทึกจุดที่ติด (ภาพ+ข้อมูล) ก่อน แล้วรีเซ็ตเกม
             # กันโดมิโน่: ถ้าไม่รีเซ็ต บัญชีถัดไปในคิวจอนี้จะเริ่มจากจอค้าง แล้วพังต่อกันหมด
             if result["status"] in ("device_error", "macro_error"):
+                if not result.get("_reported") and progress["step"] is not None:
+                    self._save_failure_report(device, account, progress["idx"], progress["total"],
+                                              progress["step"], result.get("error") or "error")
+                self._device_run_state.setdefault(device, {})["status"] = "stuck"
                 self._reset_device_to_login(device)
             return result
 
@@ -6624,6 +7136,8 @@ class MuMuGUI(tk.Tk):
 
             t = step.get("type", "tap")
             desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
+            progress["idx"], progress["step"], progress["total"] = idx, step, len(steps_to_run)
+            st.update({"step_idx": idx + 1, "step_total": len(steps_to_run), "step_desc": desc})
             email_log = ""
             if account:
                 acc_name = account_display_name(account)
@@ -6647,8 +7161,11 @@ class MuMuGUI(tk.Tk):
 
             # === Anchor gate (ชั้น B): ถ้าสเต็ปมีภาพ anchor -> 'รอจนเห็นภาพนั้นบนจอ' ก่อนทำ ===
             # กันปัญหาจอช้า/ค้างแล้วกดตาบอดจนมั่ว: จอช้า=รอจนตามทัน, จอไม่ตรง=ตามนโยบาย anchor_on_fail
+            ctx.anchor_hit = None  # จุดกึ่งกลางที่ anchor เจอรอบนี้ (ให้ tap 'ตามภาพที่ขยับ' ได้)
             if step.get("anchor_img"):
-                gate = self._wait_for_step_anchor(device, step)
+                gate, ax, ay = self._wait_for_step_anchor(device, step)
+                if gate == "found" and ax is not None:
+                    ctx.anchor_hit = (ax, ay)
                 if gate == "stopped":
                     result["status"] = "stopped"
                     return finish()
@@ -6661,6 +7178,9 @@ class MuMuGUI(tk.Tk):
                         self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
                     else:  # abort — หยุดจอนี้ (กันรันมั่ว) จออื่นเดินต่อ + รายงานให้ตามเก็บ
                         self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} ({desc}) -> หยุดจอนี้ กันรันมั่ว", "error")
+                        # บันทึกภาพหน้าจอ ณ จุดที่ติด ก่อนรีเซ็ต (ให้ย้อนดูได้ว่าจอตอนนั้นเป็นยังไง)
+                        self._save_failure_report(device, account, idx, len(steps_to_run), step, "ไม่เจอภาพ anchor (abort)")
+                        result["_reported"] = True
                         result["status"] = "device_error"
                         result["error"] = f"anchor_fail: ขั้น {idx+1} {desc}"
                         return finish()
@@ -6678,10 +7198,19 @@ class MuMuGUI(tk.Tk):
 
         return finish()
 
+    def _update_anchor_poll(self):
+        """อัปเดตค่าความถี่วนเช็ค anchor (เก็บเป็น float แยก) จากช่อง UI — ทำบนเธรดหลัก
+        เพื่อให้ worker thread อ่าน self._anchor_poll_interval ได้โดยไม่แตะ Tk var (ไม่ปลอดภัยข้ามเธรด)"""
+        try:
+            v = float(self._anchor_poll_var.get())
+        except (TypeError, ValueError):
+            return
+        self._anchor_poll_interval = min(10.0, max(0.1, v))
+
     def _wait_for_step_anchor(self, device, step):
         """รอจนเจอ 'ภาพ anchor' ของสเต็ปบนจอ (base64 ในฟิลด์ anchor_img)
-        คืน 'found' | 'missing' | 'stopped'
-          - found   = เจอภายใน timeout -> ทำสเต็ปต่อได้
+        คืน (status, cx, cy) — cx,cy = จุดกึ่งกลางที่ match เจอ (None ถ้าไม่มี/anchor เสีย)
+          - found   = เจอภายใน timeout -> ทำสเต็ปต่อได้ (cx,cy ใช้ relocate จุดกดได้)
           - missing = ครบ timeout ยังไม่เจอ (จอไม่ตรงที่คาด)
           - stopped = ผู้ใช้กดหยุดระหว่างรอ"""
         import base64
@@ -6689,28 +7218,35 @@ class MuMuGUI(tk.Tk):
         try:
             tmpl_bytes = base64.b64decode(b64)
         except Exception:
-            return "found"  # anchor เสีย -> ไม่กั้น (ทำต่อ)
+            return "found", None, None  # anchor เสีย -> ไม่กั้น (ทำต่อ)
         if not tmpl_bytes:
-            return "found"
+            return "found", None, None
         timeout = float(step.get("anchor_timeout", 8.0) or 8.0)
         threshold = float(step.get("anchor_threshold", 0.8) or 0.8)
         deadline = time.time() + timeout
         best = 0.0
         while time.time() < deadline:
             if not self.macro_running:
-                return "stopped"
+                return "stopped", None, None
             ok, data = self.controller.capture_screenshot_bytes(device)
             if ok:
-                found, _cx, _cy, msg = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
+                found, cx, cy, msg = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
                 if found:
-                    return "found"
+                    return "found", cx, cy
                 # เก็บค่าความคล้ายสูงสุดไว้ log (ดึงเลขจากข้อความ)
                 m = re.search(r"([0-9]*\.?[0-9]+)", msg or "")
                 if m:
                     best = max(best, float(m.group(1)))
-            time.sleep(0.5)
+            # รอช่วง poll ที่ตั้งได้จาก UI (คุม CPU) — แต่ยังเช็คปุ่มหยุดถี่ๆ ให้ยกเลิกได้ทันที
+            poll = getattr(self, "_anchor_poll_interval", 0.5)
+            waited = 0.0
+            while waited < poll:
+                if not self.macro_running:
+                    return "stopped", None, None
+                time.sleep(min(0.2, poll - waited))
+                waited += 0.2
         self.write_log(f"   🔎 [{device}] anchor: รอ {timeout:g} วิ ยังไม่เจอ (คล้ายสุด {best:.2f}/{threshold:g})", "warning")
-        return "missing"
+        return "missing", None, None
 
     # ===== Macro step handlers (dispatch table) =====
     def _get_step_handlers(self):
@@ -7022,7 +7558,22 @@ class MuMuGUI(tk.Tk):
             time.sleep(ctx.step_delay)
 
     def _step_tap(self, ctx, step):
-        ctx.record(self.controller.tap(ctx.device, step["x"], step["y"]), "tap")
+        x, y = step["x"], step["y"]
+        # โหมด 'กดตรงที่เจอภาพ': ถ้าสเต็ปตั้ง anchor_tap และรอบนี้ anchor เจอ -> ย้ายจุดกดตามภาพ
+        # ที่ขยับ โดยคงระยะห่างเดิม (จุดแดง) เทียบกับจุดกึ่งกลางกรอบ anchor (จุดเขียว) เอาไว้
+        # => ปุ่ม/ป็อปอัพเลื่อนตำแหน่งนิดหน่อยก็ยังกดตรง (แม่นกว่าพิกัดตายตัว)
+        hit = getattr(ctx, "anchor_hit", None)
+        reg = step.get("anchor_region")
+        if step.get("anchor_tap") and hit and reg:
+            try:
+                acx = reg["x"] + reg["w"] / 2.0
+                acy = reg["y"] + reg["h"] / 2.0
+                x = int(round(hit[0] + (float(step["x"]) - acx)))
+                y = int(round(hit[1] + (float(step["y"]) - acy)))
+                self.write_log(f"   🎯 [{ctx.device}] กดตามภาพที่เจอ -> ({x},{y})", "info")
+            except (TypeError, ValueError, KeyError):
+                x, y = step["x"], step["y"]
+        ctx.record(self.controller.tap(ctx.device, x, y), "tap")
         time.sleep(ctx.step_delay)  # หน่วงเวลาหลังคลิกเพื่อให้ระบบ Android ทำงานทัน
 
     def _step_swipe(self, ctx, step):

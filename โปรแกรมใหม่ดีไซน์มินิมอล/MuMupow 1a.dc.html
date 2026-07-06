@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'IBM Plex Sans Thai',system-ui,-apple-system,sans-serif;background:#070A11;color:#E7EDF6;-webkit-font-smoothing:antialiased;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .sc::-webkit-scrollbar{width:8px;height:8px}
+  .sc::-webkit-scrollbar-thumb{background:#202A3B;border-radius:8px}
+  .sc::-webkit-scrollbar-track{background:transparent}
+  input,textarea{font-family:inherit}
+</style>
+</helmet>
+
+<div style="width:1180px;height:732px;position:relative;border-radius:15px;border:1px solid #1B2434;background:#0B0F19;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 40px 100px -30px rgba(0,0,0,.85)">
+
+  <!-- title bar -->
+  <div style="height:44px;flex:none;background:#0E1420;border-bottom:1px solid #1B2434;display:flex;align-items:center;justify-content:space-between;padding:0 16px">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#10B981,#0E7490);display:flex;align-items:center;justify-content:center"><i data-lucide="cpu" width="14" height="14" stroke-width="2" style="color:#04120C"></i></div>
+      <span style="font-weight:700;font-size:14px;letter-spacing:.2px">MuMupow</span>
+      <span style="font-size:11.5px;color:#5C6B82">คุมและบอทหลายจอพร้อมกัน</span>
+    </div>
+    <div style="display:flex;gap:16px;color:#5C6B82"><i data-lucide="minus" width="16" height="16" stroke-width="2"></i><i data-lucide="square" width="13" height="13" stroke-width="2"></i><i data-lucide="x" width="16" height="16" stroke-width="2"></i></div>
+  </div>
+
+  <div style="flex:1;display:flex;min-height:0">
+    <!-- nav rail -->
+    <div style="width:74px;flex:none;background:#0E1420;border-right:1px solid #1B2434;display:flex;flex-direction:column;padding:12px 0;gap:2px">
+      <div onClick="{{ goHome }}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;cursor:pointer;color:{{ nav.home.color }}"><div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399;display:{{ nav.home.bar }}"></div><i data-lucide="play" width="21" height="21" stroke-width="1.9"></i><span style="font-size:9.5px;font-weight:500">หน้าแรก</span></div>
+      <div onClick="{{ goAcc }}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;cursor:pointer;color:{{ nav.acc.color }}"><div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399;display:{{ nav.acc.bar }}"></div><i data-lucide="users" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px;font-weight:500">บัญชี</span></div>
+      <div onClick="{{ goScript }}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;cursor:pointer;color:{{ nav.script.color }}"><div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399;display:{{ nav.script.bar }}"></div><i data-lucide="square-pen" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px;font-weight:500">สคริปต์</span></div>
+      <div onClick="{{ goTools }}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;cursor:pointer;color:{{ nav.tools.color }}"><div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399;display:{{ nav.tools.bar }}"></div><i data-lucide="wrench" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px;font-weight:500">อื่นๆ</span></div>
+      <div onClick="{{ goSet }}" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;cursor:pointer;margin-top:auto;color:{{ nav.set.color }}"><div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399;display:{{ nav.set.bar }}"></div><i data-lucide="settings" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px;font-weight:500">ตั้งค่า</span></div>
+    </div>
+
+    <!-- device sidebar -->
+    <div class="sc" style="width:262px;flex:none;background:#0B0F19;border-right:1px solid #1B2434;padding:20px 18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7C8CA3;text-transform:uppercase">อุปกรณ์</span><span style="font-size:11px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">6 เชื่อมต่อ</span></div>
+      <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;height:38px;border:1px solid #24344B;border-radius:9px;color:#C7D2E0;font-size:13px;font-weight:500;cursor:pointer"><i data-lucide="radar" width="16" height="16" stroke-width="1.75"></i>สแกนพอร์ต</button>
+      <div style="display:flex;align-items:center;gap:9px;padding:11px 12px;border-radius:9px;background:rgba(16,185,129,.09);border:1px solid rgba(16,185,129,.22)"><span style="width:8px;height:8px;border-radius:50%;background:#34D399;flex:none"></span><span style="font-size:12.5px;color:#A7F3D0;font-weight:500">เชื่อมต่อ 6 จอ · เลือก 5</span></div>
+      <div style="display:flex;gap:7px">
+        <div style="flex:1;height:36px;display:flex;align-items:center;padding:0 11px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#90A0B7">127.0.0.1:7555</div>
+        <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;padding:0 12px;height:36px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer">เชื่อม</button>
+      </div>
+      <div style="font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7C8CA3;text-transform:uppercase;margin-top:2px">เลือกจอที่จะควบคุม</div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <sc-for list="{{ devices }}" as="d" hint-placeholder-count="6">
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;background:#121A28;border:1px solid #1B2434">
+            <span style="width:16px;height:16px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ d.boxBg }};border:1.5px solid {{ d.boxBorder }}"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:{{ d.checkOpacity }}"></i></span>
+            <i data-lucide="monitor" width="15" height="15" stroke-width="1.75" style="color:#5C6B82;flex:none"></i>
+            <span style="flex:1;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#C7D2E0">{{ d.addr }}</span>
+            <span style="width:7px;height:7px;border-radius:50%;background:{{ d.dot }};flex:none"></span>
+            <i data-lucide="x" width="13" height="13" stroke-width="2" style="color:#455266;flex:none;cursor:pointer" title="เอาจอนี้ออกจากลิสต์"></i>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- content -->
+    <div class="sc" style="flex:1;min-width:0;overflow-y:auto">
+
+      <!-- ===== HOME ===== -->
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:26px 28px;display:flex;flex-direction:column;gap:20px;min-height:100%">
+          <div><h2 style="margin:0 0 4px;font-size:19px;font-weight:700;letter-spacing:-.2px">หน้าแรก · รันสคริปต์</h2><p style="margin:0;font-size:13px;color:#7C8CA3">ติ๊กจอที่ต้องการ → เลือกสคริปต์ → กดรัน แล้วดูความคืบหน้าของแต่ละจอด้านขวา</p></div>
+          <div style="display:flex;gap:20px;align-items:flex-start;flex:1">
+            <div style="width:360px;flex:none;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:12px;font-weight:600;color:#90A0B7">สคริปต์ที่กำลังรัน</span><div style="display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 14px;border-radius:10px;background:#0A0F19;border:1px solid #24344B"><span style="font-size:13.5px;font-weight:500">ล็อกอิน + เก็บของประจำวัน</span><i data-lucide="chevron-down" width="17" height="17" stroke-width="1.75" style="color:#7C8CA3"></i></div></div>
+              <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:15px 16px;display:flex;flex-direction:column;gap:11px">
+                <div style="display:flex;align-items:center;gap:9px;font-size:13px"><i data-lucide="check" width="16" height="16" stroke-width="2.25" style="color:#34D399"></i><span style="color:#C7D2E0">จอที่เลือก</span><span style="margin-left:auto;font-family:'IBM Plex Mono',monospace">5 จอ</span></div>
+                <div style="display:flex;align-items:center;gap:9px;font-size:13px"><i data-lucide="check" width="16" height="16" stroke-width="2.25" style="color:#34D399"></i><span style="color:#C7D2E0">บัญชีที่จะทำ</span><span style="margin-left:auto;font-family:'IBM Plex Mono',monospace">50 รหัส</span></div>
+                <div style="display:flex;align-items:center;gap:9px;font-size:13px"><i data-lucide="check" width="16" height="16" stroke-width="2.25" style="color:#34D399"></i><span style="color:#C7D2E0">สคริปต์</span><span style="margin-left:auto;font-family:'IBM Plex Mono',monospace">18 สเต็ป</span></div>
+                <div style="height:1px;background:#1B2434;margin:2px 0"></div>
+                <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#34D399"><span style="width:8px;height:8px;border-radius:50%;background:#34D399;animation:pulse 1.6s infinite"></span>กำลังรัน · เริ่มเมื่อ 14:32 น.</div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:flex-start">
+                <div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#7C8CA3">ความถี่เช็ค Anchor (วิ)</span><div style="height:36px;display:flex;align-items:center;padding:0 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;font-family:'IBM Plex Mono',monospace;font-size:13px">0.5</div></div>
+                <label style="flex:1;display:flex;align-items:center;gap:8px;font-size:12px;color:#90A0B7;margin-top:22px;cursor:pointer"><span style="width:16px;height:16px;border-radius:5px;border:1.5px solid #2A3547;flex:none"></span>หยุดรอตรวจทานทีละชุด</label>
+              </div>
+              <div style="display:flex;gap:11px;margin-top:2px">
+                <div style="flex:1;height:56px;border-radius:12px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center;gap:10px;color:#6EE7B7;font-weight:600;font-size:14px"><i data-lucide="loader" width="18" height="18" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน 5 จอ…</div>
+                <div style="width:120px;height:56px;border-radius:12px;background:#7F1D1D;border:1px solid #991B1B;display:flex;align-items:center;justify-content:center;gap:8px;color:#FCA5A5;font-weight:600;font-size:14px;cursor:pointer"><i data-lucide="square" width="15" height="15" stroke-width="2.25"></i>หยุด</div>
+              </div>
+            </div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:14px;font-weight:600">ความคืบหน้าต่อจอ</span><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:8px;border:1px solid #24344B;color:#90A0B7;font-size:12px;cursor:pointer"><i data-lucide="image" width="14" height="14" stroke-width="1.75"></i>รายงานปัญหา</button></div>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <sc-for list="{{ progress }}" as="p" hint-placeholder-count="5">
+                  <div style="border-radius:11px;background:#121A28;border:1px solid #1B2434;padding:13px 15px;display:flex;flex-direction:column;gap:9px">
+                    <div style="display:flex;align-items:center;gap:10px"><span style="width:9px;height:9px;border-radius:50%;background:{{ p.dot }};flex:none"></span><span style="font-weight:600;font-size:13.5px">{{ p.n }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5C6B82">{{ p.addr }}</span><span style="margin-left:auto;font-size:12px;font-weight:500;color:{{ p.color }}">{{ p.label }}</span></div>
+                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#90A0B7"><i data-lucide="user" width="13" height="13" stroke-width="1.75" style="color:#5C6B82"></i><span style="color:#C7D2E0;font-family:'IBM Plex Mono',monospace;font-size:11.5px">{{ p.acct }}</span><span style="color:#455266">·</span><span>{{ p.step }}</span></div>
+                    <div style="display:flex;align-items:center;gap:10px"><div style="flex:1;height:5px;border-radius:9px;background:#1B2434;overflow:hidden"><div style="height:100%;border-radius:9px;background:{{ p.bar }};width:{{ p.pct }}%"></div></div><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7C8CA3;min-width:56px;text-align:right">{{ p.done }}</span></div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===== ACCOUNTS ===== -->
+      <sc-if value="{{ isAcc }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:26px 28px;display:flex;flex-direction:column;gap:18px;min-height:100%">
+          <div><h2 style="margin:0 0 4px;font-size:19px;font-weight:700;letter-spacing:-.2px">บัญชี · จัดการรหัส</h2><p style="margin:0;font-size:13px;color:#7C8CA3">รหัสทั้งหมดจัดเป็นกลุ่ม · จุดสีบอกสถานะรอบล่าสุด · เพิ่มหรือแก้ไขได้จากฟอร์มด้านขวา</p></div>
+          <div style="display:flex;gap:20px;align-items:flex-start;flex:1">
+            <!-- list -->
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;align-items:center;gap:10px;height:40px;padding:0 13px;border-radius:10px;background:#0A0F19;border:1px solid #1B2434"><i data-lucide="search" width="16" height="16" stroke-width="1.75" style="color:#5C6B82"></i><span style="font-size:13px;color:#5C6B82">ค้นหาชื่อ / อีเมล / กลุ่ม…</span></div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;font-size:12px;cursor:pointer"><i data-lucide="trash-2" width="13" height="13" stroke-width="1.75"></i>ลบที่เลือก</button>
+                <div style="width:1px;height:20px;background:#1B2434"></div>
+                <span style="font-size:12px;color:#7C8CA3">เลือกด่วน:</span>
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><span style="width:8px;height:8px;border-radius:50%;background:#F87171"></span>ที่พลาด</button>
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><span style="width:8px;height:8px;border-radius:50%;background:#58677E"></span>ยังไม่เสร็จ</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:16px;font-size:11.5px;color:#7C8CA3;padding:0 2px"><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#38BDF8"></span>เสร็จ</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#F87171"></span>พลาด</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#34D399"></span>กำลังทำ</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#58677E"></span>ยังไม่ทำ</span></div>
+              <div style="display:flex;flex-direction:column;gap:14px">
+                <sc-for list="{{ accounts }}" as="g" hint-placeholder-count="2">
+                  <div style="display:flex;flex-direction:column;gap:7px">
+                    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px"><span style="width:16px;height:16px;border-radius:5px;border:1.5px solid #2A3547;flex:none"></span><i data-lucide="folder" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i><span style="font-size:13px;font-weight:600">กลุ่ม: {{ g.name }}</span><span style="font-size:11.5px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">{{ g.count }} บัญชี</span><i data-lucide="trash-2" width="14" height="14" stroke-width="1.75" style="color:#455266;margin-left:auto;cursor:pointer" title="ลบทั้งกลุ่ม"></i></div>
+                    <sc-for list="{{ g.accounts }}" as="a" hint-placeholder-count="3">
+                      <div style="display:flex;align-items:center;gap:11px;padding:11px 12px;margin-left:8px;border-radius:10px;background:#121A28;border:1px solid #1B2434">
+                        <span style="width:9px;height:9px;border-radius:50%;background:{{ a.dot }};flex:none"></span>
+                        <span style="width:16px;height:16px;border-radius:5px;border:1.5px solid #2A3547;flex:none"></span>
+                        <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">{{ a.name }}</div><div style="font-size:11px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">กลุ่ม {{ a.grp }} · {{ a.tok }}</div></div>
+                        <i data-lucide="pencil" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" title="แก้ไข"></i>
+                        <i data-lucide="x" width="15" height="15" stroke-width="2" style="color:#455266;cursor:pointer" title="ลบบัญชี"></i>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <!-- form -->
+            <div style="width:352px;flex:none;border-radius:13px;background:#0E1420;border:1px solid #1B2434;padding:18px;display:flex;flex-direction:column;gap:13px">
+              <div style="display:flex;align-items:center;gap:9px"><i data-lucide="user-plus" width="17" height="17" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:14px;font-weight:600">เพิ่ม / แก้ไขบัญชี</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">อีเมล / ไอดีเกม</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:#C7D2E0;font-family:'IBM Plex Mono',monospace">player042@game.com</div></div>
+              <div style="display:flex;gap:10px"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ชื่อเรียก</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:#C7D2E0">thanapon_042</div></div><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">กลุ่ม</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:#C7D2E0">หลัก (A)</div></div></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">รหัสผ่าน</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">••••••••••</div></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">โทเคน (OAuth2) · ไคลเอนต์ไอดี</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:11.5px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">ya29.a0Af…2Lm</div></div>
+              <div style="display:flex;gap:10px;margin-top:4px"><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border-radius:10px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="plus" width="16" height="16" stroke-width="2.25"></i>เพิ่มเข้าคิว</button><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;padding:0 14px;height:42px;border-radius:10px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:13px;font-weight:500;cursor:pointer"><i data-lucide="upload" width="15" height="15" stroke-width="1.75"></i>นำเข้ากลุ่ม</button></div>
+              <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:9px;border:1px solid #24344B;color:#90A0B7;font-size:12.5px;cursor:pointer"><i data-lucide="file-json" width="15" height="15" stroke-width="1.75"></i>Import Save Web Game JSON</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===== SCRIPT ===== -->
+      <sc-if value="{{ isScript }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:26px 28px;display:flex;flex-direction:column;gap:18px;min-height:100%">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px">
+            <div><h2 style="margin:0 0 4px;font-size:19px;font-weight:700;letter-spacing:-.2px">สร้าง / แก้สคริปต์</h2><p style="margin:0;font-size:13px;color:#7C8CA3">แก้ไขสคริปต์ที่โหลดอยู่ · เลือกขั้นตอนเพื่อแก้ในฟอร์มขวา · เปิดผังงานเพื่อดูทางแยกเงื่อนไข</p></div>
+            <button onClick="{{ openFlow }}" style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 15px;height:42px;border-radius:10px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.3);color:#6EE7B7;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="git-fork" width="16" height="16" stroke-width="1.9"></i>เปิดผังงาน</button>
+          </div>
+          <div style="display:flex;gap:20px;align-items:flex-start;flex:1">
+            <!-- left: profile + steps -->
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ชื่อโปรไฟล์สคริปต์</span><div style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 13px;font-size:13.5px;font-weight:500">ล็อกอิน + เก็บของประจำวัน</div></div><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:0 14px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="save" width="15" height="15" stroke-width="2"></i>บันทึก</button></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;font-size:12px;cursor:pointer"><i data-lucide="trash-2" width="13" height="13" stroke-width="1.75"></i>ลบ</button>
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="download" width="13" height="13" stroke-width="1.75"></i>Export</button>
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="upload" width="13" height="13" stroke-width="1.75"></i>Import</button>
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24;font-size:12px;cursor:pointer"><i data-lucide="zap" width="13" height="13" stroke-width="1.75"></i>สร้างเร็ว</button>
+                <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="layers" width="13" height="13" stroke-width="1.75"></i>จัดการ Sets</button>
+              </div>
+              <div style="font-size:11px;font-weight:600;letter-spacing:1.2px;color:#7C8CA3;text-transform:uppercase;margin-top:4px">ขั้นตอน (18)</div>
+              <div class="sc" style="border-radius:11px;background:#0A0F19;border:1px solid #1B2434;padding:6px;display:flex;flex-direction:column;gap:3px;max-height:328px;overflow-y:auto">
+                <sc-for list="{{ steps }}" as="s" hint-placeholder-count="8">
+                  <div onClick="{{ s.onSelect }}" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:8px;cursor:pointer;background:{{ s.rowBg }};border:1px solid {{ s.rowBorder }}">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#5C6B82;width:20px">{{ s.no }}</span>
+                    <i data-lucide="{{ s.icon }}" width="15" height="15" stroke-width="1.9" style="color:{{ s.ic }};flex:none"></i>
+                    <span style="font-size:12.5px;font-weight:500;min-width:74px">{{ s.type }}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#90A0B7;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.detail }}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5C6B82">{{ s.delay }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:8px"><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 13px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="arrow-up" width="14" height="14" stroke-width="1.9"></i>ขึ้น</button><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 13px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="arrow-down" width="14" height="14" stroke-width="1.9"></i>ลง</button><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:8px 13px;border-radius:8px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;font-size:12px;cursor:pointer;margin-left:auto"><i data-lucide="trash-2" width="14" height="14" stroke-width="1.75"></i>ลบขั้นตอน</button></div>
+            </div>
+            <!-- right: step form -->
+            <div class="sc" style="width:352px;flex:none;border-radius:13px;background:#0E1420;border:1px solid #1B2434;padding:18px;display:flex;flex-direction:column;gap:13px;max-height:460px;overflow-y:auto">
+              <div style="display:flex;align-items:center;gap:9px"><i data-lucide="plus-circle" width="17" height="17" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:14px;font-weight:600">แก้ไขขั้นตอนที่เลือก</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ประเภทคำสั่ง</span><div style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;justify-content:space-between;padding:0 13px"><span style="font-size:13px;font-weight:500">{{ stepDetail.type }}</span><i data-lucide="chevron-down" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i></div></div>
+              <div style="display:flex;gap:10px"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">พิกัด X</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0">{{ stepDetail.x }}</div></div><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">พิกัด Y</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0">{{ stepDetail.y }}</div></div></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">คำอธิบายขั้นตอน</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:#C7D2E0">{{ stepDetail.desc }}</div></div>
+              <div style="display:flex;gap:10px"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">หน่วงหลังทำ (วิ)</span><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0">{{ stepDetail.delay }}</div></div><div style="flex:1"></div></div>
+              <div style="display:flex;gap:10px;margin-top:2px"><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border-radius:10px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="check" width="16" height="16" stroke-width="2.25"></i>อัปเดตขั้นตอน</button></div>
+              <div style="height:1px;background:#1B2434;margin:2px 0"></div>
+              <button onClick="{{ openAnchor }}" style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;height:42px;border-radius:10px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:13px;font-weight:500;cursor:pointer"><i data-lucide="crosshair" width="16" height="16" stroke-width="1.9"></i>บันทึกพิกัดด้วยภาพ</button>
+              <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;height:42px;border-radius:10px;background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24;font-size:13px;font-weight:500;cursor:pointer"><i data-lucide="flask-conical" width="16" height="16" stroke-width="1.9"></i>ทดสอบสเต็ปนี้ (แตะจริงบนจอ)</button>
+              <div style="display:flex;gap:8px"><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;border:1px solid #24344B;color:#90A0B7;font-size:12px;cursor:pointer"><i data-lucide="image" width="14" height="14" stroke-width="1.75"></i>Anchor รอบจุดกด</button><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;border:1px solid #24344B;color:#90A0B7;font-size:12px;cursor:pointer"><i data-lucide="crop" width="14" height="14" stroke-width="1.75"></i>เลือกพื้นที่เอง</button></div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===== TOOLS (อื่นๆ) ===== -->
+      <sc-if value="{{ isTools }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:26px 28px;display:flex;flex-direction:column;gap:18px;min-height:100%">
+          <div><h2 style="margin:0 0 4px;font-size:19px;font-weight:700;letter-spacing:-.2px">อื่นๆ · แมนนวล / เครื่องมือ / Story</h2><p style="margin:0;font-size:13px;color:#7C8CA3">สั่งงานเองทีละคำสั่ง · เครื่องมือช่าง · หรือให้ AI เล่นเนื้อเรื่องอัตโนมัติ</p></div>
+          <div style="display:flex;gap:4px;padding:4px;border-radius:11px;background:#0E1420;border:1px solid #1B2434;width:fit-content">
+            <div onClick="{{ goManual }}" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:{{ tManual.bg }};color:{{ tManual.color }}"><i data-lucide="mouse-pointer" width="15" height="15" stroke-width="1.75"></i>แมนนวล + ถ่ายจอ</div>
+            <div onClick="{{ goToolz }}" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:{{ tTools.bg }};color:{{ tTools.color }}"><i data-lucide="wrench" width="15" height="15" stroke-width="1.75"></i>เครื่องมือ</div>
+            <div onClick="{{ goStory }}" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:{{ tStory.bg }};color:{{ tStory.color }}"><i data-lucide="book-open" width="15" height="15" stroke-width="1.75"></i>Story Auto</div>
+          </div>
+
+          <sc-if value="{{ isManual }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px">
+              <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="mouse-pointer-click" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">คลิกที่พิกัด</span></div><div style="display:flex;gap:10px"><div style="flex:1;height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#90A0B7">X 540</div><div style="flex:1;height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#90A0B7">Y 1180</div></div><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="send" width="15" height="15" stroke-width="1.9"></i>ส่งคลิก (ทุกจอที่เลือก)</button></div>
+              <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="type" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">พิมพ์ข้อความ</span></div><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:#5C6B82">พิมพ์ข้อความที่จะส่ง…</div><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="send" width="15" height="15" stroke-width="1.9"></i>ส่งข้อความ</button></div>
+              <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="smartphone" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ปุ่มระบบ</span></div><div style="display:flex;gap:9px"><button style="all:unset;box-sizing:border-box;flex:1;text-align:center;height:40px;line-height:40px;border-radius:9px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer">BACK</button><button style="all:unset;box-sizing:border-box;flex:1;text-align:center;height:40px;line-height:40px;border-radius:9px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer">HOME</button><button style="all:unset;box-sizing:border-box;flex:1;text-align:center;height:40px;line-height:40px;border-radius:9px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer">MENU</button></div></div>
+              <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="camera" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ถ่ายภาพหน้าจอ + อ่านเพชร</span></div><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#90A0B7">shot_{port}_{time}.png</div><div style="display:flex;gap:9px"><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:40px;border-radius:9px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer"><i data-lucide="camera" width="14" height="14" stroke-width="1.75"></i>ถ่ายทุกเครื่อง</button><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:40px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12.5px;cursor:pointer"><i data-lucide="gem" width="14" height="14" stroke-width="1.75"></i>อ่านเพชร → JSON</button></div></div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isToolz }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="terminal" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ADB Shell</span></div><div style="display:flex;gap:10px"><div style="flex:1;height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 13px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#90A0B7">shell input tap 540 1180</div><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:0 16px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="play" width="14" height="14" stroke-width="2"></i>รัน</button></div></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="scan-search" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">UI Inspector</span></div><p style="margin:0;font-size:12px;color:#7C8CA3;line-height:1.6">ดู element บนหน้าจอจริง เพื่อหาพิกัด/ชื่อปุ่มสำหรับตั้งสเต็ป</p><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:9px;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer"><i data-lucide="scan-search" width="14" height="14" stroke-width="1.75"></i>เปิด Inspector</button></div>
+                <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="list" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ดึงรายชื่อสมาชิกชมรม</span></div><p style="margin:0;font-size:12px;color:#7C8CA3;line-height:1.6">ตั้งพื้นที่ชื่อ → แคปจอ → อ่านชื่อออกมาเป็นลิสต์</p><div style="display:flex;gap:9px"><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="crop" width="14" height="14" stroke-width="1.75"></i>ตั้งพื้นที่</button><button style="all:unset;box-sizing:border-box;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="download" width="14" height="14" stroke-width="1.75"></i>ดึงรายชื่อ</button></div></div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isStory }}" hint-placeholder-val="{{ false }}">
+            <div style="border-radius:13px;background:#0E1420;border:1px solid #1B2434;padding:22px;display:flex;flex-direction:column;gap:16px;max-width:560px">
+              <div style="display:flex;align-items:center;gap:10px"><div style="width:36px;height:36px;border-radius:10px;background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.28);display:flex;align-items:center;justify-content:center"><i data-lucide="sparkles" width="18" height="18" stroke-width="1.9" style="color:#7DD3FC"></i></div><div><div style="font-size:14.5px;font-weight:600">Story Auto (AI)</div><div style="font-size:12px;color:#7C8CA3">ให้ AI ตัดสินใจแตะเองเมื่อเจอหน้าจอเนื้อเรื่องที่ไม่คงที่</div></div></div>
+              <div style="display:flex;align-items:flex-end;gap:12px"><div style="width:200px;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ความถี่เช็คจอ (วิ)</span><div style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 13px;font-family:'IBM Plex Mono',monospace;font-size:13px">2.5</div></div><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:0 18px;height:44px;border-radius:10px;background:#10B981;color:#04120C;font-size:13.5px;font-weight:600;cursor:pointer"><i data-lucide="play" width="16" height="16" stroke-width="2"></i>เริ่ม Story Auto</button></div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- ===== SETTINGS (ตั้งค่า) ===== -->
+      <sc-if value="{{ isSet }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:26px 28px;display:flex;flex-direction:column;gap:18px;min-height:100%">
+          <div><h2 style="margin:0 0 4px;font-size:19px;font-weight:700;letter-spacing:-.2px">ตั้งค่า</h2><p style="margin:0;font-size:13px;color:#7C8CA3">ค่าระบบและการเชื่อมต่อ · ถูกจำถาวรลงไฟล์ config</p></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px">
+            <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="folder-cog" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ที่อยู่ไฟล์ ADB.exe</span></div><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#90A0B7">C:\MuMuPlayer\shell\adb.exe</div><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:9px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="save" width="14" height="14" stroke-width="2"></i>บันทึกและโหลดใหม่</button></div>
+            <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="plug" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">พอร์ต ADB</span></div><div style="display:flex;gap:10px"><div style="flex:1;height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#90A0B7">7555 – 7564</div></div><span style="font-size:11.5px;color:#5C6B82">ช่วงพอร์ตที่จะสแกนหา emulator</span></div>
+            <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="key-round" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">Gemini API Key</span></div><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#5C6B82">AIza••••••••••••••••</div><span style="font-size:11.5px;color:#5C6B82">ใช้เป็นตัวสำรองของ Story Auto</span></div>
+            <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="gauge" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ขีดจำกัดเครื่อง</span></div><div style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#90A0B7">รันได้สูงสุด 10 จอพร้อมกัน</div></div>
+            <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="languages" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">พิมพ์ภาษาไทย / Unicode</span></div><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12.5px;color:#90A0B7">ADBKeyboard</span><div style="width:40px;height:22px;border-radius:999px;background:#10B981;position:relative;flex:none"><span style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:#04120C"></span></div></div></div>
+            <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:17px;display:flex;flex-direction:column;gap:11px"><div style="display:flex;align-items:center;gap:9px"><i data-lucide="crosshair" width="16" height="16" stroke-width="1.9" style="color:#38BDF8"></i><span style="font-size:13.5px;font-weight:600">ตัวช่วยหาพิกัด</span></div><p style="margin:0;font-size:12px;color:#7C8CA3;line-height:1.6">เปิดหน้าจอจริงแล้วชี้เมาส์เพื่ออ่านค่าพิกัด X/Y</p><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:9px;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer"><i data-lucide="crosshair" width="14" height="14" stroke-width="1.75"></i>เปิดตัวช่วย</button></div>
+          </div>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+
+  <!-- log strip -->
+  <div style="flex:none;background:#0E1420;border-top:1px solid #1B2434;display:flex;flex-direction:column">
+    <div onClick="{{ toggleLog }}" style="height:42px;display:flex;align-items:center;gap:12px;padding:0 16px;cursor:pointer">
+      <i data-lucide="terminal" width="15" height="15" stroke-width="1.75" style="color:#5C6B82"></i>
+      <span style="font-size:12px;font-weight:600;color:#C7D2E0">คอนโซลบันทึกการทำงาน</span>
+      <span style="font-size:11.5px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">[14:38:07]</span>
+      <span style="font-size:12px;color:#FCA5A5;font-family:'IBM Plex Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✕ จอ 5 · thanapon_051 ล็อกอินไม่ผ่าน — บันทึกรายงานปัญหา</span>
+      <i data-lucide="{{ logChevron }}" width="16" height="16" stroke-width="1.75" style="color:#5C6B82;margin-left:auto"></i>
+    </div>
+    <sc-if value="{{ logOpen }}" hint-placeholder-val="{{ false }}">
+      <div class="sc" style="height:150px;overflow-y:auto;padding:4px 16px 14px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:1.85;border-top:1px solid #16202F">
+        <div style="color:#6EE7B7">[14:38:02] ✓ จอ 4 · thanapon_017 เก็บของสำเร็จ (50/50)</div>
+        <div style="color:#90A0B7">[14:38:03] ▸ จอ 1 · thanapon_042 แตะคลังไอเทม (3/18)</div>
+        <div style="color:#90A0B7">[14:38:05] ▸ จอ 2 · thanapon_043 ยืนยันภาพ anchor (7/18)</div>
+        <div style="color:#7DD3FC">[14:38:06] ⓘ จอ 3 · เข้าคิว รอจอว่าง</div>
+        <div style="color:#FBBF24">[14:38:06] ⚠ จอ 5 · anchor ปุ่มล็อกอินไม่ตรง (รอ 3.0s)</div>
+        <div style="color:#FCA5A5">[14:38:07] ✕ จอ 5 · thanapon_051 ล็อกอินไม่ผ่าน — บันทึกรายงานปัญหา → error_reports/</div>
+        <div style="color:#90A0B7">[14:38:08] ▸ จอ 5 · รีเซ็ตเกม ไปบัญชีถัดไป thanapon_052</div>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- ===== FLOWCHART DIALOG ===== -->
+  <sc-if value="{{ isFlow }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;z-index:50;background:rgba(4,7,13,.72);display:flex;align-items:center;justify-content:center;padding:28px">
+      <div style="width:100%;height:100%;border-radius:14px;background:#0B0F19;border:1px solid #223046;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 40px 90px -20px rgba(0,0,0,.7)">
+        <div style="height:56px;flex:none;border-bottom:1px solid #1B2434;display:flex;align-items:center;gap:12px;padding:0 18px">
+          <i data-lucide="git-fork" width="18" height="18" stroke-width="1.9" style="color:#6EE7B7"></i>
+          <span style="font-size:15px;font-weight:700">ผังงานสคริปต์</span>
+          <span style="font-size:12.5px;color:#7C8CA3">ล็อกอิน + เก็บของประจำวัน</span>
+          <div style="width:1px;height:24px;background:#1B2434;margin:0 4px"></div>
+          <div style="display:flex;gap:7px">
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#10B981;color:#04120C;font-size:12px;font-weight:600;cursor:pointer"><i data-lucide="plus" width="13" height="13" stroke-width="2.25"></i>แทรกขั้น</button>
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;padding:8px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;cursor:pointer"><i data-lucide="arrow-up" width="14" height="14" stroke-width="1.9"></i></button>
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;padding:8px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;cursor:pointer"><i data-lucide="arrow-down" width="14" height="14" stroke-width="1.9"></i></button>
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;font-size:12px;cursor:pointer"><i data-lucide="trash-2" width="13" height="13" stroke-width="1.75"></i>ลบ</button>
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24;font-size:12px;cursor:pointer"><i data-lucide="flask-conical" width="13" height="13" stroke-width="1.75"></i>ทดสอบขั้นนี้</button>
+          </div>
+          <button onClick="{{ closeDialog }}" style="all:unset;box-sizing:border-box;margin-left:auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;color:#8A99B0;cursor:pointer"><i data-lucide="x" width="18" height="18" stroke-width="2"></i></button>
+        </div>
+        <div class="sc" style="flex:1;overflow:auto;padding:26px 30px;background:radial-gradient(circle at 1px 1px, #16202F 1px, transparent 0);background-size:22px 22px">
+          <div style="position:relative;width:760px;height:800px;margin:0 auto">
+            <svg width="760" height="800" style="position:absolute;top:0;left:0;overflow:visible">
+              <defs><marker id="arh" markerWidth="9" markerHeight="9" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#4A5A72"></path></marker></defs>
+              <line x1="300" y1="64"  x2="300" y2="93"  stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="300" y1="148" x2="300" y2="175" stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="300" y1="230" x2="300" y2="259" stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="375" y1="337" x2="517" y2="337" stroke="#7F1D1D" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="300" y1="412" x2="300" y2="451" stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="300" y1="506" x2="300" y2="535" stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="375" y1="613" x2="517" y2="613" stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+              <line x1="300" y1="688" x2="300" y2="719" stroke="#4A5A72" stroke-width="1.7" marker-end="url(#arh)"></line>
+            </svg>
+            <div style="position:absolute;left:308px;top:424px;font-size:11px;font-weight:600;color:#6EE7B7">เจอ ↓</div>
+            <div style="position:absolute;left:430px;top:315px;font-size:11px;font-weight:600;color:#FCA5A5">ไม่เจอ →</div>
+            <div style="position:absolute;left:308px;top:700px;font-size:11px;font-weight:600;color:#6EE7B7">ครบ ↓</div>
+            <div style="position:absolute;left:410px;top:591px;font-size:11px;font-weight:600;color:#8A99B0">ยังไม่ครบ →</div>
+            <sc-for list="{{ flowNodes }}" as="n" hint-placeholder-count="9">
+              <div onClick="{{ n.onSelect }}" style="position:absolute;left:{{ n.x }}px;top:{{ n.y }}px;width:{{ n.w }}px;height:{{ n.h }}px;cursor:pointer;z-index:2">
+                <div style="position:absolute;inset:0;background:{{ n.fill }};border:{{ n.bw }} solid {{ n.borderCol }};border-radius:{{ n.radius }};transform:rotate({{ n.rot }});box-shadow:{{ n.glow }}"></div>
+                <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:{{ n.pad }};font-size:12.5px;font-weight:600;line-height:1.25;color:{{ n.tc }}">{{ n.label }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:none;border-top:1px solid #1B2434;padding:12px 18px;display:flex;align-items:center;gap:20px;font-size:11.5px;color:#7C8CA3">
+          <span style="display:flex;align-items:center;gap:7px"><span style="width:16px;height:12px;border-radius:999px;background:rgba(16,185,129,.2);border:1px solid #2E6B5E"></span>เริ่ม / จบ</span>
+          <span style="display:flex;align-items:center;gap:7px"><span style="width:14px;height:12px;border-radius:3px;background:#12233A;border:1px solid #2A4A6B"></span>กระบวนการ</span>
+          <span style="display:flex;align-items:center;gap:7px"><span style="width:12px;height:12px;background:#2A2210;border:1px solid #7A5A1E;transform:rotate(45deg)"></span>เงื่อนไข anchor (เจอภาพ?)</span>
+          <span style="display:flex;align-items:center;gap:7px"><span style="width:14px;height:12px;border-radius:3px;background:#2A1113;border:1px solid #7F1D1D"></span>หยุด + รีเซ็ต</span>
+          <span style="margin-left:auto;color:#5C6B82">คลิกกล่องเพื่อเลือกขั้น แล้วโหลดเข้าฟอร์มแก้ไข</span>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ===== ANCHOR DIALOG ===== -->
+  <sc-if value="{{ isAnchor }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;z-index:50;background:rgba(4,7,13,.72);display:flex;align-items:center;justify-content:center;padding:40px">
+      <div style="width:920px;max-width:100%;border-radius:14px;background:#0B0F19;border:1px solid #223046;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 40px 90px -20px rgba(0,0,0,.7)">
+        <div style="height:54px;flex:none;border-bottom:1px solid #1B2434;display:flex;align-items:center;gap:11px;padding:0 18px">
+          <i data-lucide="crosshair" width="18" height="18" stroke-width="1.9" style="color:#7DD3FC"></i>
+          <span style="font-size:15px;font-weight:700">เลือกพื้นที่ Anchor</span>
+          <span style="font-size:12.5px;color:#7C8CA3">ตั้งภาพยืนยันหน้าจอก่อนกด</span>
+          <button onClick="{{ closeDialog }}" style="all:unset;box-sizing:border-box;margin-left:auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;color:#8A99B0;cursor:pointer"><i data-lucide="x" width="18" height="18" stroke-width="2"></i></button>
+        </div>
+        <div style="display:flex;gap:20px;padding:20px">
+          <!-- canvas -->
+          <div style="width:300px;flex:none;display:flex;flex-direction:column;gap:10px">
+            <div style="position:relative;width:300px;height:520px;border-radius:12px;overflow:hidden;border:1px solid #223046;background:#0A0F19">
+              <svg width="300" height="520" style="position:absolute;inset:0"><defs><pattern id="stp" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="12" fill="#0C1320"></rect><line x1="0" y1="0" x2="0" y2="12" stroke="#141E2E" stroke-width="6"></line></pattern></defs><rect width="300" height="520" fill="url(#stp)"></rect></svg>
+              <div style="position:absolute;top:14px;left:14px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#3A4557">ภาพหน้าจอจริงจาก emulator</div>
+              <div style="position:absolute;left:96px;top:330px;width:110px;height:52px;border:2px dashed #34D399;border-radius:6px;background:rgba(52,211,153,.08)"></div>
+              <div style="position:absolute;left:145px;top:352px;width:12px;height:12px;border-radius:50%;background:#F05252;border:2px solid #fff;box-shadow:0 0 0 3px rgba(240,82,82,.3)"></div>
+              <div style="position:absolute;left:96px;top:388px;font-size:10px;color:#6EE7B7;font-weight:600">พื้นที่ภาพ anchor</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;font-size:11px;color:#7C8CA3"><span style="display:flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#F05252"></span>ตำแหน่งกด</span><span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:9px;border:1.5px dashed #34D399;border-radius:3px"></span>กรอบภาพ</span></div>
+          </div>
+          <!-- controls -->
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">Emulator ที่ใช้จับภาพ</span><div style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;justify-content:space-between;padding:0 13px"><span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0">127.0.0.1:7555</span><i data-lucide="chevron-down" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i></div></div>
+            <label style="display:flex;align-items:center;gap:10px;padding:12px 13px;border-radius:10px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.24);cursor:pointer"><span style="width:18px;height:18px;border-radius:5px;background:#10B981;display:flex;align-items:center;justify-content:center;flex:none"><i data-lucide="check" width="12" height="12" stroke-width="3" style="color:#04120C"></i></span><span style="font-size:12.5px;color:#A7F3D0;font-weight:500">กดตรงที่เจอภาพนี้ (ตามปุ่มที่ขยับ)</span></label>
+            <div style="display:flex;gap:12px"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ถ้าไม่เจอภาพ</span><div style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;justify-content:space-between;padding:0 13px"><span style="font-size:12.5px;color:#C7D2E0">หยุด (abort)</span><i data-lucide="chevron-down" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i></div></div><div style="width:130px;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">รอสูงสุด (วิ)</span><div style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;display:flex;align-items:center;padding:0 13px;font-family:'IBM Plex Mono',monospace;font-size:13px">3.0</div></div></div>
+            <div style="display:flex;gap:10px;margin-top:2px"><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;padding:0 14px;height:42px;border-radius:10px;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer"><i data-lucide="refresh-cw" width="15" height="15" stroke-width="1.75"></i>จับภาพใหม่</button><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:7px;padding:0 14px;height:42px;border-radius:10px;background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24;font-size:12.5px;cursor:pointer"><i data-lucide="scan-search" width="15" height="15" stroke-width="1.75"></i>ทดสอบ match</button></div>
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;height:46px;border-radius:11px;background:#10B981;color:#04120C;font-size:13.5px;font-weight:600;cursor:pointer;margin-top:auto"><i data-lucide="save" width="16" height="16" stroke-width="2"></i>บันทึก Anchor</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+
+<template id="__bundler_thumbnail" data-bg-color="#0B0F19">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#0B0F19"></rect>
+    <rect x="470" y="300" width="120" height="120" rx="30" fill="#10B981"></rect>
+    <rect x="505" y="335" width="50" height="50" rx="8" fill="none" stroke="#04120C" stroke-width="7"></rect>
+    <line x1="505" y1="322" x2="505" y2="335" stroke="#04120C" stroke-width="7" stroke-linecap="round"></line>
+    <line x1="555" y1="322" x2="555" y2="335" stroke="#04120C" stroke-width="7" stroke-linecap="round"></line>
+    <line x1="505" y1="385" x2="505" y2="398" stroke="#04120C" stroke-width="7" stroke-linecap="round"></line>
+    <line x1="555" y1="385" x2="555" y2="398" stroke="#04120C" stroke-width="7" stroke-linecap="round"></line>
+    <text x="630" y="395" font-family="'IBM Plex Sans Thai',sans-serif" font-size="72" font-weight="700" fill="#E7EDF6">MuMupow</text>
+    <text x="472" y="480" font-family="'IBM Plex Sans Thai',sans-serif" font-size="26" fill="#7C8CA3">คุมและบอทหลายจอพร้อมกัน</text>
+  </svg>
+</template></x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { tab:'home', tool:'manual', dialog:null, logOpen:false, selStep:2, selNode:3 };
+  componentDidMount(){ const d=()=>window.lucide&&window.lucide.createIcons(); d(); [200,600,1400].forEach(t=>setTimeout(d,t)); }
+  componentDidUpdate(){ window.lucide&&window.lucide.createIcons(); }
+
+  renderVals(){
+    const t=this.state.tab, S=(o)=>this.setState(o);
+    const ni=(id)=>({ color:this.state.tab===id?'#E7EDF6':'#5C6B82', bar:this.state.tab===id?'block':'none' });
+    const tt=(id)=>({ bg:this.state.tool===id?'#18243A':'transparent', color:this.state.tool===id?'#E7EDF6':'#8A99B0' });
+
+    const stMap = {
+      running:{dot:'#34D399',label:'กำลังรัน',color:'#34D399',bar:'#10B981'},
+      waiting:{dot:'#58677E',label:'รอคิว',color:'#8A99B0',bar:'#2A3547'},
+      done:{dot:'#38BDF8',label:'เสร็จแล้ว',color:'#7DD3FC',bar:'#38BDF8'},
+      error:{dot:'#F87171',label:'ติด · บันทึกแล้ว',color:'#F87171',bar:'#EF4444'},
+    };
+    const progress=[
+      {n:'จอ 1',addr:':7555',acct:'thanapon_042',step:'แตะคลังไอเทม (3/18)',done:'12 / 50',pct:64,st:'running'},
+      {n:'จอ 2',addr:':7556',acct:'thanapon_043',step:'ยืนยันภาพ anchor (7/18)',done:'11 / 50',pct:58,st:'running'},
+      {n:'จอ 3',addr:':7557',acct:'รอเริ่ม',step:'อยู่ในคิว รอจอว่าง',done:'0 / 50',pct:4,st:'waiting'},
+      {n:'จอ 4',addr:':7558',acct:'thanapon_017',step:'เก็บของสำเร็จ · ออกจากเกม',done:'50 / 50',pct:100,st:'done'},
+      {n:'จอ 5',addr:':7559',acct:'thanapon_051',step:'ล็อกอินไม่ผ่าน · รีเซ็ตเกม',done:'8 / 50',pct:16,st:'error'},
+    ].map(p=>Object.assign({},p,stMap[p.st]));
+
+    const dbs={running:'#34D399',waiting:'#58677E',done:'#38BDF8',error:'#F87171',idle:'#3A4557'};
+    const devices=[
+      {addr:'127.0.0.1:7555',sel:true,st:'running'},
+      {addr:'127.0.0.1:7556',sel:true,st:'running'},
+      {addr:'127.0.0.1:7557',sel:true,st:'waiting'},
+      {addr:'127.0.0.1:7558',sel:true,st:'done'},
+      {addr:'127.0.0.1:7559',sel:true,st:'error'},
+      {addr:'127.0.0.1:7560',sel:false,st:'idle'},
+    ].map(d=>Object.assign({},d,{dot:dbs[d.st],boxBg:d.sel?'#10B981':'transparent',boxBorder:d.sel?'#10B981':'#2A3547',checkOpacity:d.sel?1:0}));
+
+    const acctDot={done:'#38BDF8',error:'#F87171',running:'#34D399',pending:'#58677E'};
+    const accounts=[
+      {name:'หลัก (A)',count:32,accounts:[
+        {st:'done',name:'thanapon_017',grp:'A',tok:'ya29.a0Af…9Qk'},
+        {st:'running',name:'thanapon_042',grp:'A',tok:'ya29.a0Af…2Lm'},
+        {st:'error',name:'thanapon_051',grp:'A',tok:'ya29.a0Af…7Zx'},
+      ]},
+      {name:'สำรอง (B)',count:18,accounts:[
+        {st:'pending',name:'thanapon_088',grp:'B',tok:'—'},
+        {st:'done',name:'thanapon_090',grp:'B',tok:'ya29.a0Af…4Rt'},
+      ]},
+    ].map(g=>Object.assign({},g,{accounts:g.accounts.map(a=>Object.assign({},a,{dot:acctDot[a.st]}))}));
+
+    const rawSteps=[
+      {icon:'power',ic:'#7DD3FC',type:'เปิดแอป',detail:'com.mumu.game/.Main',delay:'2.0s',x:'—',y:'—',desc:'เปิดเกมหน้าเริ่ม'},
+      {icon:'mouse-pointer-click',ic:'#90A0B7',type:'แตะ',detail:'(540, 1180)',delay:'0.6s',x:'540',y:'1180',desc:'ปิดป็อปอัปเข้าเกม'},
+      {icon:'image',ic:'#F59E0B',type:'anchor + แตะ',detail:'ปุ่มล็อกอิน',delay:'0.8s',x:'540',y:'1420',desc:'แตะตรงที่เจอปุ่มล็อกอิน'},
+      {icon:'type',ic:'#90A0B7',type:'พิมพ์',detail:'{{email}}',delay:'0.4s',x:'—',y:'—',desc:'กรอกอีเมล'},
+      {icon:'type',ic:'#90A0B7',type:'พิมพ์',detail:'{{password}}',delay:'0.4s',x:'—',y:'—',desc:'กรอกรหัสผ่าน'},
+      {icon:'mouse-pointer-click',ic:'#90A0B7',type:'แตะ',detail:'(540, 1560)',delay:'1.2s',x:'540',y:'1560',desc:'กดยืนยันล็อกอิน'},
+      {icon:'image',ic:'#F59E0B',type:'anchor + แตะ',detail:'ไอคอนคลังไอเทม',delay:'0.8s',x:'880',y:'1720',desc:'เปิดคลังไอเทม'},
+      {icon:'corner-down-left',ic:'#90A0B7',type:'ปุ่มระบบ',detail:'BACK',delay:'0.5s',x:'—',y:'—',desc:'ออกจากเมนู'},
+    ];
+    const steps=rawSteps.map((s,i)=>Object.assign({},s,{
+      no:String(i+1).padStart(2,'0'), sel:i===this.state.selStep,
+      onSelect:()=>S({selStep:i}),
+      rowBg:i===this.state.selStep?'#152A24':'transparent',
+      rowBorder:i===this.state.selStep?'#2E6B5E':'transparent',
+    }));
+    const stepDetail=rawSteps[this.state.selStep]||rawSteps[0];
+
+    // flow nodes
+    const rawNodes=[
+      {shape:'cap', label:'เริ่ม', x:210,y:20,w:180,h:44, fill:'rgba(16,185,129,.13)', line:'#2E6B5E', tc:'#6EE7B7'},
+      {shape:'rect',label:'เปิดแอปเกม', x:200,y:96,w:200,h:52, fill:'#12233A', line:'#2A4A6B', tc:'#BBD4EC'},
+      {shape:'rect',label:'กรอกบัญชี + รหัสผ่าน', x:200,y:178,w:200,h:52, fill:'#12233A', line:'#2A4A6B', tc:'#BBD4EC'},
+      {shape:'dia', label:'เจอปุ่มล็อกอิน?', x:225,y:262,w:150,h:150, fill:'#2A2210', line:'#7A5A1E', tc:'#FBBF24'},
+      {shape:'rect',label:'ล็อกอินไม่ผ่าน · รีเซ็ตเกม', x:520,y:305,w:200,h:64, fill:'#2A1113', line:'#7F1D1D', tc:'#FCA5A5'},
+      {shape:'rect',label:'แตะคลังไอเทม + เก็บของ', x:200,y:454,w:200,h:52, fill:'#12233A', line:'#2A4A6B', tc:'#BBD4EC'},
+      {shape:'dia', label:'เก็บครบ?', x:225,y:538,w:150,h:150, fill:'#2A2210', line:'#7A5A1E', tc:'#FBBF24'},
+      {shape:'rect',label:'ข้ามบัญชีนี้', x:520,y:585,w:200,h:60, fill:'#171F2E', line:'#3A4557', tc:'#B8C4D4'},
+      {shape:'cap', label:'ออกจากเกม · บัญชีถัดไป', x:190,y:722,w:240,h:46, fill:'rgba(16,185,129,.13)', line:'#2E6B5E', tc:'#6EE7B7'},
+    ];
+    const flowNodes=rawNodes.map((n,i)=>{
+      const sel=i===this.state.selNode;
+      const radius=n.shape==='cap'?'999px':(n.shape==='dia'?'14px':'10px');
+      return Object.assign({},n,{
+        sel, onSelect:()=>S({selNode:i}),
+        rot:n.shape==='dia'?'45deg':'0deg',
+        radius,
+        borderCol: sel?'#FBBF24':n.line,
+        bw: sel?'2px':'1.5px',
+        glow: sel?'0 0 0 4px rgba(251,191,36,.16)':'none',
+        pad: n.shape==='dia'?'0 8px':'0 14px',
+      });
+    });
+
+    return {
+      isHome:t==='home', isAcc:t==='acc', isScript:t==='script', isTools:t==='tools', isSet:t==='set',
+      nav:{home:ni('home'),acc:ni('acc'),script:ni('script'),tools:ni('tools'),set:ni('set')},
+      goHome:()=>S({tab:'home'}), goAcc:()=>S({tab:'acc'}), goScript:()=>S({tab:'script'}), goTools:()=>S({tab:'tools'}), goSet:()=>S({tab:'set'}),
+      tool:this.state.tool, tManual:tt('manual'), tTools:tt('tools'), tStory:tt('story'),
+      isManual:this.state.tool==='manual', isToolz:this.state.tool==='tools', isStory:this.state.tool==='story',
+      goManual:()=>S({tool:'manual'}), goToolz:()=>S({tool:'tools'}), goStory:()=>S({tool:'story'}),
+      logOpen:this.state.logOpen, toggleLog:()=>S({logOpen:!this.state.logOpen}), logChevron:this.state.logOpen?'chevron-down':'chevron-up',
+      dialog:this.state.dialog, isFlow:this.state.dialog==='flow', isAnchor:this.state.dialog==='anchor',
+      openFlow:()=>S({dialog:'flow'}), openAnchor:()=>S({dialog:'anchor'}), closeDialog:()=>S({dialog:null}),
+      devices, progress, accounts, steps, stepDetail, flowNodes,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'IBM Plex Sans Thai',system-ui,-apple-system,sans-serif;background:#070A11;color:#E7EDF6;-webkit-font-smoothing:antialiased}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .op-scroll::-webkit-scrollbar{width:8px;height:8px}
+  .op-scroll::-webkit-scrollbar-thumb{background:#202A3B;border-radius:8px}
+  .op-scroll::-webkit-scrollbar-track{background:transparent}
+</style>
+</helmet>
+
+<section style="min-height:100vh;padding:60px 64px 120px;display:flex;flex-direction:column;gap:36px;background:#070A11">
+  <div style="max-width:900px">
+    <div style="display:inline-flex;align-items:center;gap:9px;padding:6px 12px;border:1px solid #202A3B;border-radius:999px;font-size:12px;color:#90A0B7;font-weight:500;margin-bottom:18px">
+      <span style="width:7px;height:7px;border-radius:50%;background:#34D399"></span>รอบที่ 1 · 3 ทิศทาง
+    </div>
+    <h1 style="margin:0 0 12px;font-size:30px;font-weight:700;letter-spacing:-.3px">MuMupow — ออกแบบใหม่ · 3 ทิศทางการจัดวาง</h1>
+    <p style="margin:0;font-size:15px;line-height:1.65;color:#90A0B7;max-width:760px">ธีมมืด navy ปรับใหม่ให้สะอาด โล่ง สบายตา · ไอคอนเส้นแบบโปร · แสดง <b style="color:#C7D2E0;font-weight:600">หน้าแรก (รัน)</b> ตอนกำลังทำงานจริงเพื่อให้เห็นการมอนิเตอร์หลายจอ · เลือกทิศทางที่ชอบ (อ้างอิงด้วยรหัส เช่น <a href="#1a" style="color:#38BDF8;text-decoration:none">1a</a>) แล้วผมจะลงรายละเอียดครบทั้ง 5 แท็บ + ผังงาน + dialogs</p>
+  </div>
+
+  <div style="display:flex;gap:56px;flex-wrap:wrap;align-items:flex-start">
+
+    <!-- ============ OPTION 1a ============ -->
+    <div id="1a" style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="display:inline-flex;align-items:center;padding:5px 11px;border-radius:8px;background:#10B981;color:#04120C;font-weight:700;font-size:13px">1a</span>
+        <div><div style="font-size:16px;font-weight:600">Nav Rail + แถบอุปกรณ์</div><div style="font-size:12.5px;color:#7C8CA3">คลาสสิกปรับใหม่ — เมนูเป็นแถบไอคอนซ้าย จอแยกคอลัมน์</div></div>
+      </div>
+
+      <div style="width:1180px;height:720px;border-radius:15px;border:1px solid #1B2434;background:#0B0F19;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 80px -30px rgba(0,0,0,.8)">
+        <!-- title bar -->
+        <div style="height:44px;flex:none;background:#0E1420;border-bottom:1px solid #1B2434;display:flex;align-items:center;justify-content:space-between;padding:0 16px">
+          <div style="display:flex;align-items:center;gap:11px">
+            <div style="width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#10B981,#0E7490);display:flex;align-items:center;justify-content:center"><i data-lucide="cpu" width="14" height="14" stroke-width="2" style="color:#04120C"></i></div>
+            <span style="font-weight:700;font-size:14px;letter-spacing:.2px">MuMupow</span>
+            <span style="font-size:11.5px;color:#5C6B82">คุมและบอทหลายจอพร้อมกัน</span>
+          </div>
+          <div style="display:flex;gap:16px;color:#5C6B82">
+            <i data-lucide="minus" width="16" height="16" stroke-width="2"></i><i data-lucide="square" width="13" height="13" stroke-width="2"></i><i data-lucide="x" width="16" height="16" stroke-width="2"></i>
+          </div>
+        </div>
+
+        <div style="flex:1;display:flex;min-height:0">
+          <!-- nav rail -->
+          <div style="width:74px;flex:none;background:#0E1420;border-right:1px solid #1B2434;display:flex;flex-direction:column;align-items:stretch;padding:12px 0;gap:2px">
+            <div style="position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;color:#E7EDF6;cursor:pointer">
+              <div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399"></div>
+              <i data-lucide="play" width="21" height="21" stroke-width="1.9"></i><span style="font-size:9.5px;font-weight:500">หน้าแรก</span>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;color:#5C6B82;cursor:pointer"><i data-lucide="users" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px">บัญชี</span></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;color:#5C6B82;cursor:pointer"><i data-lucide="square-pen" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px">สคริปต์</span></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;color:#5C6B82;cursor:pointer"><i data-lucide="wrench" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px">อื่นๆ</span></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;color:#5C6B82;cursor:pointer;margin-top:auto"><i data-lucide="settings" width="21" height="21" stroke-width="1.75"></i><span style="font-size:9.5px">ตั้งค่า</span></div>
+          </div>
+
+          <!-- device sidebar -->
+          <div class="op-scroll" style="width:262px;flex:none;background:#0B0F19;border-right:1px solid #1B2434;padding:20px 18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span style="font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7C8CA3;text-transform:uppercase">อุปกรณ์</span>
+              <span style="font-size:11px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">6 เชื่อมต่อ</span>
+            </div>
+            <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:8px;height:38px;border:1px solid #24344B;border-radius:9px;color:#C7D2E0;font-size:13px;font-weight:500;cursor:pointer"><i data-lucide="radar" width="16" height="16" stroke-width="1.75"></i>สแกนพอร์ต</button>
+            <div style="display:flex;align-items:center;gap:9px;padding:11px 12px;border-radius:9px;background:rgba(16,185,129,.09);border:1px solid rgba(16,185,129,.22)">
+              <span style="width:8px;height:8px;border-radius:50%;background:#34D399;flex:none"></span>
+              <span style="font-size:12.5px;color:#A7F3D0;font-weight:500">เชื่อมต่อ 6 จอ · เลือก 5</span>
+            </div>
+            <div style="display:flex;gap:7px">
+              <div style="flex:1;height:36px;display:flex;align-items:center;padding:0 11px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#90A0B7">127.0.0.1:7555</div>
+              <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;padding:0 12px;height:36px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer">เชื่อม</button>
+            </div>
+            <div style="font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7C8CA3;text-transform:uppercase;margin-top:2px">เลือกจอที่จะควบคุม</div>
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <sc-for list="{{ devices }}" as="d" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;background:#121A28;border:1px solid #1B2434">
+                  <span style="width:16px;height:16px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ d.boxBg }};border:1.5px solid {{ d.boxBorder }}"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:{{ d.checkOpacity }}"></i></span>
+                  <i data-lucide="monitor" width="15" height="15" stroke-width="1.75" style="color:#5C6B82;flex:none"></i>
+                  <span style="flex:1;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#C7D2E0">{{ d.addr }}</span>
+                  <span style="width:7px;height:7px;border-radius:50%;background:{{ d.dot }};flex:none"></span>
+                  <i data-lucide="x" width="13" height="13" stroke-width="2" style="color:#455266;flex:none;cursor:pointer" title="เอาจอนี้ออกจากลิสต์"></i>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- content -->
+          <div class="op-scroll" style="flex:1;min-width:0;padding:26px 28px;display:flex;flex-direction:column;gap:20px;overflow-y:auto">
+            <div>
+              <h2 style="margin:0 0 4px;font-size:19px;font-weight:700;letter-spacing:-.2px">หน้าแรก · รันสคริปต์</h2>
+              <p style="margin:0;font-size:13px;color:#7C8CA3">ติ๊กจอที่ต้องการ → เลือกสคริปต์ → กดรัน แล้วดูความคืบหน้าของแต่ละจอด้านขวา</p>
+            </div>
+            <div style="display:flex;gap:20px;align-items:flex-start;flex:1;min-height:0">
+              <!-- run control -->
+              <div style="width:360px;flex:none;display:flex;flex-direction:column;gap:14px">
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  <span style="font-size:12px;font-weight:600;color:#90A0B7">สคริปต์ที่กำลังรัน</span>
+                  <div style="display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 14px;border-radius:10px;background:#0A0F19;border:1px solid #24344B"><span style="font-size:13.5px;font-weight:500;color:#E7EDF6">ล็อกอิน + เก็บของประจำวัน</span><i data-lucide="chevron-down" width="17" height="17" stroke-width="1.75" style="color:#7C8CA3"></i></div>
+                </div>
+                <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:15px 16px;display:flex;flex-direction:column;gap:11px">
+                  <div style="display:flex;align-items:center;gap:9px;font-size:13px"><i data-lucide="check" width="16" height="16" stroke-width="2.25" style="color:#34D399"></i><span style="color:#C7D2E0">จอที่เลือก</span><span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:#E7EDF6">5 จอ</span></div>
+                  <div style="display:flex;align-items:center;gap:9px;font-size:13px"><i data-lucide="check" width="16" height="16" stroke-width="2.25" style="color:#34D399"></i><span style="color:#C7D2E0">บัญชีที่จะทำ</span><span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:#E7EDF6">50 รหัส</span></div>
+                  <div style="display:flex;align-items:center;gap:9px;font-size:13px"><i data-lucide="check" width="16" height="16" stroke-width="2.25" style="color:#34D399"></i><span style="color:#C7D2E0">สคริปต์</span><span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:#E7EDF6">18 สเต็ป</span></div>
+                  <div style="height:1px;background:#1B2434;margin:2px 0"></div>
+                  <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#34D399"><span style="width:8px;height:8px;border-radius:50%;background:#34D399;animation:pulse 1.6s infinite"></span>กำลังรัน · เริ่มเมื่อ 14:32 น.</div>
+                </div>
+                <div style="display:flex;gap:12px;align-items:center">
+                  <div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#7C8CA3">ความถี่เช็ค Anchor (วิ)</span><div style="height:36px;display:flex;align-items:center;padding:0 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;font-family:'IBM Plex Mono',monospace;font-size:13px;color:#E7EDF6">0.5</div></div>
+                  <label style="flex:1;display:flex;align-items:center;gap:8px;font-size:12px;color:#90A0B7;margin-top:16px"><span style="width:16px;height:16px;border-radius:5px;border:1.5px solid #2A3547;flex:none"></span>หยุดรอตรวจทานทีละชุด</label>
+                </div>
+                <div style="display:flex;gap:11px;margin-top:2px">
+                  <div style="flex:1;height:56px;border-radius:12px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center;gap:10px;color:#6EE7B7;font-weight:600;font-size:14px"><i data-lucide="loader" width="18" height="18" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน 5 จอ…</div>
+                  <div style="width:120px;height:56px;border-radius:12px;background:#7F1D1D;border:1px solid #991B1B;display:flex;align-items:center;justify-content:center;gap:8px;color:#FCA5A5;font-weight:600;font-size:14px;cursor:pointer"><i data-lucide="square" width="15" height="15" stroke-width="2.25"></i>หยุด</div>
+                </div>
+              </div>
+              <!-- progress -->
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <span style="font-size:14px;font-weight:600">ความคืบหน้าต่อจอ</span>
+                  <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:8px;border:1px solid #24344B;color:#90A0B7;font-size:12px;cursor:pointer"><i data-lucide="image" width="14" height="14" stroke-width="1.75"></i>รายงานปัญหา</button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <sc-for list="{{ progress }}" as="p" hint-placeholder-count="5">
+                    <div style="border-radius:11px;background:#121A28;border:1px solid #1B2434;padding:13px 15px;display:flex;flex-direction:column;gap:9px">
+                      <div style="display:flex;align-items:center;gap:10px">
+                        <span style="width:9px;height:9px;border-radius:50%;background:{{ p.dot }};flex:none"></span>
+                        <span style="font-weight:600;font-size:13.5px">{{ p.n }}</span>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5C6B82">{{ p.addr }}</span>
+                        <span style="margin-left:auto;font-size:12px;font-weight:500;color:{{ p.color }}">{{ p.label }}</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#90A0B7">
+                        <i data-lucide="user" width="13" height="13" stroke-width="1.75" style="color:#5C6B82"></i><span style="color:#C7D2E0;font-family:'IBM Plex Mono',monospace;font-size:11.5px">{{ p.acct }}</span>
+                        <span style="color:#455266">·</span><span>{{ p.step }}</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:10px">
+                        <div style="flex:1;height:5px;border-radius:9px;background:#1B2434;overflow:hidden"><div style="height:100%;border-radius:9px;background:{{ p.bar }};width:{{ p.pct }}%"></div></div>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7C8CA3;min-width:56px;text-align:right">{{ p.done }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- log strip -->
+        <div style="height:42px;flex:none;background:#0E1420;border-top:1px solid #1B2434;display:flex;align-items:center;gap:12px;padding:0 16px">
+          <i data-lucide="terminal" width="15" height="15" stroke-width="1.75" style="color:#5C6B82"></i>
+          <span style="font-size:11.5px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">[14:38:02]</span>
+          <span style="font-size:12px;color:#6EE7B7;font-family:'IBM Plex Mono',monospace">✓ จอ 4 · thanapon_017 เก็บของสำเร็จ (50/50)</span>
+          <i data-lucide="chevron-up" width="16" height="16" stroke-width="1.75" style="color:#5C6B82;margin-left:auto;cursor:pointer"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ OPTION 1b ============ -->
+    <div id="1b" style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="display:inline-flex;align-items:center;padding:5px 11px;border-radius:8px;background:#10B981;color:#04120C;font-weight:700;font-size:13px">1b</span>
+        <div><div style="font-size:16px;font-weight:600">เมนูบนแนวนอน + โฟกัสงานรัน</div><div style="font-size:12.5px;color:#7C8CA3">แถบรันเด่นกลางจอ · แผงอุปกรณ์ย้ายไปขวา</div></div>
+      </div>
+
+      <div style="width:1180px;height:720px;border-radius:15px;border:1px solid #1B2434;background:#0B0F19;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 80px -30px rgba(0,0,0,.8)">
+        <!-- top bar: logo + nav + status -->
+        <div style="height:58px;flex:none;background:#0E1420;border-bottom:1px solid #1B2434;display:flex;align-items:center;padding:0 20px;gap:26px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#10B981,#0E7490);display:flex;align-items:center;justify-content:center"><i data-lucide="cpu" width="15" height="15" stroke-width="2" style="color:#04120C"></i></div>
+            <span style="font-weight:700;font-size:15px">MuMupow</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;height:100%">
+            <div style="position:relative;display:flex;align-items:center;gap:8px;padding:0 15px;height:100%;color:#E7EDF6;font-size:13.5px;font-weight:600;cursor:pointer"><i data-lucide="play" width="16" height="16" stroke-width="2"></i>หน้าแรก<div style="position:absolute;left:12px;right:12px;bottom:0;height:2.5px;border-radius:3px;background:#34D399"></div></div>
+            <div style="display:flex;align-items:center;gap:8px;padding:0 15px;height:100%;color:#7C8CA3;font-size:13.5px;cursor:pointer"><i data-lucide="users" width="16" height="16" stroke-width="1.75"></i>บัญชี</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:0 15px;height:100%;color:#7C8CA3;font-size:13.5px;cursor:pointer"><i data-lucide="square-pen" width="16" height="16" stroke-width="1.75"></i>สคริปต์</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:0 15px;height:100%;color:#7C8CA3;font-size:13.5px;cursor:pointer"><i data-lucide="wrench" width="16" height="16" stroke-width="1.75"></i>อื่นๆ</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:0 15px;height:100%;color:#7C8CA3;font-size:13.5px;cursor:pointer"><i data-lucide="settings" width="16" height="16" stroke-width="1.75"></i>ตั้งค่า</div>
+          </div>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+            <div style="display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;background:rgba(16,185,129,.09);border:1px solid rgba(16,185,129,.22)"><span style="width:7px;height:7px;border-radius:50%;background:#34D399;animation:pulse 1.6s infinite"></span><span style="font-size:12px;color:#A7F3D0;font-weight:500">กำลังรัน 5 จอ</span></div>
+            <div style="display:flex;gap:14px;color:#5C6B82;margin-left:6px"><i data-lucide="minus" width="16" height="16" stroke-width="2"></i><i data-lucide="x" width="16" height="16" stroke-width="2"></i></div>
+          </div>
+        </div>
+
+        <div style="flex:1;display:flex;min-height:0">
+          <!-- main -->
+          <div class="op-scroll" style="flex:1;min-width:0;padding:28px 32px;display:flex;flex-direction:column;gap:22px;overflow-y:auto">
+            <!-- hero run bar -->
+            <div style="border-radius:14px;background:#0E1420;border:1px solid #1B2434;padding:20px 22px;display:flex;align-items:center;gap:22px">
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:8px">
+                <span style="font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7C8CA3;text-transform:uppercase">สคริปต์ที่กำลังรัน</span>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;flex:1;height:46px;padding:0 15px;border-radius:10px;background:#0A0F19;border:1px solid #24344B"><span style="font-size:14.5px;font-weight:600">ล็อกอิน + เก็บของประจำวัน</span><i data-lucide="chevron-down" width="18" height="18" stroke-width="1.75" style="color:#7C8CA3"></i></div>
+                </div>
+                <div style="display:flex;gap:18px;font-size:12.5px;color:#90A0B7;margin-top:2px">
+                  <span style="display:flex;align-items:center;gap:6px"><i data-lucide="monitor" width="14" height="14" stroke-width="1.75" style="color:#34D399"></i>5 จอ</span>
+                  <span style="display:flex;align-items:center;gap:6px"><i data-lucide="users" width="14" height="14" stroke-width="1.75" style="color:#34D399"></i>50 รหัส</span>
+                  <span style="display:flex;align-items:center;gap:6px"><i data-lucide="list-checks" width="14" height="14" stroke-width="1.75" style="color:#34D399"></i>18 สเต็ป</span>
+                  <span style="display:flex;align-items:center;gap:6px"><i data-lucide="clock" width="14" height="14" stroke-width="1.75" style="color:#7C8CA3"></i>เริ่ม 14:32</span>
+                </div>
+              </div>
+              <div style="display:flex;gap:12px;flex:none">
+                <div style="width:180px;height:82px;border-radius:12px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;color:#6EE7B7;font-weight:600;font-size:14px"><i data-lucide="loader" width="22" height="22" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน 5 จอ…</div>
+                <div style="width:110px;height:82px;border-radius:12px;background:#7F1D1D;border:1px solid #991B1B;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;color:#FCA5A5;font-weight:600;font-size:14px;cursor:pointer"><i data-lucide="square" width="20" height="20" stroke-width="2.25"></i>หยุด</div>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span style="font-size:15px;font-weight:600">ความคืบหน้าต่อจอ</span>
+              <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:8px 12px;border-radius:8px;border:1px solid #24344B;color:#90A0B7;font-size:12.5px;cursor:pointer"><i data-lucide="image" width="15" height="15" stroke-width="1.75"></i>เปิดรายงานปัญหา</button>
+            </div>
+            <!-- progress grid 2-col -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <sc-for list="{{ progress }}" as="p" hint-placeholder-count="5">
+                <div style="border-radius:12px;background:#121A28;border:1px solid #1B2434;padding:15px 16px;display:flex;flex-direction:column;gap:11px">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span style="width:10px;height:10px;border-radius:50%;background:{{ p.dot }};flex:none"></span>
+                    <span style="font-weight:600;font-size:14px">{{ p.n }}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5C6B82">{{ p.addr }}</span>
+                    <span style="margin-left:auto;font-size:12px;font-weight:500;color:{{ p.color }}">{{ p.label }}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#90A0B7"><i data-lucide="user" width="13" height="13" stroke-width="1.75" style="color:#5C6B82"></i><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#C7D2E0">{{ p.acct }}</span></div>
+                  <div style="font-size:12.5px;color:#C7D2E0">{{ p.step }}</div>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div style="flex:1;height:5px;border-radius:9px;background:#1B2434;overflow:hidden"><div style="height:100%;border-radius:9px;background:{{ p.bar }};width:{{ p.pct }}%"></div></div>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#7C8CA3">{{ p.done }}</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- right device dock -->
+          <div class="op-scroll" style="width:300px;flex:none;background:#0E1420;border-left:1px solid #1B2434;padding:22px 18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span style="font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7C8CA3;text-transform:uppercase">อุปกรณ์ Emulator</span>
+              <i data-lucide="radar" width="17" height="17" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" title="สแกนพอร์ต"></i>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px;padding:11px 12px;border-radius:9px;background:rgba(16,185,129,.09);border:1px solid rgba(16,185,129,.22)"><span style="width:8px;height:8px;border-radius:50%;background:#34D399;flex:none"></span><span style="font-size:12.5px;color:#A7F3D0;font-weight:500">เชื่อมต่อ 6 จอ · เลือก 5</span></div>
+            <div style="display:flex;gap:7px">
+              <div style="flex:1;height:36px;display:flex;align-items:center;padding:0 11px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#90A0B7">127.0.0.1:7555</div>
+              <button style="all:unset;box-sizing:border-box;display:flex;align-items:center;padding:0 12px;height:36px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer">เชื่อม</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px;margin-top:2px">
+              <sc-for list="{{ devices }}" as="d" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:9px;background:#121A28;border:1px solid #1B2434">
+                  <span style="width:16px;height:16px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ d.boxBg }};border:1.5px solid {{ d.boxBorder }}"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:{{ d.checkOpacity }}"></i></span>
+                  <i data-lucide="monitor" width="15" height="15" stroke-width="1.75" style="color:#5C6B82;flex:none"></i>
+                  <span style="flex:1;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#C7D2E0">{{ d.addr }}</span>
+                  <span style="width:7px;height:7px;border-radius:50%;background:{{ d.dot }};flex:none"></span>
+                  <i data-lucide="x" width="13" height="13" stroke-width="2" style="color:#455266;flex:none;cursor:pointer" title="เอาจอนี้ออกจากลิสต์"></i>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <!-- log strip -->
+        <div style="height:42px;flex:none;background:#0E1420;border-top:1px solid #1B2434;display:flex;align-items:center;gap:12px;padding:0 20px">
+          <i data-lucide="terminal" width="15" height="15" stroke-width="1.75" style="color:#5C6B82"></i>
+          <span style="font-size:11.5px;color:#5C6B82;font-family:'IBM Plex Mono',monospace">[14:38:02]</span>
+          <span style="font-size:12px;color:#6EE7B7;font-family:'IBM Plex Mono',monospace">✓ จอ 4 · thanapon_017 เก็บของสำเร็จ (50/50)</span>
+          <i data-lucide="chevron-up" width="16" height="16" stroke-width="1.75" style="color:#5C6B82;margin-left:auto;cursor:pointer"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ OPTION 1c ============ -->
+    <div id="1c" style="display:flex;flex-direction:column;gap:16px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="display:inline-flex;align-items:center;padding:5px 11px;border-radius:8px;background:#10B981;color:#04120C;font-weight:700;font-size:13px">1c</span>
+        <div><div style="font-size:16px;font-weight:600">แดชบอร์ด · เห็นทุกอย่างในจอเดียว</div><div style="font-size:12.5px;color:#7C8CA3">สถิติด้านบน + การ์ดแยกส่วน คุมงานแบบ command center</div></div>
+      </div>
+
+      <div style="width:1180px;height:720px;border-radius:15px;border:1px solid #1B2434;background:#0B0F19;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 30px 80px -30px rgba(0,0,0,.8)">
+        <!-- top bar -->
+        <div style="height:52px;flex:none;background:#0E1420;border-bottom:1px solid #1B2434;display:flex;align-items:center;padding:0 20px;gap:24px">
+          <div style="display:flex;align-items:center;gap:10px"><div style="width:23px;height:23px;border-radius:7px;background:linear-gradient(135deg,#10B981,#0E7490);display:flex;align-items:center;justify-content:center"><i data-lucide="cpu" width="14" height="14" stroke-width="2" style="color:#04120C"></i></div><span style="font-weight:700;font-size:15px">MuMupow</span></div>
+          <div style="display:flex;align-items:center;gap:2px">
+            <div style="padding:7px 13px;border-radius:8px;background:#18243A;color:#E7EDF6;font-size:13px;font-weight:600;cursor:pointer">หน้าแรก</div>
+            <div style="padding:7px 13px;color:#7C8CA3;font-size:13px;cursor:pointer">บัญชี</div>
+            <div style="padding:7px 13px;color:#7C8CA3;font-size:13px;cursor:pointer">สคริปต์</div>
+            <div style="padding:7px 13px;color:#7C8CA3;font-size:13px;cursor:pointer">อื่นๆ</div>
+            <div style="padding:7px 13px;color:#7C8CA3;font-size:13px;cursor:pointer">ตั้งค่า</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:14px;color:#5C6B82"><i data-lucide="minus" width="16" height="16" stroke-width="2"></i><i data-lucide="x" width="16" height="16" stroke-width="2"></i></div>
+        </div>
+
+        <div class="op-scroll" style="flex:1;min-height:0;overflow-y:auto;padding:22px 24px;display:flex;flex-direction:column;gap:18px">
+          <!-- stat tiles -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+            <div style="border-radius:12px;background:#121A28;border:1px solid #1B2434;padding:16px 18px;display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;color:#90A0B7">จอเชื่อมต่อ</span><i data-lucide="monitor" width="17" height="17" stroke-width="1.75" style="color:#34D399"></i></div>
+              <div style="font-size:26px;font-weight:700;font-family:'IBM Plex Mono',monospace">6<span style="font-size:14px;color:#5C6B82;font-weight:500"> · เลือก 5</span></div>
+            </div>
+            <div style="border-radius:12px;background:#121A28;border:1px solid #1B2434;padding:16px 18px;display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;color:#90A0B7">บัญชีในคิว</span><i data-lucide="users" width="17" height="17" stroke-width="1.75" style="color:#38BDF8"></i></div>
+              <div style="font-size:26px;font-weight:700;font-family:'IBM Plex Mono',monospace">50<span style="font-size:14px;color:#5C6B82;font-weight:500"> รหัส</span></div>
+            </div>
+            <div style="border-radius:12px;background:#121A28;border:1px solid #1B2434;padding:16px 18px;display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;color:#90A0B7">สคริปต์ · สเต็ป</span><i data-lucide="list-checks" width="17" height="17" stroke-width="1.75" style="color:#38BDF8"></i></div>
+              <div style="font-size:16px;font-weight:600;line-height:1.3">ล็อกอิน+เก็บของ<div style="font-size:12px;color:#5C6B82;font-weight:500;font-family:'IBM Plex Mono',monospace">18 สเต็ป</div></div>
+            </div>
+            <div style="border-radius:12px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.24);padding:16px 18px;display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;color:#A7F3D0">สถานะ</span><span style="width:9px;height:9px;border-radius:50%;background:#34D399;animation:pulse 1.6s infinite"></span></div>
+              <div style="font-size:20px;font-weight:700;color:#6EE7B7">กำลังรัน<div style="font-size:12px;color:#4E9B80;font-weight:500;font-family:'IBM Plex Mono',monospace">เริ่ม 14:32 น.</div></div>
+            </div>
+          </div>
+
+          <!-- main grid -->
+          <div style="display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start">
+            <!-- devices + run card -->
+            <div style="border-radius:14px;background:#0E1420;border:1px solid #1B2434;padding:18px;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:13.5px;font-weight:600">อุปกรณ์ & สั่งรัน</span><i data-lucide="radar" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" title="สแกนพอร์ต"></i></div>
+              <div style="display:flex;flex-direction:column;gap:6px;max-height:184px;overflow:auto" class="op-scroll">
+                <sc-for list="{{ devices }}" as="d" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;background:#121A28;border:1px solid #1B2434">
+                    <span style="width:15px;height:15px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ d.boxBg }};border:1.5px solid {{ d.boxBorder }}"><i data-lucide="check" width="10" height="10" stroke-width="3" style="color:#04120C;opacity:{{ d.checkOpacity }}"></i></span>
+                    <span style="flex:1;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#C7D2E0">{{ d.addr }}</span>
+                    <span style="width:7px;height:7px;border-radius:50%;background:{{ d.dot }};flex:none"></span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="height:1px;background:#1B2434"></div>
+              <div style="display:flex;flex-direction:column;gap:7px"><span style="font-size:11.5px;color:#7C8CA3">สคริปต์</span><div style="display:flex;align-items:center;justify-content:space-between;height:42px;padding:0 13px;border-radius:9px;background:#0A0F19;border:1px solid #24344B"><span style="font-size:13px;font-weight:500">ล็อกอิน + เก็บของ</span><i data-lucide="chevron-down" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i></div></div>
+              <div style="display:flex;gap:10px">
+                <div style="flex:1;height:50px;border-radius:11px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center;gap:9px;color:#6EE7B7;font-weight:600;font-size:13.5px"><i data-lucide="loader" width="17" height="17" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน…</div>
+                <div style="width:56px;height:50px;border-radius:11px;background:#7F1D1D;border:1px solid #991B1B;display:flex;align-items:center;justify-content:center;color:#FCA5A5;cursor:pointer"><i data-lucide="square" width="17" height="17" stroke-width="2.25"></i></div>
+              </div>
+            </div>
+
+            <!-- progress card -->
+            <div style="border-radius:14px;background:#0E1420;border:1px solid #1B2434;padding:18px;display:flex;flex-direction:column;gap:13px">
+              <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:13.5px;font-weight:600">ความคืบหน้าต่อจอ</span><button style="all:unset;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:7px;border:1px solid #24344B;color:#90A0B7;font-size:11.5px;cursor:pointer"><i data-lucide="image" width="13" height="13" stroke-width="1.75"></i>รายงานปัญหา</button></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <sc-for list="{{ progress }}" as="p" hint-placeholder-count="5">
+                  <div style="border-radius:10px;background:#121A28;border:1px solid #1B2434;padding:12px 13px;display:flex;flex-direction:column;gap:8px">
+                    <div style="display:flex;align-items:center;gap:9px">
+                      <span style="width:9px;height:9px;border-radius:50%;background:{{ p.dot }};flex:none"></span>
+                      <span style="font-weight:600;font-size:13px">{{ p.n }}</span>
+                      <span style="margin-left:auto;font-size:11px;font-weight:500;color:{{ p.color }}">{{ p.label }}</span>
+                    </div>
+                    <div style="font-size:11.5px;color:#C7D2E0;font-family:'IBM Plex Mono',monospace">{{ p.acct }}</div>
+                    <div style="font-size:11.5px;color:#90A0B7">{{ p.step }}</div>
+                    <div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:4px;border-radius:9px;background:#1B2434;overflow:hidden"><div style="height:100%;border-radius:9px;background:{{ p.bar }};width:{{ p.pct }}%"></div></div><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#7C8CA3">{{ p.pct }}%</span></div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <!-- log card -->
+          <div style="border-radius:12px;background:#0E1420;border:1px solid #1B2434;padding:14px 16px;display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;align-items:center;gap:9px"><i data-lucide="terminal" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3"></i><span style="font-size:12.5px;font-weight:600;color:#C7D2E0">คอนโซลบันทึกการทำงาน</span><i data-lucide="chevron-down" width="16" height="16" stroke-width="1.75" style="color:#5C6B82;margin-left:auto;cursor:pointer"></i></div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:1.8">
+              <div style="color:#6EE7B7">[14:38:02] ✓ จอ 4 · thanapon_017 เก็บของสำเร็จ (50/50)</div>
+              <div style="color:#90A0B7">[14:38:05] ▸ จอ 2 · thanapon_043 ยืนยันภาพ anchor (7/18)</div>
+              <div style="color:#FCA5A5">[14:38:07] ✕ จอ 5 · thanapon_051 ล็อกอินไม่ผ่าน — บันทึกรายงานปัญหา</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  componentDidMount(){
+    const draw = () => window.lucide && window.lucide.createIcons();
+    draw(); setTimeout(draw,250); setTimeout(draw,800); setTimeout(draw,1800);
+  }
+  renderVals(){
+    const stMap = {
+      running: {dot:'#34D399', label:'กำลังรัน', color:'#34D399', bar:'#10B981'},
+      waiting: {dot:'#58677E', label:'รอคิว', color:'#8A99B0', bar:'#2A3547'},
+      done:    {dot:'#38BDF8', label:'เสร็จแล้ว', color:'#7DD3FC', bar:'#38BDF8'},
+      error:   {dot:'#F87171', label:'ติด · บันทึกแล้ว', color:'#F87171', bar:'#EF4444'},
+    };
+    const rawP = [
+      {n:'จอ 1', addr:':7555', acct:'thanapon_042', step:'แตะคลังไอเทม (3/18)', done:'12 / 50', pct:64, st:'running'},
+      {n:'จอ 2', addr:':7556', acct:'thanapon_043', step:'ยืนยันภาพ anchor (7/18)', done:'11 / 50', pct:58, st:'running'},
+      {n:'จอ 3', addr:':7557', acct:'รอเริ่ม', step:'อยู่ในคิว รอจอว่าง', done:'0 / 50', pct:4, st:'waiting'},
+      {n:'จอ 4', addr:':7558', acct:'thanapon_017', step:'เก็บของสำเร็จ · ออกจากเกม', done:'50 / 50', pct:100, st:'done'},
+      {n:'จอ 5', addr:':7559', acct:'thanapon_051', step:'ล็อกอินไม่ผ่าน · รีเซ็ตเกม', done:'8 / 50', pct:16, st:'error'},
+    ];
+    const progress = rawP.map(p => Object.assign({}, p, stMap[p.st]));
+
+    const dotByState = {running:'#34D399', waiting:'#58677E', done:'#38BDF8', error:'#F87171', idle:'#3A4557'};
+    const rawD = [
+      {addr:'127.0.0.1:7555', sel:true,  st:'running'},
+      {addr:'127.0.0.1:7556', sel:true,  st:'running'},
+      {addr:'127.0.0.1:7557', sel:true,  st:'waiting'},
+      {addr:'127.0.0.1:7558', sel:true,  st:'done'},
+      {addr:'127.0.0.1:7559', sel:true,  st:'error'},
+      {addr:'127.0.0.1:7560', sel:false, st:'idle'},
+    ];
+    const devices = rawD.map(d => Object.assign({}, d, {
+      dot: dotByState[d.st],
+      boxBg: d.sel ? '#10B981' : 'transparent',
+      boxBorder: d.sel ? '#10B981' : '#2A3547',
+      checkOpacity: d.sel ? 1 : 0,
+    }));
+
+    return { progress, devices };
+  }
+}
+</script>
+</body>
+</html>

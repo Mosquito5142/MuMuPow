@@ -753,8 +753,41 @@ def list_ui_elements(xml_text):
 
 class MuMuController:
     def __init__(self, adb_path=None):
-        self.adb_path = adb_path or self.find_adb()
+        # ลำดับความสำคัญ: ค่าที่ส่งเข้ามา > พาธที่ผู้ใช้เคยบันทึกไว้ (จำข้ามการเปิดโปรแกรม) > ค้นหาอัตโนมัติ
+        self.adb_path = adb_path or self.load_saved_adb_path() or self.find_adb()
         self.common_ports = self.load_ports()
+
+    def _config_dir(self):
+        """โฟลเดอร์ที่วางไฟล์ตั้งค่า (ข้างตัว .exe ตอน build, ข้างไฟล์ .py ตอน dev)"""
+        import sys
+        if getattr(sys, "frozen", False):
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def load_saved_adb_path(self):
+        """อ่านพาธ ADB ที่ผู้ใช้เคยบันทึกไว้จาก adb_config.json — คืน None ถ้ายังไม่เคยตั้ง"""
+        f = os.path.join(self._config_dir(), "adb_config.json")
+        if os.path.exists(f):
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                p = (data or {}).get("adb_path")
+                if isinstance(p, str) and p.strip():
+                    return p.strip()
+            except Exception as e:
+                print(f"Error loading adb_config.json: {e}")
+        return None
+
+    def persist_adb_path(self, path):
+        """บันทึกพาธ ADB ลงไฟล์ ให้จำข้ามการเปิด-ปิดโปรแกรม (ลูกค้าไม่ต้องกรอกใหม่ทุกครั้ง)
+        คืน (ok, ไฟล์/ข้อความ error)"""
+        f = os.path.join(self._config_dir(), "adb_config.json")
+        try:
+            with open(f, "w", encoding="utf-8") as fh:
+                json.dump({"adb_path": path}, fh, ensure_ascii=False, indent=2)
+            return True, f
+        except Exception as e:
+            return False, str(e)
 
     def find_adb(self):
         """Attempts to find the ADB executable path."""
