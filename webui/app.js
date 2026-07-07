@@ -1,0 +1,292 @@
+// เชื่อม UI ดีไซน์ (index.html) กับ backend Python ผ่าน pywebview.
+// ถ้าเปิดในเบราว์เซอร์ธรรมดา (ไม่มี pywebview) จะใช้ข้อมูลตัวอย่างเพื่อให้เห็นดีไซน์ครบ
+
+const DEMO = {
+  devices: [
+    {addr:"127.0.0.1:7555",selected:true,dot:"#34D399"},
+    {addr:"127.0.0.1:7556",selected:true,dot:"#34D399"},
+    {addr:"127.0.0.1:7557",selected:true,dot:"#34D399"},
+    {addr:"127.0.0.1:7558",selected:true,dot:"#38BDF8"},
+    {addr:"127.0.0.1:7559",selected:true,dot:"#F87171"},
+    {addr:"127.0.0.1:7560",selected:false,dot:"#58677E"},
+  ],
+  connected:6, selectedCount:5,
+  profiles:["ล็อกอิน + เก็บของประจำวัน","ข้ามโฆษณา","รับของใหม่จับภาพ"],
+  currentProfile:"ล็อกอิน + เก็บของประจำวัน",
+  steps:18, accountsTotal:63, accountsChecked:50,
+  progress:[
+    {n:"จอ 1",addr:":7555",label:"กำลังรัน",color:"#38BDF8",dot:"#38BDF8",acct:"thanapon_042",step:"แตะคลังไอเทม (3/18)",pct:17,bar:"#34D399",done:"12 / 50"},
+    {n:"จอ 2",addr:":7556",label:"กำลังรัน",color:"#38BDF8",dot:"#38BDF8",acct:"thanapon_043",step:"ยืนยันภาพ anchor (7/18)",pct:39,bar:"#34D399",done:"11 / 50"},
+    {n:"จอ 3",addr:":7557",label:"รอคิว",color:"#7C8CA3",dot:"#58677E",acct:"รอเริ่ม",step:"อยู่ในคิว รอจอว่าง",pct:0,bar:"#34D399",done:"0 / 50"},
+    {n:"จอ 4",addr:":7558",label:"เสร็จแล้ว",color:"#34D399",dot:"#34D399",acct:"thanapon_017",step:"เก็บของสำเร็จ · ออกจากเกม",pct:100,bar:"#34D399",done:"50 / 50"},
+    {n:"จอ 5",addr:":7559",label:"ติด · บันทึกแล้ว",color:"#F87171",dot:"#F87171",acct:"thanapon_051",step:"ล็อกอินไม่ผ่าน (9/18)",pct:50,bar:"#F87171",done:"8 / 50"},
+  ],
+  log:[{ts:"14:38:07",text:"✕ จอ 5 · thanapon_051 ล็อกอินไม่ผ่าน — บันทึกรายงานปัญหา",kind:"err"}],
+};
+
+let PY = null;          // window.pywebview.api เมื่อพร้อม
+const hasPy = () => PY !== null;
+
+function icons(){ if(window.lucide) lucide.createIcons(); }
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ---------- nav rail ----------
+let CURRENT = "home";
+function renderNav(){
+  document.querySelectorAll('#navRail .nav').forEach(el=>{
+    const page = el.dataset.page, active = page===CURRENT;
+    const color = active ? "#E7EDF6" : "#5C6B82";
+    const barDisp = active ? "block" : "none";
+    el.style.cssText = "position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:13px 0;cursor:pointer;color:"+color+(el.dataset.bottom?";margin-top:auto":"");
+    el.innerHTML = '<div style="position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:#34D399;display:'+barDisp+'"></div>'
+      + '<i data-lucide="'+el.dataset.icon+'" width="21" height="21" stroke-width="1.85"></i>'
+      + '<span style="font-size:9.5px;font-weight:500">'+esc(el.dataset.label)+'</span>';
+    el.onclick = ()=> switchPage(page);
+  });
+  icons();
+}
+function switchPage(page){
+  CURRENT = page;
+  document.querySelectorAll('#content .page').forEach(p=>{
+    p.style.display = (p.dataset.page===page) ? "flex" : "none";
+  });
+  renderNav();
+  if(page==="acc") renderAccounts();
+  else if(page==="script") renderSteps();
+  else if(page==="tools") initToolTabs();
+  else if(page==="set") loadSettings();
+  icons();
+}
+function notReady(name){ window.onLog({ts:new Date().toTimeString().slice(0,8),text:"'"+name+"' กำลังย้ายมาเฟสถัดไป",kind:"warn"}); }
+
+// ---------- render state ----------
+function render(s){
+  // sidebar header + badge
+  document.getElementById('connCount').textContent = s.connected + " เชื่อมต่อ";
+  const badge = document.getElementById('connBadge');
+  if(s.connected>0){
+    badge.style.background="rgba(16,185,129,.09)"; badge.style.borderColor="rgba(16,185,129,.22)";
+    badge.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#34D399;flex:none"></span><span style="font-size:12.5px;color:#A7F3D0;font-weight:500">เชื่อมต่อ '+s.connected+' จอ · เลือก '+s.selectedCount+'</span>';
+  } else {
+    badge.style.background="rgba(163,98,7,.10)"; badge.style.borderColor="rgba(163,98,7,.28)";
+    badge.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;flex:none"></span><span style="font-size:12.5px;color:#FCD9A5;font-weight:500">ยังไม่พบจอ — กดสแกน</span>';
+  }
+
+  // device list
+  const dl = document.getElementById('deviceList');
+  dl.innerHTML = s.devices.map(d=>{
+    const boxBg = d.selected ? "#10B981" : "transparent";
+    const boxBorder = d.selected ? "#10B981" : "#2A3547";
+    const checkOp = d.selected ? "1" : "0";
+    const dot = d.dot || "#34D399";
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;background:#121A28;border:1px solid #1B2434">'
+      + '<span onclick="toggleDevice(\''+d.addr+'\')" style="width:16px;height:16px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer;background:'+boxBg+';border:1.5px solid '+boxBorder+'"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:'+checkOp+'"></i></span>'
+      + '<i data-lucide="monitor" width="15" height="15" stroke-width="1.75" style="color:#5C6B82;flex:none"></i>'
+      + '<span style="flex:1;font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#C7D2E0">'+esc(d.addr)+'</span>'
+      + '<span style="width:7px;height:7px;border-radius:50%;background:'+dot+';flex:none"></span>'
+      + '<i data-lucide="x" width="13" height="13" stroke-width="2" style="color:#455266;flex:none;cursor:pointer" onclick="removeDevice(\''+d.addr+'\')" title="เอาจอนี้ออก"></i>'
+      + '</div>';
+  }).join("") || '<div style="font-size:12px;color:#5C6B82;padding:8px 2px">— ยังไม่พบจอ กดสแกนพอร์ต —</div>';
+
+  // profile select
+  const sel = document.getElementById('profileSelect');
+  sel.innerHTML = (s.profiles.length?s.profiles:["(ไม่มีสคริปต์)"]).map(p=>'<option '+(p===s.currentProfile?'selected':'')+'>'+esc(p)+'</option>').join("");
+
+  // pre-flight card
+  const ok="#34D399", no="#F59E0B";
+  setPf('pfDevices', s.selectedCount>0, "จอที่เลือก", s.selectedCount+" จอ");
+  setPf('pfAccounts', s.accountsChecked>0, "บัญชีที่จะทำ", s.accountsChecked+" รหัส");
+  setPf('pfScript', s.steps>0, "สคริปต์", s.steps+" สเต็ป");
+
+  renderProgressList(s.progress);
+  if(s.log && s.log.length) onLog(s.log[s.log.length-1]);
+  icons();
+}
+function renderProgressList(arr){
+  const box = document.getElementById('progressList');
+  if(!box) return;
+  if(arr && arr.length){
+    box.innerHTML = arr.map(p=>(
+      '<div style="border-radius:11px;background:#121A28;border:1px solid #1B2434;padding:13px 15px;display:flex;flex-direction:column;gap:9px">'
+      + '<div style="display:flex;align-items:center;gap:10px"><span style="width:9px;height:9px;border-radius:50%;background:'+p.dot+';flex:none"></span><span style="font-weight:600;font-size:13.5px">'+esc(p.n)+'</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#5C6B82">'+esc(p.addr)+'</span><span style="margin-left:auto;font-size:12px;font-weight:500;color:'+p.color+'">'+esc(p.label)+'</span></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#90A0B7"><i data-lucide="user" width="13" height="13" stroke-width="1.75" style="color:#5C6B82"></i><span style="color:#C7D2E0;font-family:\'IBM Plex Mono\',monospace;font-size:11.5px">'+esc(p.acct)+'</span><span style="color:#455266">·</span><span>'+esc(p.step)+'</span></div>'
+      + '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;height:5px;border-radius:9px;background:#1B2434;overflow:hidden"><div style="height:100%;border-radius:9px;background:'+p.bar+';width:'+p.pct+'%"></div></div><span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#7C8CA3;min-width:56px;text-align:right">'+esc(p.done)+'</span></div>'
+      + '</div>')).join("");
+  } else {
+    box.innerHTML = '<div style="font-size:12.5px;color:#5C6B82;padding:8px 2px">ยังไม่ได้รัน — เลือกจอ+สคริปต์ แล้วกดรัน</div>';
+  }
+  icons();
+}
+function setPf(id, good, label, val){
+  const el = document.getElementById(id);
+  const color = good ? "#34D399" : "#F59E0B";
+  el.innerHTML = '<i data-lucide="'+(good?'check':'alert-triangle')+'" width="16" height="16" stroke-width="2.25" style="color:'+color+'"></i>'
+    + '<span style="color:#C7D2E0">'+esc(label)+'</span><span style="margin-left:auto;font-family:\'IBM Plex Mono\',monospace">'+esc(val)+'</span>';
+}
+
+// ---------- log ----------
+window.onLog = function(entry){
+  document.getElementById('logTs').textContent = "["+entry.ts+"]";
+  const c = {ok:"#6EE7B7",err:"#FCA5A5",warn:"#FBBF24",info:"#90A0B7"}[entry.kind] || "#90A0B7";
+  const t = document.getElementById('logText'); t.textContent = entry.text; t.style.color = c;
+};
+
+// ---------- actions (เรียก Python เมื่อมี, ไม่งั้นใช้ demo) ----------
+async function refresh(fn){
+  let s;
+  if(hasPy()){ s = await (fn ? fn() : PY.get_state()); }
+  else { s = DEMO; }
+  render(s);
+}
+async function scanPorts(btn){ if(btn) btn.querySelector('span,i'); if(hasPy()){ await refresh(()=>PY.scan()); } else { window.onLog({ts:"--:--:--",text:"(เดโม) สแกน — รันจริงผ่าน python web_app.py",kind:"info"}); } }
+async function connectManual(){ const a=document.getElementById('manualAddr').value; if(hasPy()) await refresh(()=>PY.connect_manual(a)); }
+async function toggleDevice(a){ if(hasPy()) await refresh(()=>PY.toggle_device(a)); }
+async function removeDevice(a){ if(hasPy()) await refresh(()=>PY.remove_device(a)); }
+async function selectProfile(n){ if(hasPy()) await refresh(()=>PY.select_profile(n)); }
+let RUN_POLL = null;
+async function runMacro(){
+  if(!hasPy()){ notReady('รัน (ต้องเปิดผ่าน .exe)'); return; }
+  const r = await PY.run();
+  if(r && r.ok){ setRunBtn(true); startRunPoll(); }
+}
+async function stopMacro(){ if(hasPy()) await PY.stop(); }
+function startRunPoll(){
+  if(RUN_POLL) clearInterval(RUN_POLL);
+  RUN_POLL = setInterval(async ()=>{
+    if(!hasPy()) return;
+    const rs = await PY.get_run_state();
+    renderProgressList(rs.progress);
+    if(rs.log && rs.log.length){ onLog(rs.log[rs.log.length-1]); }
+    setRunBtn(rs.running);
+    if(!rs.running){ clearInterval(RUN_POLL); RUN_POLL=null; }
+  }, 1000);
+}
+function setRunBtn(running){
+  const b = document.getElementById('runBtn'); if(!b) return;
+  if(running){
+    b.innerHTML = '<i data-lucide="loader" width="18" height="18" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน…';
+  } else {
+    b.innerHTML = '<i data-lucide="play" width="18" height="18" stroke-width="2.25"></i>รัน';
+  }
+  icons();
+}
+
+// ---------- window controls ----------
+function winMin(){ if(hasPy()&&PY.win_min) PY.win_min(); }
+function winMax(){ if(hasPy()&&PY.win_max) PY.win_max(); }
+function winClose(){ if(hasPy()&&PY.win_close) PY.win_close(); }
+
+// ================= ACCOUNTS =================
+const DEMO_ACC = {groups:[
+  {name:"หลัก (A)",count:3,accounts:[
+    {email:"a@x.com",name:"thanapon_017",grp:"หลัก (A)",tok:"ya29.a0Af…9Qk",checked:true,dot:"#38BDF8"},
+    {email:"b@x.com",name:"thanapon_042",grp:"หลัก (A)",tok:"ya29.a0Af…2Lm",checked:true,dot:"#34D399"},
+    {email:"c@x.com",name:"thanapon_051",grp:"หลัก (A)",tok:"ya29.a0Af…7Zx",checked:true,dot:"#F87171"}]},
+  {name:"สำรอง (B)",count:2,accounts:[
+    {email:"d@x.com",name:"thanapon_088",grp:"สำรอง (B)",tok:"—",checked:false,dot:"#58677E"},
+    {email:"e@x.com",name:"thanapon_090",grp:"สำรอง (B)",tok:"ya29.a0Af…4Rt",checked:true,dot:"#58677E"}]},
+]};
+async function renderAccounts(){
+  const q = (document.getElementById('accSearch')||{}).value || "";
+  const s = hasPy() ? await PY.get_accounts_grouped(q) : DEMO_ACC;
+  const box = document.getElementById('accGroups');
+  box.innerHTML = s.groups.map(g=>(
+    '<div style="display:flex;flex-direction:column;gap:7px">'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px"><i data-lucide="folder" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i><span style="font-size:13px;font-weight:600">กลุ่ม: '+esc(g.name)+'</span><span style="font-size:11.5px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">'+g.count+' บัญชี</span></div>'
+    + g.accounts.map(a=>(
+        '<div style="display:flex;align-items:center;gap:11px;padding:11px 12px;margin-left:8px;border-radius:10px;background:#121A28;border:1px solid #1B2434">'
+        + '<span style="width:9px;height:9px;border-radius:50%;background:'+a.dot+';flex:none"></span>'
+        + '<span onclick="toggleAccount(\''+a.email+'\')" style="width:16px;height:16px;border-radius:5px;flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;background:'+(a.checked?'#10B981':'transparent')+';border:1.5px solid '+(a.checked?'#10B981':'#2A3547')+'"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:'+(a.checked?'1':'0')+'"></i></span>'
+        + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">'+esc(a.name)+'</div><div style="font-size:11px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">กลุ่ม '+esc(a.grp)+' · '+esc(a.tok)+'</div></div>'
+        + '<i data-lucide="pencil" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" onclick=\'editAccount('+JSON.stringify(a).replace(/\x27/g,"&#39;")+')\'></i>'
+        + '<i data-lucide="x" width="15" height="15" stroke-width="2" style="color:#455266;cursor:pointer" onclick="deleteAccount(\''+a.email+'\')"></i>'
+        + '</div>')).join("")
+    + '</div>')).join("") || '<div style="font-size:12.5px;color:#5C6B82;padding:8px 2px">ไม่พบบัญชี</div>';
+  icons();
+}
+async function toggleAccount(e){ if(hasPy()){ await PY.toggle_account(e); renderAccounts(); } }
+async function deleteAccount(e){ if(hasPy()){ await PY.delete_account(e); renderAccounts(); } }
+async function delSelectedAccounts(){ if(hasPy()){ await PY.del_selected_accounts(); renderAccounts(); } }
+async function selAccByStatus(k){ if(hasPy()){ await PY.select_accounts_by_status(k); renderAccounts(); } }
+function editAccount(a){ document.getElementById('accEmail').value=a.email; document.getElementById('accName').value=a.name; document.getElementById('accGroup').value=a.grp; document.getElementById('accToken').value=(a.tok||'').replace('…',''); document.getElementById('accFormTitle').textContent='แก้ไขบัญชี'; }
+function resetAccForm(){ ['accEmail','accName','accToken','accPass'].forEach(i=>document.getElementById(i).value=''); document.getElementById('accGroup').value='ทั่วไป'; document.getElementById('accFormTitle').textContent='เพิ่ม / แก้ไขบัญชี'; }
+async function saveAccount(){ if(!hasPy()) return; const p={email:accEmail.value,name:accName.value,group:accGroup.value,password:accPass.value,token:accToken.value}; await PY.save_account(p); resetAccForm(); renderAccounts(); }
+
+// ================= SCRIPT =================
+const DEMO_STEPS = {name:"ล็อกอิน + เก็บของประจำวัน",count:8,steps:[
+  {no:"01",type:"เปิดแอป",icon:"power",detail:"com.mumu.game/.Main",delay:"2.0s",x:"-",y:"-",desc:"เปิดเกม"},
+  {no:"02",type:"แตะ",icon:"mouse-pointer-click",detail:"(540, 1180)",delay:"0.6s",x:"540",y:"1180",desc:"แตะกลางจอ"},
+  {no:"03",type:"anchor + แตะ",icon:"image",detail:"ปุ่มล็อกอิน",delay:"0.8s",x:"540",y:"1420",desc:"แตะตรงที่เจอปุ่มล็อกอิน"},
+  {no:"04",type:"พิมพ์",icon:"type",detail:"{{email}}",delay:"0.4s",x:"-",y:"-",desc:"กรอกอีเมล"},
+]};
+let SEL_STEP = null;
+async function renderSteps(){
+  const s = hasPy() ? await PY.get_steps() : DEMO_STEPS;
+  const nm = document.getElementById('scriptName');
+  if(document.activeElement !== nm) nm.value = s.name==="—" ? "" : s.name;
+  document.getElementById('stepCount').textContent = "ขั้นตอน ("+s.count+")";
+  document.getElementById('stepList').innerHTML = s.steps.map((st,i)=>{
+    const active = SEL_STEP===i;
+    return '<div onclick="selectStep('+i+')" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:8px;cursor:pointer;background:'+(active?'rgba(16,185,129,.10)':'transparent')+';border:1px solid '+(active?'rgba(16,185,129,.35)':'transparent')+'">'
+    + '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#5C6B82;width:20px">'+st.no+'</span>'
+    + '<i data-lucide="'+st.icon+'" width="15" height="15" stroke-width="1.9" style="color:'+(st.icon==='image'?'#FBBF24':'#7DD3FC')+';flex:none"></i>'
+    + '<span style="font-size:12.5px;font-weight:500;min-width:80px">'+esc(st.type)+'</span>'
+    + '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#90A0B7;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(st.detail)+'</span>'
+    + '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#5C6B82">'+esc(st.delay)+'</span></div>';
+  }).join("") || '<div style="font-size:12px;color:#5C6B82;padding:10px">— ยังไม่มีขั้นตอน เลือกสคริปต์ที่หน้าแรก —</div>';
+  window._steps = s.steps;
+  icons();
+}
+function selectStep(i){ SEL_STEP=i; const st=(window._steps||[])[i]; if(st){ document.getElementById('sfType').textContent=st.type; sfX.value=st.x==='-'?'':st.x; sfY.value=st.y==='-'?'':st.y; sfDesc.value=st.desc==='-'?'':st.desc; sfDelay.value=String(st.delay||'').replace('s',''); } renderSteps(); }
+async function saveProfile(){ if(hasPy()){ await PY.save_profile(document.getElementById('scriptName').value); renderSteps(); refresh(); } }
+async function deleteProfile(){ if(hasPy()){ await PY.delete_profile(); SEL_STEP=null; renderSteps(); refresh(); } }
+async function updateStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } const p={x:sfX.value,y:sfY.value,desc:sfDesc.value}; const d=parseFloat(sfDelay.value); if(!isNaN(d)) p.delay=d; await PY.update_step(SEL_STEP,p); renderSteps(); }
+async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; await PY.add_step(at); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); renderSteps(); selectStep(SEL_STEP); } }
+async function deleteStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.delete_step(SEL_STEP); SEL_STEP=null; renderSteps(); }
+async function moveStep(dir){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.move_step(SEL_STEP,dir); const nj=SEL_STEP+dir; if(nj>=0) SEL_STEP=nj; renderSteps(); }
+async function testStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.test_step(SEL_STEP); }
+async function importWebGame(){ if(hasPy()){ await PY.import_save_web_game(); renderAccounts(); } }
+
+// ================= TOOLS =================
+let SUB = "manual";
+function initToolTabs(){ switchSub(SUB); }
+function switchSub(sub){
+  SUB = sub;
+  document.querySelectorAll('#toolTabs .ttab').forEach(t=>{
+    const on = t.dataset.sub===sub;
+    t.style.background = on ? "#10B981" : "transparent";
+    t.style.color = on ? "#04120C" : "#90A0B7";
+    t.onclick = ()=>switchSub(t.dataset.sub);
+  });
+  document.querySelectorAll('.sub').forEach(s=>{ s.style.display = (s.dataset.sub===sub) ? (sub==='manual'?'grid':'flex') : 'none'; });
+  icons();
+}
+async function mClick(){ if(hasPy()) await PY.manual_click(mX.value, mY.value); }
+async function mType(){ if(hasPy()) await PY.manual_type(mText.value); }
+async function mKey(c){ if(hasPy()) await PY.manual_key(c); }
+async function mShot(){ if(hasPy()) await PY.manual_screenshot(); }
+async function adbShell(){ if(hasPy()) await PY.adb_shell(adbCmd.value); }
+async function startStory(){
+  if(!hasPy()){ notReady('Story Auto (ต้องเปิดผ่าน .exe)'); return; }
+  const r = await PY.start_story(document.getElementById('storyInterval').value);
+  if(r && r.ok){ switchPage('home'); setRunBtn(true); startRunPoll(); }
+}
+
+// ================= SETTINGS =================
+async function loadSettings(){
+  if(!hasPy()){ document.getElementById('setAdb').value="C:\\MuMuPlayer\\shell\\adb.exe"; document.getElementById('setPorts').textContent="7555 – 7564"; return; }
+  const s = await PY.get_settings();
+  document.getElementById('setAdb').value = s.adb || "";
+  document.getElementById('setPorts').textContent = s.ports || "—";
+  if(s.gemini) document.getElementById('setGemini').placeholder = s.gemini;
+}
+async function saveAdb(){ if(hasPy()) await PY.save_adb(document.getElementById('setAdb').value); }
+async function saveGemini(){ if(hasPy()){ await PY.save_gemini(document.getElementById('setGemini').value); document.getElementById('setGemini').value=''; } }
+async function checkCap(){ if(hasPy()){ const r=await PY.check_capacity(); document.getElementById('setCap').textContent=r.cap; } }
+
+// ---------- boot ----------
+function boot(){ renderNav(); switchPage("home"); refresh(); icons(); }
+window.addEventListener('pywebviewready', ()=>{ PY = window.pywebview.api; boot(); });
+// เผื่อเปิดในเบราว์เซอร์ธรรมดา (พรีวิว) — ไม่มี pywebviewready
+setTimeout(()=>{ if(!hasPy()) boot(); }, 400);
