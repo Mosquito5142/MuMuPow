@@ -17,7 +17,11 @@
   .sc::-webkit-scrollbar-thumb{background:#202A3B;border-radius:8px}
   .sc::-webkit-scrollbar-track{background:transparent}
   input,textarea,select{font-family:inherit}
-  .in{all:unset;box-sizing:border-box}
+  /* all:unset ล้าง width ของ input ทิ้ง แต่ browser ยังใส่ความกว้างเริ่มต้นจาก size=20 ให้เอง
+     (ประมาณ 170-200px) ซึ่งใน flex:1 container จะไม่ยอมหดเพราะ min-width เริ่มต้นคือ auto ไม่ใช่ 0
+     -> ช่องพิกัด X/Y เลยกว้างเกินความจำเป็นสำหรับตัวเลข 3-4 หลัก ต้องบังคับ width:100% + min-width:0 */
+  .in{all:unset;box-sizing:border-box;width:100%;min-width:0}
+  button.in{width:auto}
   select.prof{appearance:none;-webkit-appearance:none;width:100%;height:100%;background:transparent;border:0;color:#E7EDF6;font-size:13.5px;font-weight:500;font-family:inherit;cursor:pointer;padding:0 14px}
   select.prof option{background:#0E1420;color:#E7EDF6}
 </style>

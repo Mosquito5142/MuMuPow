@@ -67,6 +67,24 @@ class Api:
                 self.profiles[name] = f
             except Exception:
                 pass
+        # โหลดสคริปต์ดีฟอลต์อัตโนมัติตอนยังไม่มีอันไหนโหลด (เปิดแอปครั้งแรก) — ให้หน้าสคริปต์
+        # และ dropdown หน้าแรกตรงกัน ไม่ต้องเลือกก่อนถึงจะเห็นขั้นตอน
+        if not self.current_profile and self.profiles:
+            default = next((n for n in self.profiles if "Default" in n or "รับของ" in n), None) \
+                or list(self.profiles)[0]
+            self._load_profile_steps(default)
+
+    def _load_profile_steps(self, name):
+        fp = self.profiles.get(name)
+        if not fp:
+            return False
+        try:
+            d = json.load(open(fp, encoding="utf-8"))
+            self.macro_steps = d.get("steps", [])
+            self.current_profile = name
+            return True
+        except Exception:
+            return False
 
     def _accounts_path(self):
         return os.path.join(base_dir(), "accounts.json")
@@ -163,15 +181,10 @@ class Api:
         return self.get_state()
 
     def select_profile(self, name):
-        fp = self.profiles.get(name)
-        if fp:
-            try:
-                d = json.load(open(fp, encoding="utf-8"))
-                self.macro_steps = d.get("steps", [])
-                self.current_profile = name
-                self._push_log(f"โหลดสคริปต์ '{name}' ({len(self.macro_steps)} สเต็ป)", "ok")
-            except Exception as e:
-                self._push_log(f"โหลดสคริปต์ล้มเหลว: {e}", "err")
+        if self._load_profile_steps(name):
+            self._push_log(f"โหลดสคริปต์ '{name}' ({len(self.macro_steps)} สเต็ป)", "ok")
+        else:
+            self._push_log(f"โหลดสคริปต์ '{name}' ไม่ได้", "err")
         return self.get_state()
 
     # ================= ตัวรันจริง (MacroRunner) =================
