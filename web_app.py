@@ -365,7 +365,37 @@ class Api:
                 "tok": (tok + "…") if tok else "—",
                 "checked": a.get("checked", True), "dot": self._acct_dot(a),
             })
-        return {"groups": [{"name": g, "count": len(items), "accounts": items} for g, items in groups.items()]}
+        group_names = sorted({(a.get("group") or "ทั่วไป").strip() for a in accts}) or ["ทั่วไป"]
+        return {"groups": [{"name": g, "count": len(items), "accounts": items,
+                            "allChecked": all(it["checked"] for it in items)}
+                           for g, items in groups.items()],
+                "groupNames": group_names}
+
+    def toggle_group(self, group, checked):
+        accts = self._accounts()
+        for a in accts:
+            if (a.get("group") or "ทั่วไป").strip() == group:
+                a["checked"] = bool(checked)
+        self._save_accounts(accts)
+        return self.get_accounts_grouped()
+
+    def move_selected_to_group(self, target_group):
+        target_group = (target_group or "ทั่วไป").strip() or "ทั่วไป"
+        accts = self._accounts()
+        n = 0
+        for a in accts:
+            if a.get("checked", True):
+                a["group"] = target_group
+                n += 1
+        self._save_accounts(accts)
+        self._push_log(f"ย้ายบัญชีที่เลือก {n} รหัส ไปกลุ่ม '{target_group}'", "ok")
+        return self.get_accounts_grouped()
+
+    def delete_group(self, group):
+        accts = [a for a in self._accounts() if (a.get("group") or "ทั่วไป").strip() != group]
+        self._save_accounts(accts)
+        self._push_log(f"ลบกลุ่ม '{group}' ทั้งหมด", "warn")
+        return self.get_accounts_grouped()
 
     def toggle_account(self, email):
         accts = self._accounts()

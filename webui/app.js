@@ -178,22 +178,28 @@ function winMax(){ if(hasPy()&&PY.win_max) PY.win_max(); }
 function winClose(){ if(hasPy()&&PY.win_close) PY.win_close(); }
 
 // ================= ACCOUNTS =================
-const DEMO_ACC = {groups:[
-  {name:"หลัก (A)",count:3,accounts:[
+const DEMO_ACC = {groupNames:["หลัก (A)","สำรอง (B)"], groups:[
+  {name:"หลัก (A)",count:3,allChecked:true,accounts:[
     {email:"a@x.com",name:"thanapon_017",grp:"หลัก (A)",tok:"ya29.a0Af…9Qk",checked:true,dot:"#38BDF8"},
     {email:"b@x.com",name:"thanapon_042",grp:"หลัก (A)",tok:"ya29.a0Af…2Lm",checked:true,dot:"#34D399"},
     {email:"c@x.com",name:"thanapon_051",grp:"หลัก (A)",tok:"ya29.a0Af…7Zx",checked:true,dot:"#F87171"}]},
-  {name:"สำรอง (B)",count:2,accounts:[
+  {name:"สำรอง (B)",count:2,allChecked:false,accounts:[
     {email:"d@x.com",name:"thanapon_088",grp:"สำรอง (B)",tok:"—",checked:false,dot:"#58677E"},
     {email:"e@x.com",name:"thanapon_090",grp:"สำรอง (B)",tok:"ya29.a0Af…4Rt",checked:true,dot:"#58677E"}]},
 ]};
 async function renderAccounts(){
   const q = (document.getElementById('accSearch')||{}).value || "";
   const s = hasPy() ? await PY.get_accounts_grouped(q) : DEMO_ACC;
+  const dl = document.getElementById('groupNamesList');
+  if(dl) dl.innerHTML = (s.groupNames||[]).map(n=>'<option value="'+esc(n)+'">').join("");
   const box = document.getElementById('accGroups');
   box.innerHTML = s.groups.map(g=>(
     '<div style="display:flex;flex-direction:column;gap:7px">'
-    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px"><i data-lucide="folder" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i><span style="font-size:13px;font-weight:600">กลุ่ม: '+esc(g.name)+'</span><span style="font-size:11.5px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">'+g.count+' บัญชี</span></div>'
+    + '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px">'
+    + '<span onclick="toggleGroup(\''+esc(g.name)+'\','+(!g.allChecked)+')" style="width:16px;height:16px;border-radius:5px;flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;background:'+(g.allChecked?'#10B981':'transparent')+';border:1.5px solid '+(g.allChecked?'#10B981':'#2A3547')+'" title="ติ๊กเลือกทั้งกลุ่ม"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:'+(g.allChecked?'1':'0')+'"></i></span>'
+    + '<i data-lucide="folder" width="16" height="16" stroke-width="1.75" style="color:#7C8CA3"></i><span style="font-size:13px;font-weight:600">กลุ่ม: '+esc(g.name)+'</span><span style="font-size:11.5px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">'+g.count+' บัญชี</span>'
+    + '<i data-lucide="trash-2" width="14" height="14" stroke-width="1.75" style="color:#455266;cursor:pointer;margin-left:auto" title="ลบทั้งกลุ่ม" onclick="deleteGroup(\''+esc(g.name)+'\')"></i>'
+    + '</div>'
     + g.accounts.map(a=>(
         '<div style="display:flex;align-items:center;gap:11px;padding:11px 12px;margin-left:8px;border-radius:10px;background:#121A28;border:1px solid #1B2434">'
         + '<span style="width:9px;height:9px;border-radius:50%;background:'+a.dot+';flex:none"></span>'
@@ -209,6 +215,13 @@ async function toggleAccount(e){ if(hasPy()){ await PY.toggle_account(e); render
 async function deleteAccount(e){ if(hasPy()){ await PY.delete_account(e); renderAccounts(); } }
 async function delSelectedAccounts(){ if(hasPy()){ await PY.del_selected_accounts(); renderAccounts(); } }
 async function selAccByStatus(k){ if(hasPy()){ await PY.select_accounts_by_status(k); renderAccounts(); } }
+async function toggleGroup(g,checked){ if(hasPy()){ await PY.toggle_group(g,checked); renderAccounts(); } }
+async function deleteGroup(g){ if(hasPy()){ await PY.delete_group(g); renderAccounts(); } }
+async function moveSelectedGroup(){
+  const v = (document.getElementById('moveGroupInput')||{}).value || "";
+  if(!v.trim()){ notReady('พิมพ์ชื่อกลุ่มก่อน'); return; }
+  if(hasPy()){ await PY.move_selected_to_group(v); document.getElementById('moveGroupInput').value=''; renderAccounts(); }
+}
 function editAccount(a){ document.getElementById('accEmail').value=a.email; document.getElementById('accName').value=a.name; document.getElementById('accGroup').value=a.grp; document.getElementById('accToken').value=(a.tok||'').replace('…',''); document.getElementById('accFormTitle').textContent='แก้ไขบัญชี'; }
 function resetAccForm(){ ['accEmail','accName','accToken','accPass'].forEach(i=>document.getElementById(i).value=''); document.getElementById('accGroup').value='ทั่วไป'; document.getElementById('accFormTitle').textContent='เพิ่ม / แก้ไขบัญชี'; }
 async function saveAccount(){ if(!hasPy()) return; const p={email:accEmail.value,name:accName.value,group:accGroup.value,password:accPass.value,token:accToken.value}; await PY.save_account(p); resetAccForm(); renderAccounts(); }
