@@ -18,7 +18,8 @@ from concurrent.futures import ThreadPoolExecutor
 from mumu_controller import (find_tesseract, names_match,
                              available_tesseract_langs, ocr_text_tesseract,
                              find_highlighted_stage, find_swipe_glow, in_match_autoplay,
-                             ocr_find_button, png_similarity, gemini_tap_suggestion)
+                             ocr_find_button, png_similarity, gemini_tap_suggestion,
+                             find_element_center, find_yellow_frame)
 
 
 DEFAULT_SWIPE_DURATION = 300
@@ -46,17 +47,211 @@ def substitute_account(text, account):
             .replace("{NAME}", account.get("name", "") or account.get("ingamename", "") or ""))
 
 
+def templates_dir():
+    return os.path.join(base_dir(), "templates")
+
+
+def parse_ui_query(query):
+    """แยกคำค้น element: ขึ้นต้น 'id:' = ค้นจาก resource-id, ไม่งั้นค้นจาก text"""
+    query = (query or "").strip()
+    if query.lower().startswith("id:"):
+        return None, query[3:].strip()
+    return query, None
+
+
+# ---------- ดึง OTP จากอีเมล (พอร์ตจาก MuMuGUI.fetch_otp_* — ไม่พึ่ง GUI) ----------
+def _fetch_otp_via_readmail_api(log, mail_address, refresh_token, client_id, pattern_str):
+    """ดึงอีเมลผ่าน API read-mail.me ด้วย OAuth2 token"""
+    import urllib.request
+    import re
+    url = "https://read-mail.me/get_data.php"
+    payload = {"email": mail_address, "refresh_token": refresh_token,
+               "client_id": client_id, "api_type": "graph_api"}
+    headers = {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-Token': 'rm_8Xk2pQwZ9vNjL5hTdYcA3sE7uBfM4oR',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'),
+                                     headers=headers, method='POST')
+        with urllib.request.urlopen(req, timeout=20) as response:
+            res = json.loads(response.read().decode('utf-8'))
+        if res.get("status") and "messages" in res:
+            for msg in res["messages"][:5]:
+                body = msg.get("_body") or msg.get("message") or ""
+                m = re.search(pattern_str, body)
+                if m:
+                    log(f"[{mail_address}] [API] เจอเมล '{msg.get('subject','')}' → ดึง OTP สำเร็จ", "ok")
+                    return m.group(0)
+            log(f"[{mail_address}] [API] สแกนเมลแล้วไม่พบ OTP ตามแพทเทิร์น '{pattern_str}'", "warn")
+        else:
+            log(f"[{mail_address}] [API] ดึงข้อมูลไม่สำเร็จ: {res.get('error') or 'ไม่พบข้อความ'}", "warn")
+    except Exception as e:
+        log(f"[{mail_address}] [API] ผิดพลาด: {e}", "err")
+    return None
+
+
+def fetch_otp_from_mail(log, mail_address, mail_password, pattern_str=None,
+                        refresh_token="", client_id=""):
+    """ดึง OTP ล่าสุด: ลอง API (ถ้ามี token) ก่อน แล้ว fallback เป็น IMAP (Outlook)"""
+    import imaplib
+    import email
+    import re
+    from email.header import decode_header
+
+    if not pattern_str or pattern_str.strip() in ["", "{EMAIL}", "{PASSWORD}"]:
+        pattern_str = r'\b\d{6}\b'
+
+    if refresh_token and client_id:
+        log(f"[{mail_address}] พบโทเคน OAuth2 → ดึงผ่าน API read-mail.me", "info")
+        code = _fetch_otp_via_readmail_api(log, mail_address, refresh_token, client_id, pattern_str)
+        if code:
+            return code
+        log(f"[{mail_address}] API ล้มเหลว → ลองผ่าน IMAP สำรอง", "warn")
+
+    try:
+        mail = imaplib.IMAP4_SSL("outlook.office365.com")
+        mail.login(mail_address, mail_password)
+        status, messages = mail.select("inbox")
+        if status != "OK":
+            log(f"[{mail_address}] เปิดกล่อง Inbox ไม่ได้", "err")
+            return None
+        num = int(messages[0])
+        if num == 0:
+            log(f"[{mail_address}] ไม่มีอีเมลในกล่อง", "warn")
+            return None
+        for seq in range(num, max(0, num - 5), -1):
+            status, data = mail.fetch(str(seq), "(RFC822)")
+            if status != "OK" or not data:
+                continue
+            msg = email.message_from_bytes(data[0][1])
+            try:
+                sub_dec, enc = decode_header(msg.get("Subject", ""))[0]
+                subject = sub_dec.decode(enc or "utf-8", errors="ignore") if isinstance(sub_dec, bytes) else sub_dec
+            except Exception:
+                subject = str(msg.get("Subject", ""))
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    ct = part.get_content_type()
+                    cd = str(part.get("Content-Disposition"))
+                    if ct in ["text/plain", "text/html"] and "attachment" not in cd:
+                        try:
+                            body += part.get_payload(decode=True).decode(
+                                part.get_content_charset() or "utf-8", errors="ignore")
+                        except Exception:
+                            pass
+            else:
+                try:
+                    body = msg.get_payload(decode=True).decode(
+                        msg.get_content_charset() or "utf-8", errors="ignore")
+                except Exception:
+                    pass
+            m = re.search(pattern_str, body)
+            if m:
+                log(f"[{mail_address}] เจอเมล '{subject}' → ดึง OTP สำเร็จ", "ok")
+                mail.logout()
+                return m.group(0)
+        mail.logout()
+        log(f"[{mail_address}] สแกน 5 เมลล่าสุดแล้วไม่พบ OTP '{pattern_str}'", "warn")
+    except Exception as e:
+        log(f"[{mail_address}] เชื่อมต่อกล่องเมลผิดพลาด: {e}", "err")
+    return None
+
+
+# ---------- ส่งปุ่มคีย์บอร์ดจริงเข้าหน้าต่าง MuMu (พอร์ตจาก execute_keyboard_input) ----------
+_VK_CODES = {
+    "w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44,
+    "space": 0x20, "enter": 0x0D, "escape": 0x1B,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "f": 0x46, "g": 0x47, "h": 0x48, "j": 0x4A, "k": 0x4B, "l": 0x4C,
+    "z": 0x5A, "x": 0x58, "c": 0x43, "v": 0x56, "b": 0x42, "n": 0x4E, "m": 0x4D,
+    "0": 0x30, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34, "5": 0x35,
+    "6": 0x36, "7": 0x37, "8": 0x38, "9": 0x39,
+    "f1": 0x70, "f2": 0x71, "f3": 0x72, "f4": 0x73, "f5": 0x74, "f6": 0x75,
+    "f7": 0x76, "f8": 0x77, "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
+}
+
+
+def send_keyboard_input(log, device, ordered_devices, key_name, action):
+    """โพสต์ WM_KEYDOWN/UP เข้าหน้าต่าง MuMu ที่ตรงกับ device (จับคู่ตามลำดับ)"""
+    import ctypes
+    user32 = ctypes.windll.user32
+    found = []
+
+    def foreach_window(hwnd, _l):
+        if user32.IsWindowVisible(hwnd):
+            n = user32.GetWindowTextLengthW(hwnd)
+            buff = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, buff, n + 1)
+            title = buff.value
+            if any(k in title.lower() for k in ["mumu player", "nemu", "มูมู่"]):
+                found.append((hwnd, title))
+        return True
+
+    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    user32.EnumWindows(proc(foreach_window), 0)
+    if not found:
+        log("ไม่พบหน้าต่าง Emulator บน Windows เพื่อส่งปุ่มกด", "warn")
+        return
+
+    sorted_devs = sorted(d for d in (ordered_devices or []) if d)
+    sorted_wins = sorted(found, key=lambda w: w[1])
+    target = None
+    for i, dev in enumerate(sorted_devs):
+        if dev == device and i < len(sorted_wins):
+            target = sorted_wins[i][0]
+            break
+    if not target:
+        target = sorted_wins[0][0]
+
+    vk = _VK_CODES.get(key_name)
+    if not vk:
+        if len(key_name) == 1:
+            vk = ord(key_name.upper())
+        else:
+            log(f"ไม่รู้จักปุ่ม '{key_name}'", "warn")
+            return
+
+    child = []
+
+    def enum_child(hwnd, _l):
+        child.append(hwnd)
+        return True
+
+    cproc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    user32.EnumChildWindows(target, cproc(enum_child), 0)
+    hwnds = [target] + child
+
+    WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
+    post = user32.PostMessageW
+    if action == "down":
+        for h in hwnds:
+            post(h, WM_KEYDOWN, vk, 0)
+    elif action == "up":
+        for h in hwnds:
+            post(h, WM_KEYUP, vk, 0)
+    else:  # press
+        for h in hwnds:
+            post(h, WM_KEYDOWN, vk, 0)
+        time.sleep(0.05)
+        for h in hwnds:
+            post(h, WM_KEYUP, vk, 0)
+
+
 class MacroRunner:
     # ชนิด step ที่ตัวรันใหม่ยังไม่รองรับ (จะ log แล้วข้าม ไม่ให้พังทั้งรอบ)
-    _UNSUPPORTED = {"story_auto", "clear_ads_loop", "fetch_otp",
-                    "run_set", "keyboard", "tap_text", "wait_for_text",
-                    "wait_for_image", "find_yellow_stage"}
+    # หมายเหตุ: run_set ถูกขยายทิ้งไปตั้งแต่ __init__ แล้ว จึงไม่โผล่ถึง _dispatch
+    _UNSUPPORTED = {"story_auto"}
 
     def __init__(self, controller, steps, log_cb=None, progress_cb=None,
                  running_check=None, anchor_poll=0.5, reset_cfg=None, diamond_cfg=None):
         self.controller = controller
-        self.steps = steps or []
         self.log = log_cb or (lambda t, k="info": None)
+        self.steps = self._expand_sets(steps or [])
         self.progress = progress_cb or (lambda dev, **kw: None)
         self.running = running_check or (lambda: True)
         self.anchor_poll = float(anchor_poll or 0.5)
@@ -66,6 +261,26 @@ class MacroRunner:
         self._dlock = threading.Lock()
         self.total_accounts = 0
         self._done = {}
+
+    def _expand_sets(self, steps):
+        """ขยายขั้น run_set ให้กลายเป็นขั้นย่อยจริง (โหลดชุดจาก script_sets/*.json)
+        มี cycle detection ใน expand_steps_with_sets — ถ้าพัง คืน steps เดิมพร้อม log เตือน"""
+        if not any((s.get("type") == "run_set") for s in steps):
+            return steps
+        try:
+            from script_sets import load_script_set, expand_steps_with_sets
+            import glob as _glob
+            sets = {}
+            for f in _glob.glob(os.path.join(base_dir(), "script_sets", "*.json")):
+                try:
+                    d = load_script_set(f)
+                    sets[d["name"]] = d["steps"]
+                except Exception:
+                    pass
+            return expand_steps_with_sets(steps, lambda name: sets.get(name))
+        except Exception as e:
+            self.log(f"ขยายชุดคำสั่ง (run_set) ไม่สำเร็จ: {e} → ใช้สคริปต์เดิม", "warn")
+            return steps
 
     # ---------- orchestration ----------
     def run_queue(self, devices, accounts):
@@ -199,6 +414,20 @@ class MacroRunner:
             self._detect_image(device, step)
         elif t == "read_diamond":
             self._read_diamond(device, account)
+        elif t == "wait_for_image":
+            self._wait_for_image(device, step); return
+        elif t == "tap_text":
+            self._tap_text(device, account, step); return
+        elif t == "wait_for_text":
+            self._wait_for_text(device, account, step); return
+        elif t == "fetch_otp":
+            self._fetch_otp(device, account, step); return
+        elif t == "clear_ads_loop":
+            self._clear_ads_loop(device, step); return
+        elif t == "keyboard":
+            self._keyboard(device, step); return
+        elif t == "find_yellow_stage":
+            self._find_yellow_stage(device, step); return
         elif t in self._UNSUPPORTED:
             self.log(f"[{device}] ชนิด '{t}' ยังไม่รองรับในตัวรันใหม่ → ข้าม", "warn")
         else:
@@ -220,6 +449,210 @@ class MacroRunner:
         found, mx, my, _msg = self.controller.find_image_in_bytes(data, tp, threshold=0.8)
         if found:
             self.controller.tap(device, mx, my)
+
+    def _sleep_delay(self, step):
+        d = self._delay(step)
+        if d > 0:
+            time.sleep(d)
+
+    def _interruptible_sleep(self, seconds):
+        """นอนแบบยกเลิกได้ทันทีที่สั่งหยุด — คืน False ถ้าถูกสั่งหยุดระหว่างรอ"""
+        waited = 0.0
+        while waited < seconds:
+            if not self.running():
+                return False
+            time.sleep(min(0.1, seconds - waited))
+            waited += 0.1
+        return True
+
+    # ---------- รอภาพก่อนทำต่อ (พอร์ตจาก _step_wait_for_image) ----------
+    def _wait_for_image(self, device, step):
+        tf = (step.get("text") or "").strip()
+        if not tf:
+            self.log(f"[{device}] wait_for_image: ไม่ได้ระบุไฟล์รูป → ข้าม", "warn")
+            return
+        tp = os.path.join(templates_dir(), tf)
+        if not os.path.exists(tp):
+            self.log(f"[{device}] ไม่พบเทมเพลต {tf} → ข้าม", "warn")
+            return
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = float(step.get("interval", 1.0) or 1.0)
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        click = step.get("click", True)
+        self.log(f"[{device}] รอจนเจอรูป '{tf}' (สูงสุด {timeout:g} วิ)…", "info")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self.running():
+                return
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok:
+                found, mx, my, _m = self.controller.find_image_in_bytes(data, tp, threshold=threshold)
+                if found:
+                    self.log(f"[{device}] เจอรูป '{tf}' ({mx},{my})", "ok")
+                    if click:
+                        self.controller.tap(device, mx, my)
+                    self._sleep_delay(step)
+                    return
+            if not self._interruptible_sleep(interval):
+                return
+        self.log(f"[{device}] รอครบ {timeout:g} วิ ยังไม่เจอรูป '{tf}'", "warn")
+
+    # ---------- แตะ element ตามข้อความ/id (พอร์ตจาก _step_tap_text) ----------
+    def _tap_text(self, device, account, step):
+        query = substitute_account(step.get("text", ""), account)
+        text, rid = parse_ui_query(query)
+        if not text and not rid:
+            self.log(f"[{device}] tap_text: ไม่ได้ระบุข้อความ/id → ข้าม", "warn")
+            return
+        ok, xml = self.controller.dump_ui(device)
+        if not ok:
+            self.log(f"[{device}] อ่าน UI ไม่ได้: {xml}", "warn")
+            return
+        found, x, y, info = find_element_center(xml, text=text, resource_id=rid)
+        if found:
+            self.log(f"[{device}] เจอ element ({info}) ({x},{y}) → แตะ", "ok")
+            self.controller.tap(device, x, y)
+            self._sleep_delay(step)
+        else:
+            self.log(f"[{device}] ไม่พบ element: {info} → ข้าม", "info")
+
+    # ---------- รอ element (พอร์ตจาก _step_wait_for_text) ----------
+    def _wait_for_text(self, device, account, step):
+        query = substitute_account(step.get("text", ""), account)
+        text, rid = parse_ui_query(query)
+        if not text and not rid:
+            self.log(f"[{device}] wait_for_text: ไม่ได้ระบุข้อความ/id → ข้าม", "warn")
+            return
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = float(step.get("interval", 1.0) or 1.0)
+        click = step.get("click", True)
+        self.log(f"[{device}] รอจนเจอ element '{query}' (สูงสุด {timeout:g} วิ)…", "info")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self.running():
+                return
+            ok, xml = self.controller.dump_ui(device)
+            if ok:
+                found, x, y, info = find_element_center(xml, text=text, resource_id=rid)
+                if found:
+                    self.log(f"[{device}] เจอ element ({info}) ({x},{y})", "ok")
+                    if click:
+                        self.controller.tap(device, x, y)
+                    self._sleep_delay(step)
+                    return
+            if not self._interruptible_sleep(interval):
+                return
+        self.log(f"[{device}] รอครบ {timeout:g} วิ ยังไม่เจอ '{query}'", "warn")
+
+    # ---------- ดึง OTP จากเมลแล้วกรอกลงจอ (พอร์ตจาก _step_fetch_otp) ----------
+    def _fetch_otp(self, device, account, step):
+        account = account or {}
+        if not account:
+            self.log(f"[{device}] ข้ามดึง OTP (รันแบบไม่มีบัญชี)", "warn")
+            return
+        email_addr = (account.get("email") or "").strip()
+        code = fetch_otp_from_mail(
+            self.log, email_addr, (account.get("password") or "").strip(),
+            (step.get("text") or "").strip(),
+            refresh_token=(account.get("refresh_token") or "").strip(),
+            client_id=(account.get("client_id") or "").strip())
+        if code:
+            self.log(f"[{device}] ดึง OTP สำเร็จ: {code} → กรอกลงจอ", "ok")
+            self.controller.input_text(device, code)
+            self._sleep_delay(step)
+        else:
+            self.log(f"[{device}] ดึง OTP ไม่ได้หลังสแกนกล่องเมล", "err")
+
+    # ---------- ลูปเคลียร์โฆษณา (พอร์ตจาก _step_clear_ads_loop) ----------
+    def _clear_ads_loop(self, device, step):
+        step_delay = self._delay(step)
+        step_text = (step.get("text") or "").strip()
+        lobby_template, ad_templates = "", []
+        if "|" in step_text:
+            parts = step_text.split("|")
+            lobby_template = parts[0].strip()
+            ad_templates = [p.strip() for p in parts[1].split(",") if p.strip()]
+        elif step_text.endswith(".png"):
+            lobby_template = step_text
+        elif step_text:
+            ad_templates = [p.strip() for p in step_text.split(",") if p.strip()]
+
+        tdir = templates_dir()
+        if not ad_templates:
+            import glob as _glob
+            all_pngs = [os.path.basename(f) for f in _glob.glob(os.path.join(tdir, "*.png"))]
+            ad_templates = [f for f in all_pngs
+                            if f != lobby_template and not f.startswith("temp_")
+                            and not any(k in f.lower() for k in ["lobby", "home", "main", "start"])]
+
+        self.log(f"[{device}] เริ่มลูปเคลียร์โฆษณา (หน้าหลัก: '{lobby_template or 'ไม่ตั้ง'}')", "info")
+        max_attempts = 15
+        for attempt in range(max_attempts):
+            if not self.running():
+                return
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if not ok:
+                self.log(f"[{device}] แคปจอล้มเหลว → หยุดลูป", "err")
+                return
+            if lobby_template:
+                lp = os.path.join(tdir, lobby_template)
+                if os.path.exists(lp):
+                    found_lobby, _lx, _ly, _lm = self.controller.find_image_in_bytes(data, lp, threshold=0.7)
+                    if found_lobby:
+                        self.log(f"[{device}] รอบ {attempt+1}: ถึงหน้าหลัก → เคลียร์โฆษณาหมดแล้ว", "ok")
+                        return
+            found_ad = False
+            for tf in ad_templates:
+                tp = os.path.join(tdir, tf)
+                if not os.path.exists(tp):
+                    continue
+                found, mx, my, _m = self.controller.find_image_in_bytes(data, tp, threshold=0.7)
+                if found:
+                    self.log(f"[{device}] รอบ {attempt+1}: พบปุ่มปิด '{tf}' ({mx},{my}) → แตะ", "ok")
+                    self.controller.tap(device, mx, my)
+                    found_ad = True
+                    if step_delay > 0:
+                        time.sleep(step_delay)
+                    break
+            if not found_ad:
+                if lobby_template:
+                    self.log(f"[{device}] รอบ {attempt+1}: ไม่เจอหน้าหลัก/ปุ่มปิด → กด BACK", "warn")
+                    self.controller.keyevent(device, 4)
+                    if step_delay > 0:
+                        time.sleep(step_delay)
+                else:
+                    self.log(f"[{device}] เคลียร์โฆษณาเสร็จ (ไม่พบโฆษณาบนจอ)", "ok")
+                    return
+        self.log(f"[{device}] ลูปเคลียร์โฆษณาครบ {max_attempts} รอบ (สิ้นสุด)", "warn")
+
+    # ---------- หาด่านเหลืองแล้วแตะ (พอร์ตจาก _step_find_yellow_stage) ----------
+    def _find_yellow_stage(self, device, step):
+        ok, data = self.controller.capture_screenshot_bytes(device)
+        if not ok:
+            self.log(f"[{device}] แคปจอไม่ได้ → ข้าม", "err")
+            return
+        found, cx, cy, _box = find_yellow_frame(data)
+        if found:
+            self.log(f"[{device}] เจอด่านเหลือง ({cx},{cy}) → แตะ", "ok")
+            self.controller.tap(device, cx, cy)
+        else:
+            self.log(f"[{device}] ไม่พบด่านเหลืองบนจอ", "warn")
+        self._sleep_delay(step)
+
+    # ---------- ส่งปุ่มคีย์บอร์ดจริง (พอร์ตจาก _step_keyboard) ----------
+    def _keyboard(self, device, step):
+        key_name = (step.get("key") or "").strip().lower()
+        action = (step.get("action") or "").strip().lower()
+        self.log(f"[{device}] ส่งปุ่มคีย์บอร์ด: '{key_name}' ({action})", "info")
+        try:
+            ordered = self.controller.get_connected_devices()
+        except Exception:
+            ordered = [device]
+        try:
+            send_keyboard_input(self.log, device, ordered, key_name, action)
+        except Exception as e:
+            self.log(f"[{device}] ส่งปุ่มคีย์บอร์ดล้มเหลว: {e}", "err")
+        self._sleep_delay(step)
 
     # ---------- อ่านเพชร (พอร์ตจาก _step_read_diamond + _verify_diamond_identity) ----------
     def _read_diamond(self, device, account):
