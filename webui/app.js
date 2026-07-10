@@ -234,8 +234,27 @@ const DEMO_STEPS = {name:"ล็อกอิน + เก็บของประ
   {no:"04",type:"พิมพ์",icon:"type",detail:"{{email}}",delay:"0.4s",x:"-",y:"-",desc:"กรอกอีเมล"},
 ]};
 let SEL_STEP = null;
+const FALLBACK_TYPE_OPTIONS = [
+  {value:'tap',label:'แตะ (tap)'},{value:'swipe',label:'ปัด (swipe)'},{value:'text',label:'พิมพ์ (text)'},
+  {value:'keyevent',label:'ปุ่มระบบ (keyevent)'},{value:'sleep',label:'รอเวลา (sleep)'},
+  {value:'start_app',label:'เปิดแอป (start_app)'},{value:'stop_app',label:'ปิดแอป (stop_app)'},
+  {value:'detect_image',label:'เจอรูปกด (detect_image)'},{value:'wait_for_image',label:'รอรูป (wait_for_image)'},
+  {value:'tap_text',label:'กดตามข้อความ (tap_text)'},{value:'wait_for_text',label:'รอข้อความ (wait_for_text)'},
+  {value:'clear_ads_loop',label:'เคลียร์โฆษณา (clear_ads_loop)'},{value:'fetch_otp',label:'กรอก OTP (fetch_otp)'},
+  {value:'read_diamond',label:'อ่านเพชร (read_diamond)'},{value:'run_set',label:'ชุดคำสั่ง (run_set)'},
+  {value:'keyboard',label:'คีย์บอร์ด (keyboard)'},{value:'screenshot',label:'ถ่ายภาพ (screenshot)'},
+  {value:'find_yellow_stage',label:'ด่านเหลือง (find_yellow_stage)'},
+];
+function ensureTypeOptions(opts){
+  const sel=document.getElementById('sfType');
+  if(!sel || sel.options.length) return;
+  (opts||FALLBACK_TYPE_OPTIONS).forEach(o=>{
+    const op=document.createElement('option'); op.value=o.value; op.textContent=o.label; sel.appendChild(op);
+  });
+}
 async function renderSteps(){
   const s = hasPy() ? await PY.get_steps() : DEMO_STEPS;
+  ensureTypeOptions(s.typeOptions);
   const nm = document.getElementById('scriptName');
   if(document.activeElement !== nm) nm.value = s.name==="—" ? "" : s.name;
   document.getElementById('stepCount').textContent = "ขั้นตอน ("+s.count+")";
@@ -251,11 +270,77 @@ async function renderSteps(){
   window._steps = s.steps;
   icons();
 }
-function selectStep(i){ SEL_STEP=i; const st=(window._steps||[])[i]; if(st){ document.getElementById('sfType').textContent=st.type; sfX.value=st.x==='-'?'':st.x; sfY.value=st.y==='-'?'':st.y; sfDesc.value=st.desc==='-'?'':st.desc; sfDelay.value=String(st.delay||'').replace('s',''); } renderSteps(); }
+// ---- ฟอร์มแก้ขั้นตอน: ฟิลด์ที่โชว์ต่อชนิด + ป้ายชื่อช่องข้อความ ----
+const STEP_FIELD_MAP = {
+  tap:['XY','Delay'], swipe:['XY','XY2','Duration','Delay'], text:['Text','Delay'],
+  keyevent:['Code','Delay'], sleep:['Seconds'], start_app:['Text','Delay'],
+  stop_app:['Text','Delay'], detect_image:['Text','Delay'],
+  wait_for_image:['Text','Timeout','Delay'], tap_text:['Text','Delay'],
+  wait_for_text:['Text','Timeout','Delay'], clear_ads_loop:['Text','Delay'],
+  fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set'],
+  keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
+};
+const STEP_TEXT_LABEL = {
+  text:'ข้อความที่พิมพ์ (ใช้ {EMAIL} {PASSWORD} {NAME} ได้)',
+  start_app:'ชื่อแพ็กเกจแอป (เช่น com.game.app)',
+  stop_app:'ชื่อแพ็กเกจแอปที่จะปิด',
+  detect_image:'ชื่อไฟล์รูปต้นแบบ (.png ในโฟลเดอร์ templates)',
+  wait_for_image:'ชื่อไฟล์รูปต้นแบบ (.png ในโฟลเดอร์ templates)',
+  tap_text:'ข้อความ หรือ  id:resource-id  ที่จะแตะ',
+  wait_for_text:'ข้อความ หรือ  id:resource-id  ที่รอ',
+  clear_ads_loop:'lobby.png | ปุ่มปิด1.png,ปุ่มปิด2.png (เว้นว่าง=อัตโนมัติ)',
+  fetch_otp:'แพทเทิร์น OTP (regex เช่น \\d{6})',
+  screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
+};
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Code','Key','Action','Seconds','Timeout','Delay'];
+function applyTypeFields(t){
+  const show = STEP_FIELD_MAP[t] || ['Delay'];
+  ALL_FLD.forEach(f=>{
+    const el = document.getElementById('fld'+f);
+    if(!el) return;
+    const on = show.includes(f);
+    el.style.display = on ? (f==='XY'||f==='XY2' ? 'flex' : 'flex') : 'none';
+  });
+  if(show.includes('Text')){ const lbl=document.getElementById('sfTextLabel'); if(lbl) lbl.textContent = STEP_TEXT_LABEL[t] || 'ข้อความ'; }
+}
+function fillStepForm(st){
+  const g=id=>document.getElementById(id);
+  g('sfType').value = st.type;
+  g('sfX').value = st.x===''||st.x==='-'?'':st.x;
+  g('sfY').value = st.y===''||st.y==='-'?'':st.y;
+  g('sfX2').value = st.x2||''; g('sfY2').value = st.y2||'';
+  g('sfDuration').value = st.duration||''; g('sfText').value = st.text||'';
+  g('sfSet').value = st.set||''; g('sfCode').value = st.code||'';
+  g('sfKey').value = st.key||''; if(st.action) g('sfAction').value = st.action;
+  g('sfSeconds').value = st.seconds||''; g('sfTimeout').value = st.timeout||'';
+  g('sfDesc').value = st.desc===''||st.desc==='-'?'':st.desc;
+  g('sfDelay').value = st.delay===''||st.delay==null?'':String(st.delay).replace('s','');
+  applyTypeFields(st.type);
+}
+function onTypeChange(){ applyTypeFields(document.getElementById('sfType').value); }
+function collectStepPatch(){
+  const g=id=>(document.getElementById(id)||{}).value;
+  const t=g('sfType');
+  const p={type:t, desc:g('sfDesc')};
+  const show=STEP_FIELD_MAP[t]||[];
+  if(show.includes('XY')){ p.x=g('sfX'); p.y=g('sfY'); }
+  if(show.includes('XY2')){ p.x2=g('sfX2'); p.y2=g('sfY2'); }
+  if(show.includes('Duration')) p.duration=g('sfDuration');
+  if(show.includes('Text')) p.text=g('sfText');
+  if(show.includes('Set')) p.set=g('sfSet');
+  if(show.includes('Code')) p.code=g('sfCode');
+  if(show.includes('Key')) p.key=(g('sfKey')||'').toLowerCase();
+  if(show.includes('Action')) p.action=g('sfAction');
+  if(show.includes('Seconds')) p.seconds=g('sfSeconds');
+  if(show.includes('Timeout')) p.timeout=g('sfTimeout');
+  if(show.includes('Delay')) p.delay=g('sfDelay');
+  return p;
+}
+function selectStep(i){ SEL_STEP=i; const st=(window._steps||[])[i]; if(st){ fillStepForm(st.raw||st); } renderSteps(); }
 async function saveProfile(){ if(hasPy()){ await PY.save_profile(document.getElementById('scriptName').value); renderSteps(); refresh(); } }
 async function deleteProfile(){ if(hasPy()){ await PY.delete_profile(); SEL_STEP=null; renderSteps(); refresh(); } }
-async function updateStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } const p={x:sfX.value,y:sfY.value,desc:sfDesc.value}; const d=parseFloat(sfDelay.value); if(!isNaN(d)) p.delay=d; await PY.update_step(SEL_STEP,p); renderSteps(); }
-async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; await PY.add_step(at); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); renderSteps(); selectStep(SEL_STEP); } }
+async function updateStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.update_step(SEL_STEP, collectStepPatch()); renderSteps(); }
+async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; const t=(document.getElementById('sfType')||{}).value||'tap'; await PY.add_step(at, t); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); renderSteps(); selectStep(SEL_STEP); } }
 async function deleteStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.delete_step(SEL_STEP); SEL_STEP=null; renderSteps(); }
 async function moveStep(dir){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.move_step(SEL_STEP,dir); const nj=SEL_STEP+dir; if(nj>=0) SEL_STEP=nj; renderSteps(); }
 async function testStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.test_step(SEL_STEP); }
