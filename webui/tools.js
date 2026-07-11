@@ -385,3 +385,26 @@ async function saveResetCfg(){
   const g=id=>(document.getElementById(id)||{});
   await PY.save_reset_settings(g('rstEnabled').checked, g('rstPackage').value, g('rstBootWait').value);
 }
+
+// ---- นำเข้าบัญชีแบบกลุ่ม (วางหลายบรรทัดทีเดียว) ----
+function openBatchImport(){
+  if(!needPy('นำเข้าแบบกลุ่ม')) return;
+  openModal('นำเข้าบัญชีแบบกลุ่ม (Batch Import)', 'clipboard-paste',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:10px;line-height:1.6">วางข้อมูลแยกแต่ละบรรทัด คั่นด้วย <code>|</code> <code>,</code> <code>;</code> หรือ TAB<br>รูปแบบ: <b>อีเมล|รหัสผ่าน</b> (ใส่ refresh_token/client_id ต่อท้ายได้ ระบบแยกให้เอง)</div>'
+    + '<textarea id="biText" class="in" placeholder="player1@mail.com|pass1234&#10;player2@mail.com,pass5678" style="width:100%;height:220px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;padding:11px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#C7D2E0;line-height:1.7;resize:vertical"></textarea>'
+    + '<div style="display:flex;gap:10px;align-items:center;margin-top:10px"><span style="font-size:11.5px;color:#90A0B7">กลุ่มบัญชีปลายทาง</span><input id="biGroup" class="in" value="ทั่วไป" style="flex:1;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 11px;font-size:12.5px;color:#C7D2E0"></div>'
+    + '<button class="in" onclick="doBatchImport()" style="margin-top:14px;width:100%;display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border-radius:10px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="upload" width="15" height="15" stroke-width="2"></i>นำเข้า</button>');
+}
+async function doBatchImport(){
+  const text = (document.getElementById('biText')||{}).value || '';
+  const group = (document.getElementById('biGroup')||{}).value || 'ทั่วไป';
+  if(!text.trim()){ notReady('วางข้อมูลบัญชีก่อน'); return; }
+  const r = await PY.batch_import_accounts(text, group);
+  if(r){
+    closeModal();
+    if(typeof renderAccounts === 'function') renderAccounts();
+    window.onLog && window.onLog({ts:new Date().toTimeString().slice(0,8),
+      text:'นำเข้า '+r.imported+' บัญชี · ซ้ำ '+r.duplicate+' · ไม่ถูกต้อง '+r.invalid,
+      kind: r.imported ? 'ok' : 'warn'});
+  }
+}
