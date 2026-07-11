@@ -235,6 +235,17 @@ DEFAULT_STEP_DELAYS = {
 }
 
 
+# ป้ายไทยของนโยบาย 'ถ้าไม่เจอภาพ anchor' — โชว์ให้ผู้ใช้อ่านเข้าใจ แต่ยังเก็บค่าเดิม (abort/skip/tap)
+# ในไฟล์สคริปต์ เพื่อไม่ให้ตัวรัน (gui + macro_runner + เว็บ) หรือสคริปต์เก่าพัง
+ANCHOR_ONFAIL_LABELS = [
+    ("abort", "หยุดจอนี้ (กันกดมั่ว)"),
+    ("skip", "ข้ามสเต็ปนี้ไป"),
+    ("tap", "กดตามพิกัดเดิม (เสี่ยง)"),
+]
+ANCHOR_ONFAIL_TO_LABEL = {v: l for v, l in ANCHOR_ONFAIL_LABELS}
+ANCHOR_ONFAIL_FROM_LABEL = {l: v for v, l in ANCHOR_ONFAIL_LABELS}
+
+
 class ModernButton(tk.Button):
     """ปุ่มกดสไตล์โมเดิร์นพร้อมแอนิเมชันตอนเอาเมาส์ชี้"""
     def __init__(
@@ -6078,7 +6089,7 @@ class MuMuGUI(tk.Tk):
                 step["anchor_timeout"] = max(0.0, float(timeout_var.get()))
             except (TypeError, ValueError):
                 step["anchor_timeout"] = 8.0
-            step["anchor_on_fail"] = onfail_var.get() or "abort"
+            step["anchor_on_fail"] = ANCHOR_ONFAIL_FROM_LABEL.get(onfail_var.get(), "abort")
             step.setdefault("anchor_threshold", 0.8)
             self.refresh_listbox()
             self.step_listbox.selection_set(idx)
@@ -6088,14 +6099,14 @@ class MuMuGUI(tk.Tk):
         # ตั้งค่า anchor: ไม่เจอภาพแล้วทำยังไง + รอสูงสุดกี่วิ — ใช้ทำ 'if แบบลูกโซ่ skip'
         cfgf = tk.Frame(right, bg=BG_DARK); cfgf.pack(fill="x", pady=(10, 0))
         tk.Label(cfgf, text="ถ้าไม่เจอภาพ:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
-        onfail_var = tk.StringVar(value=step.get("anchor_on_fail", "abort"))
-        ttk.Combobox(cfgf, textvariable=onfail_var, state="readonly", width=10,
-                     values=["abort", "skip", "tap"]).grid(row=0, column=1, sticky="w", padx=6)
+        onfail_var = tk.StringVar(value=ANCHOR_ONFAIL_TO_LABEL.get(step.get("anchor_on_fail", "abort"), ANCHOR_ONFAIL_LABELS[0][1]))
+        ttk.Combobox(cfgf, textvariable=onfail_var, state="readonly", width=22,
+                     values=[l for _v, l in ANCHOR_ONFAIL_LABELS]).grid(row=0, column=1, sticky="w", padx=6)
         tk.Label(cfgf, text="รอสูงสุด(วิ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0))
         timeout_var = tk.StringVar(value=str(step.get("anchor_timeout", 8.0)))
         tk.Entry(cfgf, textvariable=timeout_var, width=8, bg=BG_INPUT, fg=FG_WHITE,
                  insertbackground=FG_WHITE, relief="flat").grid(row=1, column=1, sticky="w", padx=6, pady=(5, 0))
-        tk.Label(right, text="🔀 if แบบลูกโซ่: ตั้ง 'skip' + 'รอสั้น 1-2วิ' หลายสเต็ปต่อกัน (เจอแบบไหนกดแบบนั้น)",
+        tk.Label(right, text="🔀 if แบบลูกโซ่: ตั้ง 'ข้ามสเต็ปนี้ไป' + 'รอสั้น 1-2วิ' หลายสเต็ปต่อกัน (เจอแบบไหนกดแบบนั้น)",
                  bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 8, "italic"), wraplength=240, justify="left").pack(anchor="w", pady=(3, 0))
 
         btns = tk.Frame(right, bg=BG_DARK); btns.pack(fill="x", pady=(14, 0))
@@ -7271,8 +7282,14 @@ class MuMuGUI(tk.Tk):
                 "read_diamond": self._step_read_diamond,
                 "story_auto": self._step_story_auto,
                 "find_yellow_stage": self._step_find_yellow_stage,
+                "if_image": self._step_if_image_unsupported,
             }
         return self._step_handlers
+
+    def _step_if_image_unsupported(self, ctx, step):
+        """บล็อกทางเลือก (if_image) สร้างจากโปรแกรมใหม่ — แอปนี้ยังรันไม่ได้ แจ้งชัดๆ กันเงียบหาย"""
+        self.write_log(f"   ⚠️ [{ctx.device}] สคริปต์นี้มี 'บล็อกทางเลือก (if_image)' "
+                       f"ต้องรันด้วยโปรแกรมใหม่ (MuMupow_new) -> ข้ามบล็อกนี้", "warning")
 
     # ===== Story Auto: เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ) =====
     def _story_button_templates(self, buttons_field=""):

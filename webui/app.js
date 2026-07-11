@@ -55,7 +55,7 @@ function switchPage(page){
   if(page==="acc") renderAccounts();
   else if(page==="script") renderSteps();
   else if(page==="tools") initToolTabs();
-  else if(page==="set") loadSettings();
+  else if(page==="set"){ loadSettings(); if(typeof loadResetCfg==='function') loadResetCfg(); }
   icons();
 }
 function notReady(name){ window.onLog({ts:new Date().toTimeString().slice(0,8),text:"'"+name+"' กำลังย้ายมาเฟสถัดไป",kind:"warn"}); }
@@ -145,12 +145,21 @@ async function toggleDevice(a){ if(hasPy()) await refresh(()=>PY.toggle_device(a
 async function removeDevice(a){ if(hasPy()) await refresh(()=>PY.remove_device(a)); }
 async function selectProfile(n){ if(hasPy()) await refresh(()=>PY.select_profile(n)); }
 let RUN_POLL = null;
+let AWAITING_BATCH = false;   // โหมด "หยุดรอตรวจทานทีละชุด" — รอผู้ใช้กด "รันชุดถัดไป"
+function onRunBtnClick(){ AWAITING_BATCH ? continueBatch() : runMacro(); }
 async function runMacro(){
   if(!hasPy()){ notReady('รัน (ต้องเปิดผ่าน .exe)'); return; }
-  const r = await PY.run();
-  if(r && r.ok){ setRunBtn(true); startRunPoll(); }
+  const poll = (document.getElementById('anchorPoll')||{}).value || '0.5';
+  const pauseBatch = !!(document.getElementById('pauseBatch')||{}).checked;
+  const r = await PY.run(poll, pauseBatch);
+  if(r && r.ok){ setRunBtn('running'); startRunPoll(); }
 }
-async function stopMacro(){ if(hasPy()) await PY.stop(); }
+async function continueBatch(){
+  if(!hasPy()) return;
+  const r = await PY.continue_batch();
+  if(r && r.ok){ setRunBtn('running'); startRunPoll(); }
+}
+async function stopMacro(){ if(hasPy()) await PY.stop(); AWAITING_BATCH=false; setRunBtn('idle'); }
 function startRunPoll(){
   if(RUN_POLL) clearInterval(RUN_POLL);
   RUN_POLL = setInterval(async ()=>{
@@ -158,16 +167,29 @@ function startRunPoll(){
     const rs = await PY.get_run_state();
     renderProgressList(rs.progress);
     if(rs.log && rs.log.length){ onLog(rs.log[rs.log.length-1]); }
-    setRunBtn(rs.running);
-    if(!rs.running){ clearInterval(RUN_POLL); RUN_POLL=null; }
+    if(typeof flowApplyHighlight==='function') flowApplyHighlight(rs.progress); // ไฮไลต์บล็อกสดบนผัง
+    if(rs.running){
+      setRunBtn('running');
+    } else {
+      clearInterval(RUN_POLL); RUN_POLL=null;
+      if(typeof flowApplyHighlight==='function') flowApplyHighlight([]);
+      if(rs.awaitingNextBatch){ setRunBtn('awaiting', rs.remainingBatch); }
+      else { setRunBtn('idle'); }
+    }
   }, 1000);
 }
-function setRunBtn(running){
+function setRunBtn(state, remaining){
   const b = document.getElementById('runBtn'); if(!b) return;
-  if(running){
+  AWAITING_BATCH = (state === 'awaiting');
+  if(state === 'running'){
     b.innerHTML = '<i data-lucide="loader" width="18" height="18" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน…';
+    b.style.cursor = 'default';
+  } else if(state === 'awaiting'){
+    b.innerHTML = '<i data-lucide="play" width="18" height="18" stroke-width="2.25"></i>รันชุดถัดไป (เหลือ '+(remaining||0)+')';
+    b.style.cursor = 'pointer';
   } else {
     b.innerHTML = '<i data-lucide="play" width="18" height="18" stroke-width="2.25"></i>รัน';
+    b.style.cursor = 'pointer';
   }
   icons();
 }
@@ -244,6 +266,7 @@ const FALLBACK_TYPE_OPTIONS = [
   {value:'read_diamond',label:'อ่านเพชร (read_diamond)'},{value:'run_set',label:'ชุดคำสั่ง (run_set)'},
   {value:'keyboard',label:'คีย์บอร์ด (keyboard)'},{value:'screenshot',label:'ถ่ายภาพ (screenshot)'},
   {value:'find_yellow_stage',label:'ด่านเหลือง (find_yellow_stage)'},
+  {value:'if_image',label:'ทางเลือก ถ้าเจอภาพ (if_image)'},
 ];
 function ensureTypeOptions(opts){
   const sel=document.getElementById('sfType');
@@ -279,6 +302,7 @@ const STEP_FIELD_MAP = {
   wait_for_text:['Text','Timeout','Delay'], clear_ads_loop:['Text','Delay'],
   fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set'],
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
+  if_image:['Text','Threshold','Timeout','Delay'],
 };
 const STEP_TEXT_LABEL = {
   text:'ข้อความที่พิมพ์ (ใช้ {EMAIL} {PASSWORD} {NAME} ได้)',
@@ -291,8 +315,9 @@ const STEP_TEXT_LABEL = {
   clear_ads_loop:'lobby.png | ปุ่มปิด1.png,ปุ่มปิด2.png (เว้นว่าง=อัตโนมัติ)',
   fetch_otp:'แพทเทิร์น OTP (regex เช่น \\d{6})',
   screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
+  if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Code','Key','Action','Seconds','Timeout','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Code','Key','Action','Seconds','Timeout','Threshold','Delay'];
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
   ALL_FLD.forEach(f=>{
@@ -313,6 +338,7 @@ function fillStepForm(st){
   g('sfSet').value = st.set||''; g('sfCode').value = st.code||'';
   g('sfKey').value = st.key||''; if(st.action) g('sfAction').value = st.action;
   g('sfSeconds').value = st.seconds||''; g('sfTimeout').value = st.timeout||'';
+  g('sfThreshold').value = st.threshold||'';
   g('sfDesc').value = st.desc===''||st.desc==='-'?'':st.desc;
   g('sfDelay').value = st.delay===''||st.delay==null?'':String(st.delay).replace('s','');
   applyTypeFields(st.type);
@@ -333,17 +359,31 @@ function collectStepPatch(){
   if(show.includes('Action')) p.action=g('sfAction');
   if(show.includes('Seconds')) p.seconds=g('sfSeconds');
   if(show.includes('Timeout')) p.timeout=g('sfTimeout');
+  if(show.includes('Threshold')) p.threshold=g('sfThreshold');
   if(show.includes('Delay')) p.delay=g('sfDelay');
   return p;
 }
 function selectStep(i){ SEL_STEP=i; const st=(window._steps||[])[i]; if(st){ fillStepForm(st.raw||st); } renderSteps(); }
 async function saveProfile(){ if(hasPy()){ await PY.save_profile(document.getElementById('scriptName').value); renderSteps(); refresh(); } }
 async function deleteProfile(){ if(hasPy()){ await PY.delete_profile(); SEL_STEP=null; renderSteps(); refresh(); } }
-async function updateStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.update_step(SEL_STEP, collectStepPatch()); renderSteps(); }
+async function updateStep(){
+  // โหมดโฟลว์ → บันทึกผ่าน path API (แก้บล็อกในกิ่งได้)
+  if(typeof SCRIPT_VIEW!=='undefined' && SCRIPT_VIEW==='flow'){ await flowSaveSel(); return; }
+  if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; }
+  await PY.update_step(SEL_STEP, collectStepPatch()); renderSteps();
+}
 async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; const t=(document.getElementById('sfType')||{}).value||'tap'; await PY.add_step(at, t); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); renderSteps(); selectStep(SEL_STEP); } }
 async function deleteStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.delete_step(SEL_STEP); SEL_STEP=null; renderSteps(); }
 async function moveStep(dir){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.move_step(SEL_STEP,dir); const nj=SEL_STEP+dir; if(nj>=0) SEL_STEP=nj; renderSteps(); }
-async function testStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.test_step(SEL_STEP); }
+async function testStep(){
+  // โหมดโฟลว์ → ทดสอบตาม path (บล็อกในกิ่งก็ทดสอบได้ / if_image = เช็คว่าเจอภาพไหม)
+  if(typeof SCRIPT_VIEW!=='undefined' && SCRIPT_VIEW==='flow'){
+    if(!hasPy()||!SEL_PATH){ notReady('คลิกเลือกบล็อกบนผังก่อน'); return; }
+    await PY.flow_test_step(SEL_PATH); return;
+  }
+  if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; }
+  await PY.test_step(SEL_STEP);
+}
 async function importWebGame(){ if(hasPy()){ await PY.import_save_web_game(); renderAccounts(); } }
 
 // ================= TOOLS =================

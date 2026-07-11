@@ -258,14 +258,28 @@ class MacroRunner:
         self.reset_cfg = reset_cfg or {}
         self.diamond_cfg = diamond_cfg or {}
         self.diamond_rows = []          # ผลอ่านเพชร (Api เอาไปเขียนไฟล์/บัญชีตอนจบรัน)
+        self.account_results = []       # ผลรายบัญชี (status/error/device) — เขียน last_status ตอนจบรัน
+        self.profile_name = ""          # ชื่อสคริปต์ (ใส่ในรายงานจุดที่ติด)
         self._dlock = threading.Lock()
         self.total_accounts = 0
         self._done = {}
 
+    @staticmethod
+    def _tree_has_run_set(steps):
+        """เช็คว่ามี run_set ที่ไหนสักแห่ง (รวมในกิ่ง then/else ของ if_image)"""
+        for s in steps:
+            if s.get("type") == "run_set":
+                return True
+            for k in ("then", "else"):
+                if s.get(k) and MacroRunner._tree_has_run_set(s[k]):
+                    return True
+        return False
+
     def _expand_sets(self, steps):
         """ขยายขั้น run_set ให้กลายเป็นขั้นย่อยจริง (โหลดชุดจาก script_sets/*.json)
-        มี cycle detection ใน expand_steps_with_sets — ถ้าพัง คืน steps เดิมพร้อม log เตือน"""
-        if not any((s.get("type") == "run_set") for s in steps):
+        recurse เข้ากิ่ง then/else ของ if_image ด้วย — cycle detection อยู่ใน expand_steps_with_sets
+        ถ้าพัง คืน steps เดิมพร้อม log เตือน"""
+        if not self._tree_has_run_set(steps):
             return steps
         try:
             from script_sets import load_script_set, expand_steps_with_sets
@@ -277,7 +291,18 @@ class MacroRunner:
                     sets[d["name"]] = d["steps"]
                 except Exception:
                     pass
-            return expand_steps_with_sets(steps, lambda name: sets.get(name))
+            resolver = lambda name: sets.get(name)
+
+            def expand_tree(lst):
+                flat = expand_steps_with_sets(lst, resolver)
+                for s in flat:
+                    if s.get("type") == "if_image":
+                        for k in ("then", "else"):
+                            if s.get(k):
+                                s[k] = expand_tree(s[k])
+                return flat
+
+            return expand_tree(steps)
         except Exception as e:
             self.log(f"ขยายชุดคำสั่ง (run_set) ไม่สำเร็จ: {e} → ใช้สคริปต์เดิม", "warn")
             return steps
@@ -318,7 +343,19 @@ class MacroRunner:
         self.execute_one(dev, acc)
         self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
 
+    def run_batch_once(self, devices, accounts):
+        """รัน 1 ชุด (จับคู่จอ↔บัญชีตามลำดับ) แบบขนานแล้วคืนทันทีที่ชุดนี้เสร็จ — ไม่หยิบคิวต่อเอง
+        ใช้กับโหมด 'หยุดรอตรวจทานทีละชุด' (ผู้ใช้เช็คจอเองก่อนค่อยสั่งชุดถัดไป)"""
+        self.total_accounts = len(accounts)
+        pairs = list(zip(devices, accounts))
+        for d, _a in pairs:
+            self._done.setdefault(d, 0)
+        with ThreadPoolExecutor(max_workers=max(1, len(pairs))) as ex:
+            list(ex.map(lambda p: self._one_and_close(p[0], p[1]), pairs))
+
     # ---------- รันมาโคร 1 บัญชี บน 1 จอ ----------
+    MAX_BRANCH_DEPTH = 5   # กันกิ่ง if_image ซ้อนวนไม่รู้จบ
+
     def execute_one(self, device, account):
         who = account_display_name(account)
         self._done.setdefault(device, 0)
@@ -331,41 +368,20 @@ class MacroRunner:
             self.progress(device, **base)
 
         prog(step_idx=0, step_total=total, step_desc="กำลังเริ่ม…")
-        status = "completed"
+        status = self._run_steps(device, account, self.steps, prog, path="", depth=0, disp="")
 
-        for idx, step in enumerate(self.steps):
-            if not self.running():
-                return "stopped"
-            t = step.get("type", "tap")
-            desc = step.get("desc") or f"ขั้น {idx + 1}"
-            prog(step_idx=idx + 1, step_total=total, step_desc=desc)
-
-            # ---- Anchor gate: รอภาพก่อนกด (กันจอมั่ว) ----
-            anchor_hit = None
-            if step.get("anchor_img"):
-                gate, ax, ay = self._wait_anchor(device, step)
-                if gate == "stopped":
-                    return "stopped"
-                if gate == "found" and ax is not None:
-                    anchor_hit = (ax, ay)
-                if gate == "missing":
-                    pol = step.get("anchor_on_fail", "abort")
-                    if pol == "skip":
-                        self.log(f"[{device}] ไม่เจอภาพขั้น {idx + 1} → ข้าม", "warn")
-                        continue
-                    elif pol == "tap":
-                        self.log(f"[{device}] ไม่เจอภาพขั้น {idx + 1} → กดพิกัดเดิม (เสี่ยง)", "warn")
-                    else:
-                        self.log(f"[{device}] ไม่เจอภาพขั้น {idx + 1} ({desc}) → หยุดจอนี้ กันรันมั่ว", "err")
-                        status = "device_error"
-                        break
-
-            try:
-                self._dispatch(device, account, step, anchor_hit)
-            except Exception as e:
-                self.log(f"[{device}] ขั้น {idx + 1} ล้มเหลว: {e}", "err")
-                status = "device_error"
-                break
+        # เก็บผลรายบัญชี (ให้ Api เขียน last_status ลง accounts.json ตอนจบรัน — เหมือนแอปเดิม)
+        if account:
+            with self._dlock:
+                self.account_results.append({
+                    "email": account.get("email", ""),
+                    "status": "completed" if status == "completed" else
+                              ("stopped" if status == "stopped" else "device_error"),
+                    "error": "" if status == "completed" else status,
+                    "device": device,
+                })
+        if status == "stopped":
+            return "stopped"
 
         if status == "completed":
             self._done[device] += 1
@@ -380,6 +396,182 @@ class MacroRunner:
             self._reset_device(device)
         return status
 
+    def _run_steps(self, device, account, steps, prog, path="", depth=0, disp=""):
+        """รันลิสต์ขั้นตอน — เรียกซ้ำตัวเองเข้าไปในกิ่ง then/else ของ if_image ได้
+        path = ตำแหน่งกิ่ง เช่น "" (เส้นหลัก), "2.then" — ใช้รายงานว่ารันถึงไหน
+        disp = เลขขั้นแบบอ่านง่ายสำหรับ log เช่น "" หรือ "4.เจอ." (1-based)
+        คืน "completed" | "stopped" | "device_error"
+        """
+        if depth > self.MAX_BRANCH_DEPTH:
+            self.log(f"[{device}] กิ่งซ้อนเกิน {self.MAX_BRANCH_DEPTH} ชั้น → ข้ามกิ่งนี้ (กันวนไม่รู้จบ)", "warn")
+            return "completed"
+        total = len(self.steps)  # ตัวเลข x/y บนการ์ดอิงเส้นหลักเสมอ (กิ่งใช้ desc นำหน้า ↳ บอกแทน)
+        in_branch = bool(path)
+
+        for idx, step in enumerate(steps):
+            if not self.running():
+                return "stopped"
+            t = step.get("type", "tap")
+            here = f"{path}.{idx}" if path else str(idx)
+            num = f"{disp}{idx + 1}"      # เลขขั้นให้คนอ่าน เช่น "4" หรือ "4.เจอ.1"
+            desc = step.get("desc") or f"ขั้น {idx + 1}"
+            if in_branch:
+                prog(step_desc=f"↳ {desc}", step_path=here)
+            else:
+                prog(step_idx=idx + 1, step_total=total, step_desc=desc, step_path=here)
+
+            # log รายขั้นแบบแอปเดิม — ก็อปไปดูได้ว่าทำถึงไหน ทำอะไร
+            detail = ""
+            if t == "tap":
+                detail = f" ({step.get('x')},{step.get('y')})"
+            elif t == "swipe":
+                detail = f" ({step.get('x')},{step.get('y')})→({step.get('x2')},{step.get('y2')})"
+            elif t in ("text", "start_app", "stop_app", "detect_image", "wait_for_image",
+                       "tap_text", "wait_for_text"):
+                detail = f" '{step.get('text', '')}'"
+            self.log(f"[{device}] 👉 ขั้น {num}"
+                     f"{f'/{total}' if not in_branch else ''}: {desc} [{t}]{detail}", "info")
+
+            # ---- บล็อกทางเลือก: เจอภาพ → กิ่ง then จนจบ แล้วกลับมาต่อเส้นนี้ / ไม่เจอ → กิ่ง else ----
+            if t == "if_image":
+                branch = self._eval_if_image(device, step)
+                if branch == "stopped":
+                    return "stopped"
+                sub = step.get(branch) or []
+                bname = "เจอ" if branch == "then" else "ไม่เจอ"
+                if sub:
+                    self.log(f"[{device}] 🔀 ขั้น {num}: เข้ากิ่ง '{bname}' ({len(sub)} ขั้น)", "info")
+                    r = self._run_steps(device, account, sub, prog,
+                                        path=f"{here}.{branch}", depth=depth + 1,
+                                        disp=f"{num}.{bname}.")
+                    if r != "completed":
+                        return r
+                    self.log(f"[{device}] ↩ ขั้น {num}: จบกิ่ง '{bname}' → กลับเส้นหลัก", "info")
+                else:
+                    self.log(f"[{device}] 🔀 ขั้น {num}: กิ่ง '{bname}' ว่าง (ไม่มีขั้นให้ทำ) → ไปต่อ", "warn")
+                d = self._delay(step)
+                if d > 0:
+                    time.sleep(d)
+                continue
+
+            # ---- Anchor gate: รอภาพก่อนกด (กันจอมั่ว) ----
+            anchor_hit = None
+            if step.get("anchor_img"):
+                gate, ax, ay = self._wait_anchor(device, step)
+                if gate == "stopped":
+                    return "stopped"
+                if gate == "found" and ax is not None:
+                    anchor_hit = (ax, ay)
+                if gate == "missing":
+                    pol = step.get("anchor_on_fail", "abort")
+                    if pol == "skip":
+                        self.log(f"[{device}] ไม่เจอภาพขั้น {num} → ข้ามสเต็ปนี้ไป", "warn")
+                        continue
+                    elif pol == "tap":
+                        self.log(f"[{device}] ไม่เจอภาพขั้น {num} → กดตามพิกัดเดิม (เสี่ยง)", "warn")
+                    else:
+                        self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → หยุดจอนี้ กันรันมั่ว", "err")
+                        self._save_failure_report(device, account, here, step, "anchor_missing")
+                        return "device_error"
+
+            try:
+                self._dispatch(device, account, step, anchor_hit)
+            except Exception as e:
+                self.log(f"[{device}] ขั้น {num} ล้มเหลว: {e}", "err")
+                self._save_failure_report(device, account, here, step, str(e))
+                return "device_error"
+
+        return "completed"
+
+    def _eval_if_image(self, device, step):
+        """ประเมินเงื่อนไข if_image: เจอภาพภายใน timeout → 'then' ไม่เจอ → 'else'
+        ภาพเงื่อนไขมาจาก anchor_img (base64 ที่ลากกรอบ) หรือ text (ไฟล์ใน templates/)"""
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        timeout = float(step.get("timeout", 2.0) or 2.0)
+
+        tmpl_bytes, tmpl_path = None, None
+        b64 = step.get("anchor_img") or ""
+        if b64:
+            try:
+                tmpl_bytes = base64.b64decode(b64) or None
+            except Exception:
+                tmpl_bytes = None
+        if tmpl_bytes is None:
+            tf = (step.get("text") or "").strip()
+            p = os.path.join(templates_dir(), tf) if tf else ""
+            if p and os.path.exists(p):
+                tmpl_path = p
+        if tmpl_bytes is None and tmpl_path is None:
+            self.log(f"[{device}] if_image: ไม่ได้ตั้งภาพเงื่อนไข → ถือว่า 'ไม่เจอ'", "warn")
+            return "else"
+
+        deadline = time.time() + timeout
+        while True:
+            if not self.running():
+                return "stopped"
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok:
+                if tmpl_bytes is not None:
+                    found, _x, _y, _m = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
+                else:
+                    found, _x, _y, _m = self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
+                if found:
+                    self.log(f"[{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' → ✅ เจอ", "info")
+                    return "then"
+            if time.time() >= deadline:
+                self.log(f"[{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' → ❌ ไม่เจอ", "info")
+                return "else"
+            if not self._interruptible_sleep(0.4):
+                return "stopped"
+
+    def _save_failure_report(self, device, account, step_path, step, reason):
+        """บันทึก 'จุดที่ติด' (พอร์ตจาก gui._save_failure_report): แคปภาพ ณ ตอนติด +
+        ข้อมูลบัญชี/สเต็ป/เหตุผล ลง error_reports/ ไว้ย้อนดูภายหลัง"""
+        try:
+            now = datetime.datetime.now()
+            folder = os.path.join(base_dir(), "error_reports", now.strftime("%Y%m%d"))
+            os.makedirs(folder, exist_ok=True)
+            port = str(device).split(":")[-1]
+            img_path = os.path.join(folder, f"{now.strftime('%H%M%S')}_{port}_step{step_path.replace('.', '-')}.png")
+            saved = ""
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok and data:
+                with open(img_path, "wb") as f:
+                    f.write(data)
+                saved = img_path
+            rec = {
+                "time": now.strftime("%Y-%m-%d %H:%M:%S"), "device": device,
+                "email": (account or {}).get("email", ""),
+                "name": account_display_name(account) if account else "",
+                "profile": getattr(self, "profile_name", ""),
+                "step_path": step_path,
+                "step_type": step.get("type", ""), "step_desc": step.get("desc", ""),
+                "reason": reason, "image": saved,
+            }
+            with open(os.path.join(base_dir(), "error_reports", "report.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            self.log(f"[{device}] บันทึกจุดที่ติด: ขั้น {step_path} '{step.get('desc', '')}' ({reason})", "warn")
+        except Exception as e:
+            self.log(f"[{device}] บันทึกรายงานปัญหาไม่สำเร็จ: {e}", "warn")
+
+    @staticmethod
+    def _as_int(v):
+        """ADB 'input tap/swipe' รับได้เฉพาะเลขจำนวนเต็ม — พิกัดที่มาจากฟอร์ม/ลากกรอบอาจเป็น
+        ทศนิยม (เช่น '293.5') ถ้าส่งตรงๆ คำสั่งจะพังเงียบๆ (ไม่มี exception แต่ ADB คืน error)"""
+        return int(round(float(v)))
+
+    def _check(self, device, label, ret):
+        """เช็คผล (ok, msg) จาก controller — พอร์ตจาก ctx.record ของแอปเดิม
+        ถ้า ADB ล้มเหลว (เช่น พิกัดพัง/จอหลุด) ต้อง raise ให้ _run_steps จับ แล้วบันทึกจุดที่ติด
+        ไม่ใช่เดินหน้าทำขั้นถัดไปทั้งที่ขั้นนี้ไม่ได้กดจริง"""
+        try:
+            ok, msg = ret
+        except (TypeError, ValueError):
+            return ret
+        if not ok:
+            raise RuntimeError(f"คำสั่ง {label} ล้มเหลว: {msg}")
+        return ret
+
     # ---------- dispatch ต่อชนิด step ----------
     def _dispatch(self, device, account, step, anchor_hit):
         t = step.get("type", "tap")
@@ -392,21 +584,23 @@ class MacroRunner:
             if step.get("anchor_tap") and anchor_hit and reg:
                 acx = reg["x"] + reg["w"] / 2.0
                 acy = reg["y"] + reg["h"] / 2.0
-                x = int(round(anchor_hit[0] + (float(step["x"]) - acx)))
-                y = int(round(anchor_hit[1] + (float(step["y"]) - acy)))
-            c.tap(device, x, y)
+                x = anchor_hit[0] + (float(step["x"]) - acx)
+                y = anchor_hit[1] + (float(step["y"]) - acy)
+            self._check(device, "tap", c.tap(device, self._as_int(x), self._as_int(y)))
         elif t == "swipe":
             dur = int(float(step.get("duration", DEFAULT_SWIPE_DURATION)))
-            c.swipe(device, step["x"], step["y"], step["x2"], step["y2"], dur)
+            self._check(device, "swipe", c.swipe(device, self._as_int(step["x"]), self._as_int(step["y"]),
+                                                 self._as_int(step["x2"]), self._as_int(step["y2"]), dur))
         elif t == "text":
             txt = substitute_account(step["text"], account)
-            (c.input_text if str(txt).isascii() else c.input_text_unicode)(device, txt)
+            fn = c.input_text if str(txt).isascii() else c.input_text_unicode
+            self._check(device, "text", fn(device, txt))
         elif t == "keyevent":
-            c.keyevent(device, step.get("code", step.get("keycode")))
+            self._check(device, "keyevent", c.keyevent(device, step.get("code", step.get("keycode"))))
         elif t == "start_app":
-            c.start_app(device, step["text"])
+            self._check(device, "start_app", c.start_app(device, step["text"]))
         elif t == "stop_app":
-            c.stop_app(device, step["text"])
+            self._check(device, "stop_app", c.stop_app(device, step["text"]))
         elif t == "sleep":
             time.sleep(float(step.get("seconds", step.get("delay", 1)) or 0))
             return  # sleep คุมเวลาเอง

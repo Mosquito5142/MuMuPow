@@ -46,6 +46,12 @@ class Api:
         self._run_state = {}       # device -> dict (status/account/step/done ...)
         self._run_log = []         # log ระหว่างรัน (ts/text/kind)
         self._run_thread = None
+        self._anchor_poll = 0.5
+        # โหมด 'หยุดรอตรวจทานทีละชุด' (pause_between_batches)
+        self._awaiting_next_batch = False
+        self._batch_devices = []
+        self._batch_pending = []
+        self._runner = None
         self._load_profiles()
 
     # หา window object โดยไม่เก็บ ref ไว้บน self (กัน circular ref api<->window ที่ทำ pywebview
@@ -118,7 +124,12 @@ class Api:
         # JS จะอ่าน log ล่าสุดจากค่าที่ handler return (get_state ใส่ log[-1] มาให้)
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         self._log.append({"ts": ts, "text": text, "kind": kind})
-        self._log = self._log[-200:]
+        self._log = self._log[-600:]
+
+    def get_logs(self):
+        """คืน log ทั้งหมดตามลำดับจริง — ให้หน้าคอนโซลเต็ม/ปุ่มคัดลอก
+        (log ตอนรันถูก append เข้า self._log ด้วย จึงไม่หายตอนเริ่มรันรอบใหม่)"""
+        return {"logs": self._log[-600:]}
 
     # ---------- state ที่ JS ดึงไปวาด ----------
     def get_state(self):
@@ -230,7 +241,45 @@ class Api:
             log_cb(f"อัปเดตเพชรลงบัญชีไม่ได้: {e}", "warn")
         log_cb(f"บันทึกเพชร {len(rows)} รายการ → diamonds_export.json", "ok")
 
-    def run(self):
+    def _persist_run_results(self, results, log_cb):
+        """เขียนผลรายบัญชีลง accounts.json (last_status/last_error/last_device/last_run)
+        + สรุปยอดลง log — พอร์ตจาก finalize_run_results ของแอปเดิม"""
+        if not results:
+            return
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        by_email = {}
+        for r in results:
+            em = (r.get("email") or "").strip().lower()
+            if em:
+                by_email[em] = r  # ไอดีเดียวรันหลายรอบ → ใช้ผลล่าสุด
+        try:
+            accts = self._accounts()
+            changed = False
+            for a in accts:
+                em = (a.get("email") or "").strip().lower()
+                if em in by_email:
+                    r = by_email[em]
+                    a["last_status"] = r.get("status", "")
+                    a["last_error"] = r.get("error", "")
+                    a["last_device"] = r.get("device", "")
+                    a["last_run"] = stamp
+                    changed = True
+            if changed:
+                self._save_accounts(accts)
+        except Exception as e:
+            log_cb(f"บันทึกผลรายบัญชีไม่ได้: {e}", "warn")
+            return
+        done = sum(1 for r in results if r.get("status") == "completed")
+        stuck = sum(1 for r in results if r.get("status") == "device_error")
+        stopped = sum(1 for r in results if r.get("status") == "stopped")
+        parts = [f"เสร็จ {done}"]
+        if stuck:
+            parts.append(f"ติดปัญหา {stuck} (ดูรายงานจุดที่ติดได้)")
+        if stopped:
+            parts.append(f"ถูกหยุด {stopped}")
+        log_cb("สรุปผลรอบนี้: " + " · ".join(parts), "ok" if not stuck else "warn")
+
+    def run(self, anchor_poll=None, pause_between_batches=False):
         if self._running:
             self._push_log("กำลังรันอยู่แล้ว", "warn")
             return {"ok": False}
@@ -241,50 +290,99 @@ class Api:
             self._push_log("ยังไม่ได้เลือกสคริปต์", "warn"); return {"ok": False}
         accounts = [a for a in self._accounts() if a.get("checked", True)]
 
+        try:
+            poll = float(anchor_poll) if anchor_poll not in (None, "") else 0.5
+        except (TypeError, ValueError):
+            poll = 0.5
+        self._anchor_poll = poll
+
         self._running = True
         self._run_state = {}
         self._run_log = []
+        self._awaiting_next_batch = False
+        self._batch_devices = devices
+        self._batch_pending = list(accounts)
 
-        def log_cb(text, kind="info"):
-            ts = datetime.datetime.now().strftime("%H:%M:%S")
-            self._run_log.append({"ts": ts, "text": text, "kind": kind})
-            self._run_log = self._run_log[-300:]
-
-        def progress_cb(device, **st):
-            cur = self._run_state.setdefault(device, {})
-            cur.update(st)
-
-        def running_check():
-            return self._running
-
-        try:
-            poll = float(self._anchor_poll) if hasattr(self, "_anchor_poll") else 0.5
-        except Exception:
-            poll = 0.5
-        runner = MacroRunner(self.controller, self.macro_steps, log_cb=log_cb,
-                             progress_cb=progress_cb, running_check=running_check,
+        runner = MacroRunner(self.controller, self.macro_steps, log_cb=self._run_log_cb,
+                             progress_cb=self._run_progress_cb, running_check=lambda: self._running,
                              anchor_poll=poll, reset_cfg=self._load_reset_cfg(),
                              diamond_cfg=self._load_diamond_cfg())
+        runner.profile_name = self.current_profile or ""
+        self._runner = runner
 
-        def worker():
-            try:
-                log_cb(f"เริ่มรัน '{self.current_profile}' · {len(accounts)} รหัส บน {len(devices)} จอ", "ok")
-                runner.run_queue(devices, accounts)
-                self._persist_diamonds(runner.diamond_rows, log_cb)
-                if self._running:
-                    log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
-            except Exception as e:
-                log_cb(f"ระบบรันขัดข้อง: {e}", "err")
-            finally:
+        if pause_between_batches:
+            self._run_log_cb(f"เริ่มรันแบบทีละชุด '{self.current_profile}' · {len(accounts)} รหัส "
+                             f"บน {len(devices)} จอ (ชุดละ {len(devices)} ไอดี — หยุดรอตรวจทานหลังแต่ละชุด)", "ok")
+            self._run_thread = threading.Thread(target=self._run_next_batch, daemon=True)
+        else:
+            def worker():
+                try:
+                    self._run_log_cb(f"เริ่มรัน '{self.current_profile}' · {len(accounts)} รหัส บน {len(devices)} จอ", "ok")
+                    runner.run_queue(devices, accounts)
+                    self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
+                    self._persist_run_results(runner.account_results, self._run_log_cb)
+                    if self._running:
+                        self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
+                except Exception as e:
+                    self._run_log_cb(f"ระบบรันขัดข้อง: {e}", "err")
+                finally:
+                    self._running = False
+            self._run_thread = threading.Thread(target=worker, daemon=True)
+        self._run_thread.start()
+        return {"ok": True}
+
+    def _run_log_cb(self, text, kind="info"):
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = {"ts": ts, "text": text, "kind": kind}
+        self._run_log.append(entry)
+        self._run_log = self._run_log[-300:]
+        self._log.append(entry)          # เก็บเข้า history รวมด้วย — ดูย้อน/คัดลอกได้
+        self._log = self._log[-600:]
+
+    def _run_progress_cb(self, device, **st):
+        self._run_state.setdefault(device, {}).update(st)
+
+    def _run_next_batch(self):
+        """รัน 1 ชุด (โหมด 'หยุดรอตรวจทานทีละชุด') แล้วหยุดรอผู้ใช้ตรวจจอ+กด 'รันชุดถัดไป'
+        พอร์ตจาก run_macro_task/run_macro_task_resume ของแอปเดิม"""
+        devices = self._batch_devices
+        batch = self._batch_pending[:len(devices)]
+        self._batch_pending = self._batch_pending[len(devices):]
+        try:
+            self._run_log_cb(f"🏁 เริ่มรันชุดคู่ขนาน {len(batch)} ไอดี บน {len(devices)} จอ…", "ok")
+            self._runner.run_batch_once(devices, batch)
+            if not self._running:
+                return  # ผู้ใช้กดหยุดกลางชุด — ไม่ต้องถามชุดถัดไป
+            if self._batch_pending:
+                self._awaiting_next_batch = True
+                self._running = False  # ไม่ใช่ "กำลังรัน" แล้ว แต่ยังไม่ปิดจริง — รอกด "รันชุดถัดไป"
+                self._run_log_cb(f"⏸️ ชุดนี้เสร็จแล้ว (เหลืออีก {len(self._batch_pending)} ไอดี) "
+                                 f"กรุณาตรวจสอบหน้าจอ Emulator แล้วกด 'รันชุดถัดไป'", "warn")
+            else:
+                self._persist_diamonds(self._runner.diamond_rows, self._run_log_cb)
+                self._persist_run_results(self._runner.account_results, self._run_log_cb)
+                self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
                 self._running = False
+        except Exception as e:
+            self._run_log_cb(f"ระบบรันขัดข้อง: {e}", "err")
+            self._running = False
 
-        self._run_thread = threading.Thread(target=worker, daemon=True)
+    def continue_batch(self):
+        """ปุ่ม 'รันชุดถัดไป' — ทำงานต่อจากที่ค้างไว้ในโหมดทีละชุด"""
+        if self._running or not self._awaiting_next_batch:
+            return {"ok": False}
+        self._awaiting_next_batch = False
+        self._running = True
+        self._run_state = {}
+        self._run_thread = threading.Thread(target=self._run_next_batch, daemon=True)
         self._run_thread.start()
         return {"ok": True}
 
     def stop(self):
-        if self._running:
+        if self._running or self._awaiting_next_batch:
             self._running = False
+            self._awaiting_next_batch = False
+            self._batch_pending = []
             self._push_log("สั่งหยุด — กำลังยุติการทำงาน…", "warn")
         return {"ok": True}
 
@@ -346,8 +444,11 @@ class Api:
                 "step": (f"{s.get('step_desc','')} ({idx}/{tot})" if tot else s.get("step_desc", "")),
                 "pct": pct, "bar": dot,
                 "done": f"{s.get('done_count',0)} / {s.get('total_accounts',0)}",
+                "path": s.get("step_path", ""),   # ตำแหน่งบล็อกปัจจุบัน — หน้าโฟลว์ใช้ไฮไลต์สด
             })
-        return {"running": self._running, "progress": prog, "log": self._run_log[-30:]}
+        return {"running": self._running, "progress": prog, "log": self._run_log[-30:],
+                "awaitingNextBatch": self._awaiting_next_batch,
+                "remainingBatch": len(self._batch_pending)}
 
     # ================= หน้าบัญชี =================
     def get_accounts_grouped(self, search=""):
@@ -459,12 +560,14 @@ class Api:
                 "wait_for_image": "รอรูป", "tap_text": "กดตามข้อความ", "wait_for_text": "รอข้อความ",
                 "clear_ads_loop": "เคลียร์โฆษณา", "fetch_otp": "กรอก OTP", "screenshot": "ถ่ายภาพ",
                 "read_diamond": "อ่านเพชร", "story_auto": "เล่นเนื้อเรื่อง", "run_set": "ชุดคำสั่ง",
-                "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง"}
+                "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง",
+                "if_image": "ทางเลือก (ถ้าเจอภาพ)"}
     _STEP_ICON = {"tap": "mouse-pointer-click", "text": "type", "keyevent": "smartphone", "swipe": "move",
                   "sleep": "clock", "start_app": "power", "stop_app": "power-off", "detect_image": "image",
                   "wait_for_image": "image", "tap_text": "text-cursor-input", "wait_for_text": "search",
                   "clear_ads_loop": "x-circle", "fetch_otp": "mail", "screenshot": "camera",
-                  "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem"}
+                  "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
+                  "if_image": "git-branch"}
 
     # ชนิด step -> ฟิลด์ที่ใช้จริง (ตัวอื่นถูกล้างทิ้งเมื่อเปลี่ยนชนิด) — อิงจาก _build_step_from_form เดิม
     STEP_FIELDS = {
@@ -486,6 +589,7 @@ class Api:
         "keyboard": ["key", "action", "delay"],
         "screenshot": ["text", "delay"],
         "find_yellow_stage": ["delay"],
+        "if_image": ["text", "threshold", "timeout", "delay"],
     }
     # ค่าเริ่มต้นเมื่อสร้างขั้นใหม่/เปลี่ยนชนิด
     STEP_DEFAULTS = {
@@ -507,6 +611,7 @@ class Api:
         "keyboard": {"key": "space", "action": "press", "delay": 0.1},
         "screenshot": {"text": "screenshots/{DATE}/{NAME}_{TIME}.png", "delay": 1.0},
         "find_yellow_stage": {"delay": 1.0},
+        "if_image": {"text": "", "threshold": 0.8, "timeout": 2.0, "then": [], "else": []},
     }
 
     def get_steps(self):
@@ -522,6 +627,9 @@ class Api:
                 detail = str(s.get("code", s.get("keycode", "")))
             elif t == "start_app":
                 detail = s.get("package", "")
+            elif t == "if_image":
+                detail = (s.get("desc") or "ทางเลือก") + \
+                    f" (เจอ {len(s.get('then') or [])} ขั้น / ไม่เจอ {len(s.get('else') or [])} ขั้น)"
             else:
                 detail = s.get("desc", "")
             icon = "image" if anchored else self._STEP_ICON.get(t, "circle")
@@ -535,7 +643,8 @@ class Api:
                    "text": s.get("text", ""), "code": s.get("code", s.get("keycode", "")),
                    "seconds": s.get("seconds", ""), "timeout": s.get("timeout", ""),
                    "key": s.get("key", ""), "action": s.get("action", ""),
-                   "set": s.get("set", ""), "delay": delay}
+                   "set": s.get("set", ""), "threshold": s.get("threshold", ""),
+                   "delay": delay}
             out.append({"no": f"{i+1:02d}", "type": typ, "icon": icon,
                         "detail": detail, "delay": (f"{float(delay):g}s" if delay else "-"),
                         "x": s.get("x", "-"), "y": s.get("y", "-"), "desc": s.get("desc", "-"),
@@ -545,7 +654,7 @@ class Api:
 
     def _step_type_options(self):
         """รายชื่อชนิด step สำหรับ dropdown (ค่า+ป้ายไทย) — เรียงตามที่ใช้บ่อย"""
-        order = ["tap", "swipe", "text", "keyevent", "sleep", "start_app", "stop_app",
+        order = ["tap", "swipe", "text", "if_image", "keyevent", "sleep", "start_app", "stop_app",
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
                  "screenshot", "find_yellow_stage"]
@@ -566,6 +675,14 @@ class Api:
                 step["key"] = str(step["key"]).strip().lower()
             if "action" in step:
                 step["action"] = str(step["action"]).strip().lower()
+        # if_image: คงกิ่ง then/else เดิมไว้เสมอ (ฟอร์มแก้แค่ field อื่น ไม่แตะลูก)
+        if t == "if_image" and existing:
+            for k in ("then", "else"):
+                if k in existing:
+                    step[k] = existing[k]
+        if t == "if_image":
+            step.setdefault("then", [])
+            step.setdefault("else", [])
         # คงค่า anchor (ภาพ+ตั้งค่า) ที่ไม่ได้อยู่ในฟอร์ม ไม่ให้หายตอนแก้
         for k, v in (existing or {}).items():
             if k.startswith("anchor"):
@@ -681,6 +798,287 @@ class Api:
         except Exception as e:
             self._push_log(f"ทดสอบล้มเหลว: {e}", "err")
         return {"ok": True}
+
+    # ================= Flow Editor (ผังบล็อก + กิ่ง if_image) =================
+    def _locate(self, path):
+        """แปลง path เช่น [2] หรือ [2,'then',0] → (ลิสต์แม่, ดัชนีในลิสต์นั้น)
+        เลข = ดัชนีบล็อกในลิสต์ปัจจุบัน, ข้อความ 'then'/'else' = มุดเข้ากิ่งของบล็อกนั้น"""
+        cur = self.macro_steps
+        node = None
+        for j, tok in enumerate(path):
+            if isinstance(tok, str):
+                if node is None or tok not in ("then", "else"):
+                    raise ValueError(f"path ผิดรูป: {path}")
+                node.setdefault(tok, [])
+                cur = node[tok]
+            else:
+                i = int(tok)
+                if j == len(path) - 1:
+                    return cur, i
+                node = cur[i]
+        raise ValueError(f"path ว่าง/ผิดรูป: {path}")
+
+    def get_flow(self):
+        """คืน tree ดิบทั้งก้อน (รวมกิ่ง then/else) ให้หน้าโฟลว์เรนเดอร์/แก้"""
+        return {"name": self.current_profile or "—", "steps": self.macro_steps,
+                "typeOptions": self._step_type_options()}
+
+    def flow_add(self, path, step_type="tap"):
+        """แทรกบล็อกใหม่ที่ตำแหน่ง path (ดัชนีท้าย = จุดแทรกในลิสต์นั้น)"""
+        t = step_type if step_type in self.STEP_FIELDS else "tap"
+        step = {"type": t, "desc": ""}
+        step.update(json.loads(json.dumps(self.STEP_DEFAULTS.get(t, {}))))  # deep copy กัน then/else ใช้ list ร่วม
+        try:
+            lst, i = self._locate(path)
+            i = max(0, min(i, len(lst)))
+            lst.insert(i, step)
+        except Exception as e:
+            self._push_log(f"เพิ่มบล็อกไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_update(self, path, patch):
+        try:
+            lst, i = self._locate(path)
+            existing = lst[i]
+            merged = dict(existing)
+            merged.update(patch or {})
+            t = (patch or {}).get("type") or existing.get("type", "tap")
+            for numk in ("delay", "duration", "seconds", "timeout", "threshold"):
+                if numk in merged and merged[numk] not in ("", None):
+                    try:
+                        merged[numk] = float(merged[numk])
+                    except (TypeError, ValueError):
+                        pass
+            lst[i] = self._canonical_step(t, merged, existing)
+        except Exception as e:
+            self._push_log(f"แก้บล็อกไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_delete(self, path):
+        try:
+            lst, i = self._locate(path)
+            lst.pop(i)
+        except Exception as e:
+            self._push_log(f"ลบบล็อกไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_move(self, path, direction):
+        try:
+            lst, i = self._locate(path)
+            j = i + int(direction)
+            if 0 <= j < len(lst):
+                lst[i], lst[j] = lst[j], lst[i]
+        except Exception as e:
+            self._push_log(f"ย้ายบล็อกไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_get_step(self, path):
+        try:
+            lst, i = self._locate(path)
+            return {"ok": True, "step": lst[i]}
+        except Exception:
+            return {"ok": False}
+
+    def flow_set_xy(self, path, x, y, x2=None, y2=None):
+        """ตั้งพิกัดจากตัวช่วยภาพจอ (คลิกบนภาพ)"""
+        try:
+            lst, i = self._locate(path)
+            lst[i]["x"] = str(int(round(float(x))))
+            lst[i]["y"] = str(int(round(float(y))))
+            if x2 is not None and y2 is not None:
+                lst[i]["x2"] = str(int(round(float(x2))))
+                lst[i]["y2"] = str(int(round(float(y2))))
+            self._push_log(f"ตั้งพิกัดบล็อกจากภาพจอแล้ว ({lst[i]['x']},{lst[i]['y']})", "ok")
+        except Exception as e:
+            self._push_log(f"ตั้งพิกัดไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_set_image(self, path, b64, region, mode="cond"):
+        """ตั้งภาพจากการลากกรอบบนภาพจอ:
+        mode='cond'   → ภาพเงื่อนไขของ if_image (anchor_img)
+        mode='anchor' → ภาพ anchor gate ของ tap/swipe (รอเห็นภาพก่อนกด)"""
+        try:
+            lst, i = self._locate(path)
+            s = lst[i]
+            s["anchor_img"] = b64
+            if region:
+                s["anchor_region"] = {k: int(region[k]) for k in ("x", "y", "w", "h")}
+            if mode == "anchor":
+                s.setdefault("anchor_timeout", 8.0)
+                s.setdefault("anchor_threshold", 0.8)
+                s.setdefault("anchor_on_fail", "abort")
+            self._push_log("บันทึกภาพจากการลากกรอบแล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"ตั้งภาพไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_clear_image(self, path):
+        """ลบภาพ anchor/เงื่อนไขออกจากบล็อก"""
+        try:
+            lst, i = self._locate(path)
+            for k in ("anchor_img", "anchor_region", "anchor_tap",
+                      "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+                lst[i].pop(k, None)
+        except Exception as e:
+            self._push_log(f"ลบภาพไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def flow_set_anchor_opts(self, path, on_fail=None, timeout=None, anchor_tap=None):
+        """ตั้งค่า anchor gate: ไม่เจอทำอะไร (abort/skip/tap) / รอสูงสุด / กดตรงที่เจอภาพ"""
+        try:
+            lst, i = self._locate(path)
+            s = lst[i]
+            if on_fail in ("abort", "skip", "tap"):
+                s["anchor_on_fail"] = on_fail
+            if timeout is not None:
+                s["anchor_timeout"] = float(timeout)
+            if anchor_tap is not None:
+                s["anchor_tap"] = bool(anchor_tap)
+        except Exception as e:
+            self._push_log(f"ตั้งค่า anchor ไม่ได้: {e}", "warn")
+        return self.get_flow()
+
+    def crop_image_b64(self, data_uri, x, y, w, h):
+        """ครอปภาพจาก data URI ที่ผู้ใช้เห็น (ไม่แคปใหม่ กันจอเปลี่ยนระหว่างลากกรอบ)
+        คืน base64 PNG ล้วน (ไม่มี prefix) ไว้เก็บเป็น anchor_img"""
+        import base64 as _b64
+        try:
+            raw = data_uri.split(",", 1)[1] if "," in (data_uri or "") else (data_uri or "")
+            data = _b64.b64decode(raw)
+            import cv2
+            import numpy as np
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            ih, iw = img.shape[:2]
+            x = max(0, min(int(x), iw - 1)); y = max(0, min(int(y), ih - 1))
+            w = max(1, min(int(w), iw - x)); h = max(1, min(int(h), ih - y))
+            crop = img[y:y + h, x:x + w]
+            enc = cv2.imencode(".png", crop)[1].tobytes()
+            return {"ok": True, "img": _b64.b64encode(enc).decode("ascii")}
+        except Exception as e:
+            self._push_log(f"ครอปภาพไม่สำเร็จ: {e}", "err")
+            return {"ok": False}
+
+    def test_anchor_match(self, b64, threshold=0.8):
+        """ทดสอบว่าภาพที่ลากกรอบไว้ เจอบนจอจริงตอนนี้ไหม (เหมือนปุ่มทดสอบ match แอปเดิม)"""
+        import base64 as _b64
+        devs = self._selected_list()
+        if not devs:
+            return {"ok": False, "error": "ยังไม่ได้เลือกจอ"}
+        try:
+            tmpl = _b64.b64decode(b64 or "")
+        except Exception:
+            return {"ok": False, "error": "ภาพไม่ถูกต้อง"}
+        ok, data = self.controller.capture_screenshot_bytes(devs[0])
+        if not ok:
+            return {"ok": False, "error": "แคปจอไม่ได้"}
+        found, x, y, msg = self.controller.match_template_bytes(data, tmpl, float(threshold or 0.8))
+        return {"ok": True, "found": bool(found), "x": x, "y": y, "msg": str(msg)}
+
+    def flow_test_step(self, path):
+        """ทดสอบบล็อกที่เลือกในโหมดโฟลว์ (ตาม path — ใช้ได้ทั้งบล็อกในกิ่ง):
+        tap/swipe = กดจริงบนจอแรกที่เลือก, if_image = เช็คว่าเจอภาพไหม"""
+        import base64 as _b64
+        devs = self._selected_list()
+        if not devs:
+            self._push_log("ยังไม่ได้เลือกจอ", "warn"); return {"ok": False}
+        try:
+            lst, i = self._locate(path)
+            step = lst[i]
+        except Exception:
+            self._push_log("หาบล็อกที่เลือกไม่เจอ", "warn"); return {"ok": False}
+        dev = devs[0]
+        t = step.get("type", "tap")
+        if t == "if_image":
+            r = self.test_anchor_match(step.get("anchor_img") or "",
+                                       step.get("threshold", 0.8)) if step.get("anchor_img") else None
+            if r is None:
+                tf = (step.get("text") or "").strip()
+                tp = os.path.join(base_dir(), "templates", tf) if tf else ""
+                if tp and os.path.exists(tp):
+                    ok, data = self.controller.capture_screenshot_bytes(dev)
+                    if ok:
+                        found, x, y, _m = self.controller.find_image_in_bytes(data, tp, threshold=float(step.get("threshold", 0.8) or 0.8))
+                        r = {"ok": True, "found": found, "x": x, "y": y}
+                if r is None:
+                    self._push_log("บล็อกทางเลือกนี้ยังไม่ได้ตั้งภาพเงื่อนไข", "warn"); return {"ok": False}
+            if r.get("found"):
+                self._push_log(f"[{dev}] ทดสอบเงื่อนไข: ✅ เจอ ที่ ({r.get('x')},{r.get('y')}) → ตอนรันจะเข้ากิ่ง 'เจอ'", "ok")
+            else:
+                self._push_log(f"[{dev}] ทดสอบเงื่อนไข: ❌ ไม่เจอ → ตอนรันจะเข้ากิ่ง 'ไม่เจอ'", "warn")
+            return {"ok": True}
+        if t not in ("tap", "swipe"):
+            self._push_log(f"ทดสอบกดได้เฉพาะบล็อก แตะ/ปัด/ทางเลือก (บล็อกนี้เป็น {t})", "warn")
+            return {"ok": False}
+        try:
+            x, y = int(float(step["x"])), int(float(step["y"]))
+            if step.get("anchor_tap") and step.get("anchor_img") and step.get("anchor_region"):
+                ok, data = self.controller.capture_screenshot_bytes(dev)
+                if ok:
+                    found, ax, ay, _ = self.controller.match_template_bytes(
+                        data, _b64.b64decode(step["anchor_img"]),
+                        float(step.get("anchor_threshold", 0.8) or 0.8))
+                    if found:
+                        reg = step["anchor_region"]
+                        x = int(round(ax + (x - (reg["x"] + reg["w"] / 2.0))))
+                        y = int(round(ay + (y - (reg["y"] + reg["h"] / 2.0))))
+            if t == "swipe":
+                self.controller.swipe(dev, step["x"], step["y"], step.get("x2", x), step.get("y2", y),
+                                      int(float(step.get("duration", 300))))
+                self._push_log(f"[{dev}] ทดสอบปัดจริงแล้ว", "warn")
+            else:
+                self.controller.tap(dev, x, y)
+                self._push_log(f"[{dev}] ทดสอบแตะจริงที่ ({x},{y}) แล้ว", "warn")
+        except Exception as e:
+            self._push_log(f"ทดสอบล้มเหลว: {e}", "err")
+        return {"ok": True}
+
+    def run_from(self, root_idx):
+        """ทดสอบรันตั้งแต่บล็อก (ระดับเส้นหลัก) ที่เลือกจนจบ บนจอแรกที่เลือก — ไม่ผูกบัญชี"""
+        if self._running:
+            self._push_log("กำลังรันอยู่แล้ว", "warn"); return {"ok": False}
+        devs = self._selected_list()
+        if not devs:
+            self._push_log("ยังไม่ได้เลือกจอ", "warn"); return {"ok": False}
+        try:
+            i = max(0, int(root_idx))
+            steps = self.macro_steps[i:]
+        except Exception:
+            return {"ok": False}
+        if not steps:
+            self._push_log("ไม่มีบล็อกให้รันจากจุดนี้", "warn"); return {"ok": False}
+        dev = devs[0]
+        self._running = True
+        self._run_state = {}
+        self._run_log = []
+
+        def log_cb(text, kind="info"):
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            entry = {"ts": ts, "text": text, "kind": kind}
+            self._run_log.append(entry)
+            self._run_log = self._run_log[-300:]
+            self._log.append(entry)
+            self._log = self._log[-600:]
+
+        def progress_cb(device, **st):
+            self._run_state.setdefault(device, {}).update(st)
+
+        runner = MacroRunner(self.controller, steps, log_cb=log_cb,
+                             progress_cb=progress_cb, running_check=lambda: self._running,
+                             diamond_cfg=self._load_diamond_cfg())
+        runner.profile_name = self.current_profile or ""
+
+        def worker():
+            try:
+                log_cb(f"▶ ทดสอบรันจากบล็อก {i + 1} บน [{dev}]", "warn")
+                runner._one_and_close(dev, None)
+                log_cb("ทดสอบรันจบแล้ว", "ok")
+            except Exception as e:
+                log_cb(f"ทดสอบรันขัดข้อง: {e}", "err")
+            finally:
+                self._running = False
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"ok": True, "offset": i}
 
     def import_save_web_game(self):
         w = self._win()
@@ -840,8 +1238,21 @@ class Api:
                 self._push_log(f"[{dev}] คืนคีย์บอร์ดไม่สำเร็จ: {out}", "err")
         return {"ok": True, "count": n}
 
+    @staticmethod
+    def _png_dims(data):
+        """อ่านขนาดจริงจากไฟล์ PNG (IHDR) — เชื่อภาพจริง ไม่เชื่อ wm size
+        (wm size อาจรายงานแนวตั้ง 540x960 ทั้งที่เกมแสดงแนวนอน 960x540 → พิกัดคลิกเพี้ยนสลับแกน)"""
+        try:
+            if data[:8] == b"\x89PNG\r\n\x1a\n":
+                import struct
+                w, h = struct.unpack(">II", data[16:24])
+                return int(w), int(h)
+        except Exception:
+            pass
+        return 0, 0
+
     def screenshot_b64(self):
-        """แคปจอเครื่องแรกที่เลือก คืนเป็น data URI + ความละเอียดจริง (ให้ตัวช่วยหาพิกัด/ตั้งพื้นที่)"""
+        """แคปจอเครื่องแรกที่เลือก คืนเป็น data URI + ขนาดจริงของภาพ (ให้ตัวช่วยหาพิกัด/ตั้งพื้นที่)"""
         import base64 as _b64
         import re as _re
         devs = self._selected_list()
@@ -851,9 +1262,12 @@ class Api:
         ok, data = self.controller.capture_screenshot_bytes(dev)
         if not ok:
             self._push_log(f"[{dev}] แคปจอไม่ได้", "err"); return {"ok": False}
-        res = self.controller.get_resolution(dev)
-        m = _re.match(r"(\d+)x(\d+)", res or "")
-        w, h = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        # ขนาดจากภาพจริงก่อน (พื้นที่พิกัดเดียวกับ input tap) — wm size ไว้เป็นสำรองเท่านั้น
+        w, h = self._png_dims(data)
+        if not w or not h:
+            res = self.controller.get_resolution(dev)
+            m = _re.match(r"(\d+)x(\d+)", res or "")
+            w, h = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
         return {"ok": True, "device": dev, "w": w, "h": h,
                 "img": "data:image/png;base64," + _b64.b64encode(data).decode("ascii")}
 
@@ -938,7 +1352,7 @@ class Api:
         def scan(steps):
             for s in steps:
                 t = s.get("type", "")
-                if t == "detect_image" and s.get("text", "").strip():
+                if t in ("detect_image", "wait_for_image", "if_image") and s.get("text", "").strip():
                     ref_imgs.add(s["text"].strip())
                 elif t == "clear_ads_loop" and s.get("text", "").strip():
                     for part in s["text"].split("|"):
@@ -955,6 +1369,10 @@ class Api:
                                 scan(json.load(open(sf, encoding="utf-8")).get("steps", []))
                             except Exception:
                                 pass
+                # กิ่งของบล็อกทางเลือก — ไล่เก็บรูป/ชุดคำสั่งข้างในด้วย
+                for k in ("then", "else"):
+                    if s.get(k):
+                        scan(s[k])
         scan(profile_data.get("steps", []))
         save_path = None
         try:
@@ -1085,6 +1503,201 @@ class Api:
         self.macro_steps.append(build_tap_step_from_preset(p))
         self._push_log(f"เพิ่มขั้นจากพรีเซ็ต '{preset_name}'", "ok")
         return self.get_steps()
+
+    # ---------- ตั้งค่าระบบอ่านเพชร (diamond_ocr.json) ----------
+    def _save_diamond_cfg(self, cfg):
+        with open(os.path.join(base_dir(), "diamond_ocr.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+    def get_diamond_settings(self):
+        cfg = self._load_diamond_cfg()
+        return {
+            "region": cfg.get("region") or {"x": 0, "y": 0, "w": 0, "h": 0},
+            "name_region": cfg.get("name_region") or {"x": 90, "y": 18, "w": 140, "h": 26},
+            "verify_name": bool(cfg.get("verify_name", True)),
+            "web_base_url": cfg.get("web_base_url", ""),
+            "auto_push": bool(cfg.get("auto_push", True)),
+        }
+
+    def save_diamond_region(self, x, y, w, h, which="region"):
+        """which='region' = พื้นที่ตัวเลขเพชร, 'name_region' = พื้นที่ชื่อในเกม (ยืนยันตัวตน)"""
+        key = "name_region" if which == "name_region" else "region"
+        cfg = self._load_diamond_cfg()
+        cfg[key] = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+        try:
+            self._save_diamond_cfg(cfg)
+            label = "พื้นที่ตัวเลขเพชร" if key == "region" else "พื้นที่ชื่อในเกม"
+            self._push_log(f"บันทึก{label} {int(w)}x{int(h)} แล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"บันทึกพื้นที่ไม่ได้: {e}", "err")
+        return self.get_diamond_settings()
+
+    def save_diamond_opts(self, verify_name=None, web_base_url=None, auto_push=None):
+        cfg = self._load_diamond_cfg()
+        if verify_name is not None:
+            cfg["verify_name"] = bool(verify_name)
+        if web_base_url is not None:
+            cfg["web_base_url"] = str(web_base_url).strip()
+        if auto_push is not None:
+            cfg["auto_push"] = bool(auto_push)
+        try:
+            self._save_diamond_cfg(cfg)
+            self._push_log("บันทึกตั้งค่าระบบเพชรแล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"บันทึกตั้งค่าเพชรไม่ได้: {e}", "err")
+        return self.get_diamond_settings()
+
+    # ---------- ตั้งค่ารีเซ็ตเกมเมื่อบัญชีติดปัญหา (game_reset.json) ----------
+    def get_reset_settings(self):
+        cfg = self._load_reset_cfg()
+        return {"enabled": bool(cfg.get("enabled", True)),
+                "package": cfg.get("package", ""),
+                "boot_wait": float(cfg.get("boot_wait", 10.0) or 10.0),
+                "steps": len(cfg.get("open_login_steps", []) or [])}
+
+    def save_reset_settings(self, enabled, package, boot_wait):
+        cfg = self._load_reset_cfg()
+        cfg["enabled"] = bool(enabled)
+        cfg["package"] = (package or "").strip()
+        try:
+            cfg["boot_wait"] = float(boot_wait)
+        except (TypeError, ValueError):
+            pass
+        try:
+            with open(os.path.join(base_dir(), "game_reset.json"), "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            self._push_log("บันทึกตั้งค่ารีเซ็ตเกมแล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"บันทึกตั้งค่ารีเซ็ตไม่ได้: {e}", "err")
+        return self.get_reset_settings()
+
+    # ---------- รายงานจุดที่ติด (error_reports/) ----------
+    def list_error_reports(self, limit=30):
+        path = os.path.join(base_dir(), "error_reports", "report.jsonl")
+        rows = []
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.readlines()
+            for ln in lines[-int(limit):]:
+                try:
+                    rows.append(json.loads(ln))
+                except Exception:
+                    pass
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self._push_log(f"อ่านรายงานจุดที่ติดไม่ได้: {e}", "warn")
+        rows.reverse()  # ล่าสุดขึ้นก่อน
+        return {"reports": rows}
+
+    def error_image_b64(self, img_path):
+        """อ่านภาพจุดที่ติดเป็น data URI — จำกัดเฉพาะไฟล์ใต้ error_reports/ เท่านั้น"""
+        import base64 as _b64
+        root = os.path.abspath(os.path.join(base_dir(), "error_reports"))
+        p = os.path.abspath(img_path or "")
+        if not p.startswith(root) or not os.path.exists(p):
+            return {"ok": False}
+        try:
+            with open(p, "rb") as f:
+                return {"ok": True, "img": "data:image/png;base64," + _b64.b64encode(f.read()).decode("ascii")}
+        except Exception:
+            return {"ok": False}
+
+    def open_error_folder(self):
+        try:
+            d = os.path.join(base_dir(), "error_reports")
+            os.makedirs(d, exist_ok=True)
+            os.startfile(d)
+        except Exception as e:
+            self._push_log(f"เปิดโฟลเดอร์ไม่ได้: {e}", "warn")
+        return {"ok": True}
+
+    # ---------- จัดการพรีเซ็ตพิกัด (presets.json) ----------
+    def _save_presets(self, presets):
+        with open(os.path.join(base_dir(), "presets.json"), "w", encoding="utf-8") as f:
+            json.dump({"presets": presets}, f, ensure_ascii=False, indent=2)
+
+    def add_preset(self, name, x, y):
+        name = (name or "").strip()
+        if not name:
+            self._push_log("ต้องตั้งชื่อพรีเซ็ต", "warn"); return self.get_presets()
+        ps = self.get_presets()["presets"]
+        ps = [p for p in ps if p.get("name") != name]  # ชื่อซ้ำ = เขียนทับ
+        try:
+            ps.append({"name": name, "x": float(x), "y": float(y)})
+            self._save_presets(ps)
+            self._push_log(f"บันทึกพรีเซ็ต '{name}' ({int(float(x))},{int(float(y))})", "ok")
+        except Exception as e:
+            self._push_log(f"บันทึกพรีเซ็ตไม่ได้: {e}", "err")
+        return self.get_presets()
+
+    def delete_preset(self, name):
+        ps = [p for p in self.get_presets()["presets"] if p.get("name") != name]
+        try:
+            self._save_presets(ps)
+            self._push_log(f"ลบพรีเซ็ต '{name}'", "warn")
+        except Exception as e:
+            self._push_log(f"ลบพรีเซ็ตไม่ได้: {e}", "err")
+        return self.get_presets()
+
+    # ---------- ส่งเพชรขึ้นเว็บ Save Web Game ----------
+    def match_web_accounts(self):
+        """ดึงบัญชีจากเว็บมาจับคู่ชื่อกับบัญชีในเครื่อง (เติม save_web_game_id ให้อัตโนมัติ)"""
+        from save_web_game_import import fetch_web_accounts, match_accounts_to_web
+        cfg = self._load_diamond_cfg()
+        url = (cfg.get("web_base_url") or "").strip()
+        if not url:
+            self._push_log("ยังไม่ได้ตั้ง URL เว็บ (ในการ์ดระบบเพชร)", "warn")
+            return {"ok": False, "matched": 0}
+        try:
+            web = fetch_web_accounts(url)
+        except Exception as e:
+            self._push_log(f"ดึงบัญชีจากเว็บไม่ได้: {e}", "err")
+            return {"ok": False, "matched": 0}
+        accts = self._accounts()
+        pairs = match_accounts_to_web(accts, web)
+        n = 0
+        for p in pairs:
+            em = (p.get("email") or "").strip().lower()
+            wid = str(p.get("web_id") or "").strip()
+            if not wid:
+                continue
+            for a in accts:
+                if (a.get("email") or "").strip().lower() == em:
+                    a["save_web_game_id"] = wid
+                    n += 1
+                    break
+        if n:
+            self._save_accounts(accts)
+        self._push_log(f"จับคู่บัญชีกับเว็บได้ {n} รหัส (จากเว็บ {len(web)} บัญชี)", "ok" if n else "warn")
+        return {"ok": True, "matched": n, "web_total": len(web)}
+
+    def push_diamonds_web(self):
+        """ส่งจำนวนเพชรล่าสุดของบัญชีที่มี save_web_game_id ขึ้นเว็บ"""
+        from save_web_game_import import push_diamonds_to_web
+        cfg = self._load_diamond_cfg()
+        url = (cfg.get("web_base_url") or "").strip()
+        if not url:
+            self._push_log("ยังไม่ได้ตั้ง URL เว็บ (ในการ์ดระบบเพชร)", "warn")
+            return {"ok": False}
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        updates = []
+        for a in self._accounts():
+            wid = (a.get("save_web_game_id") or "").strip()
+            if wid and a.get("diamonds") is not None:
+                updates.append({"id": wid, "diamonds": a["diamonds"], "lastFarmDate": today})
+        if not updates:
+            self._push_log("ไม่มีบัญชีที่มีทั้ง id เว็บและจำนวนเพชร — กด 'จับคู่ชื่อ' และอ่านเพชรก่อน", "warn")
+            return {"ok": False}
+        self._push_log(f"กำลังส่งเพชร {len(updates)} บัญชี → {url}", "info")
+        try:
+            _results, stats = push_diamonds_to_web(url, updates)
+            self._push_log(f"ส่งเพชรขึ้นเว็บ: สำเร็จ {stats['sent']} · พลาด {stats['failed']}",
+                           "ok" if not stats["failed"] else "warn")
+            return {"ok": True, "sent": stats["sent"], "failed": stats["failed"]}
+        except Exception as e:
+            self._push_log(f"ส่งเพชรขึ้นเว็บพลาด: {e}", "err")
+            return {"ok": False}
 
     # ================= หน้าตั้งค่า =================
     def get_settings(self):
