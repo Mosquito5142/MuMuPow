@@ -554,6 +554,62 @@ class Api:
         self._push_log(f"{'แก้ไข' if found else 'เพิ่ม'}บัญชี {email}", "ok")
         return self.get_accounts_grouped()
 
+    def batch_import_accounts(self, raw_text, group_name="ทั่วไป"):
+        """นำเข้าบัญชีทีละหลายบรรทัด: แต่ละบรรทัด = 1 บัญชี คั่นด้วย | , ; หรือ TAB
+        รูปแบบ: อีเมล|รหัสผ่าน[|refresh_token][|client_id] — พอร์ตจาก open_batch_import_dialog เดิม"""
+        import re as _re
+        raw_text = (raw_text or "").strip()
+        group_name = (group_name or "").strip() or "ทั่วไป"
+        if not raw_text:
+            self._push_log("ยังไม่ได้วางข้อมูลบัญชี", "warn")
+            return {"ok": False, "imported": 0, "duplicate": 0, "invalid": 0}
+
+        accts = self._accounts()
+        existing_emails = {a.get("email") for a in accts}
+        uuid_re = _re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+
+        imported = duplicate = invalid = 0
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = []
+            for sep in ("|", ",", ";", "\t"):
+                if sep in line:
+                    parts = [p.strip() for p in line.split(sep)]
+                    break
+            else:
+                parts = [p.strip() for p in line.split() if p.strip()]
+            if len(parts) < 2:
+                invalid += 1
+                continue
+            email, pwd = parts[0], parts[1]
+            refresh_token = client_id = ""
+            for p in parts[2:]:
+                if uuid_re.match(p):
+                    client_id = p
+                elif len(p) > 50:
+                    refresh_token = p
+            if not email or not pwd or "@" not in email:
+                invalid += 1
+                continue
+            if email in existing_emails:
+                duplicate += 1
+                continue
+            accts.append({"email": email, "name": "", "password": pwd,
+                          "refresh_token": refresh_token, "client_id": client_id,
+                          "checked": True, "group": group_name})
+            existing_emails.add(email)
+            imported += 1
+
+        if imported:
+            self._save_accounts(accts)
+            self._push_log(f"นำเข้าบัญชีแบบกลุ่มสำเร็จ: {imported} ไอดี (กลุ่ม: {group_name}) "
+                           f"· ซ้ำ {duplicate} · ไม่ถูกต้อง {invalid}", "ok")
+        else:
+            self._push_log(f"ไม่มีบัญชีใหม่ถูกนำเข้า · ซ้ำ {duplicate} · ไม่ถูกต้อง {invalid}", "warn")
+        return {"ok": bool(imported), "imported": imported, "duplicate": duplicate, "invalid": invalid}
+
     # ================= หน้าสคริปต์ =================
     _STEP_TH = {"tap": "แตะ", "swipe": "ปัด", "text": "พิมพ์", "keyevent": "ปุ่มระบบ", "sleep": "รอเวลา",
                 "start_app": "เปิดแอป", "stop_app": "ปิดแอป", "detect_image": "เจอรูปกด",
