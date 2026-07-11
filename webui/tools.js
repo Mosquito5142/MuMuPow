@@ -71,7 +71,7 @@ async function openCoordPicker(){
     + '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:14px;color:#6EE7B7;margin-bottom:8px">X: <span id="cpX">–</span>&nbsp;&nbsp;&nbsp;Y: <span id="cpY">–</span></div>'
     + '<div style="position:relative;display:inline-block;max-width:100%"><img id="cpImg" src="' + r.img + '" data-w="' + r.w + '" data-h="' + r.h + '" style="max-width:100%;border-radius:10px;border:1px solid #24344B;cursor:crosshair;display:block"></div>');
   const img = document.getElementById('cpImg');
-  const toReal = ev => { const rc = img.getBoundingClientRect(); const rw = +img.dataset.w || img.naturalWidth, rh = +img.dataset.h || img.naturalHeight;
+  const toReal = ev => { const rc = img.getBoundingClientRect(); const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h;
     return { x: Math.round((ev.clientX - rc.left) / rc.width * rw), y: Math.round((ev.clientY - rc.top) / rc.height * rh) }; };
   img.addEventListener('mousemove', ev => { const p = toReal(ev); document.getElementById('cpX').textContent = p.x; document.getElementById('cpY').textContent = p.y; });
   img.addEventListener('click', ev => { const p = toReal(ev); copyText(p.x + ',' + p.y); });
@@ -96,7 +96,7 @@ async function openGuildRegion(){
   img.addEventListener('mousedown', ev => { ev.preventDefault(); const p = rel(ev); sx = p.x; sy = p.y; drag = true; rect.style.display = 'block'; rect.style.left = sx + 'px'; rect.style.top = sy + 'px'; rect.style.width = '0px'; rect.style.height = '0px'; });
   window.addEventListener('mousemove', ev => { if(!drag) return; const p = rel(ev); const x = Math.min(sx, p.x), y = Math.min(sy, p.y), w = Math.abs(p.x - sx), h = Math.abs(p.y - sy);
     rect.style.left = x + 'px'; rect.style.top = y + 'px'; rect.style.width = w + 'px'; rect.style.height = h + 'px';
-    const rw = +img.dataset.w, rh = +img.dataset.h, rc = img.getBoundingClientRect();
+    const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h, rc = img.getBoundingClientRect();
     window._guildReg = { x: Math.round(x / rc.width * rw), y: Math.round(y / rc.height * rh), w: Math.round(w / rc.width * rw), h: Math.round(h / rc.height * rh) };
     const g = window._guildReg; document.getElementById('grInfo').textContent = 'กรอบ: x=' + g.x + ' y=' + g.y + ' w=' + g.w + ' h=' + g.h; });
   window.addEventListener('mouseup', () => { drag = false; });
@@ -120,8 +120,12 @@ async function grabGuild(){
     + '<button class="in" onclick="copyText(document.getElementById(\'guildNames\').value)" style="margin-top:10px;display:flex;align-items:center;justify-content:center;gap:7px;height:38px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12.5px;cursor:pointer"><i data-lucide="copy" width="14" height="14" stroke-width="1.75"></i>คัดลอกทั้งหมด</button>');
 }
 
-// ---- ผังงาน (Flow View) ----
+// ---- ผังงาน: สลับหน้าสคริปต์เข้าโหมดโฟลว์ (ตัวแก้ไขเต็มรูปแบบใน flow.js) ----
 async function openFlowView(){
+  if(typeof setScriptView === 'function'){ setScriptView('flow'); return; }
+  return openFlowViewModal();
+}
+async function openFlowViewModal(){
   const s = hasPy() ? await PY.get_steps() : DEMO_STEPS;
   const steps = s.steps || [];
   const nodes = steps.map((st, i) => (
@@ -181,3 +185,203 @@ async function openQuickBuilder(){
     + '<div style="display:flex;flex-direction:column;gap:6px">' + items + '</div>');
 }
 async function quickAdd(name){ if(hasPy()){ await PY.quick_add(name); renderSteps(); } }
+
+// ==================================================================
+//  ระบบเพิ่มเติม: เพชร / รายงานจุดที่ติด / พรีเซ็ต / รีเซ็ตเกม
+// ==================================================================
+
+// ---- ตัวลากกรอบอเนกประสงค์ (ใช้ซ้ำ: พื้นที่เพชร/ชื่อในเกม) ----
+async function pickRegionGeneric(title, hint, onSave){
+  const shot = await PY.screenshot_b64();
+  if(!shot || !shot.ok){ openModal(title,'crop','<div style="font-size:12.5px;color:#FCA5A5">แคปจอไม่ได้ — เลือกจออย่างน้อย 1 เครื่องก่อน</div>'); return; }
+  window._prOnSave = onSave;
+  openModal(title + ' · ' + esc(shot.device||''), 'crop',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:8px">' + hint + ' (จอ ' + shot.w + '×' + shot.h + ')</div>'
+    + '<div id="prInfo" style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6EE7B7;margin-bottom:8px">ยังไม่ได้ลากกรอบ</div>'
+    + '<div style="position:relative;display:inline-block;max-width:100%"><img id="prImg" src="' + shot.img + '" data-w="' + shot.w + '" data-h="' + shot.h + '" style="max-width:100%;border-radius:10px;border:1px solid #24344B;cursor:crosshair;display:block;user-select:none">'
+    + '<div id="prRect" style="position:absolute;border:2px solid #10B981;background:rgba(16,185,129,.18);display:none;pointer-events:none"></div></div>'
+    + '<button class="in" onclick="prSave()" style="margin-top:12px;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="save" width="15" height="15" stroke-width="2"></i>บันทึกพื้นที่นี้</button>');
+  icons();
+  const img = document.getElementById('prImg'), rect = document.getElementById('prRect');
+  let sx, sy, drag = false; window._prReg = null;
+  const rel = ev => { const rc = img.getBoundingClientRect(); return { x: ev.clientX-rc.left, y: ev.clientY-rc.top }; };
+  img.addEventListener('mousedown', ev => { ev.preventDefault(); const p = rel(ev); sx=p.x; sy=p.y; drag=true;
+    rect.style.display='block'; rect.style.left=sx+'px'; rect.style.top=sy+'px'; rect.style.width='0'; rect.style.height='0'; });
+  window.addEventListener('mousemove', ev => { if(!drag) return; const p = rel(ev);
+    const x=Math.min(sx,p.x), y=Math.min(sy,p.y), w=Math.abs(p.x-sx), h=Math.abs(p.y-sy);
+    rect.style.left=x+'px'; rect.style.top=y+'px'; rect.style.width=w+'px'; rect.style.height=h+'px';
+    const rc = img.getBoundingClientRect();
+    const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h;
+    window._prReg = { x:Math.round(x/rc.width*rw), y:Math.round(y/rc.height*rh),
+                      w:Math.round(w/rc.width*rw), h:Math.round(h/rc.height*rh) };
+    const g = window._prReg;
+    document.getElementById('prInfo').textContent = 'กรอบ: x='+g.x+' y='+g.y+' กว้าง='+g.w+' สูง='+g.h; });
+  window.addEventListener('mouseup', () => { drag=false; });
+}
+async function prSave(){
+  const g = window._prReg;
+  if(!g || g.w<4 || g.h<4){ document.getElementById('prInfo').textContent='⚠ ลากกรอบก่อน'; return; }
+  if(window._prOnSave) await window._prOnSave(g);
+  closeModal();
+}
+
+// ---- ระบบเพชร: ตั้งพื้นที่ + เว็บ ----
+async function openDiamondTools(){
+  if(!needPy('ระบบเพชร')) return;
+  const s = await PY.get_diamond_settings();
+  const reg = s.region||{}, nreg = s.name_region||{};
+  openModal('ตั้งค่าระบบอ่านเพชร','gem',
+    '<div style="display:flex;flex-direction:column;gap:12px">'
+    + '<div style="display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:9px;background:#0A0F19;border:1px solid #1B2434">'
+    +   '<span style="flex:1;font-size:12.5px">พื้นที่ตัวเลขเพชร: <span style="font-family:\'IBM Plex Mono\',monospace;color:#7DD3FC">'+(reg.w?('x='+reg.x+' y='+reg.y+' '+reg.w+'×'+reg.h):'ยังไม่ตั้ง ⚠')+'</span></span>'
+    +   '<button class="in" onclick="pickDiamondRegion(\'region\')" style="padding:7px 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer">ลากกรอบใหม่</button></div>'
+    + '<div style="display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:9px;background:#0A0F19;border:1px solid #1B2434">'
+    +   '<span style="flex:1;font-size:12.5px">พื้นที่ชื่อในเกม (ยืนยันตัวตน): <span style="font-family:\'IBM Plex Mono\',monospace;color:#7DD3FC">'+(nreg.w?('x='+nreg.x+' y='+nreg.y+' '+nreg.w+'×'+nreg.h):'ยังไม่ตั้ง')+'</span></span>'
+    +   '<button class="in" onclick="pickDiamondRegion(\'name_region\')" style="padding:7px 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer">ลากกรอบใหม่</button></div>'
+    + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer"><input type="checkbox" id="dmVerify"'+(s.verify_name?' checked':'')+' onchange="PY.save_diamond_opts(this.checked,null,null)">ยืนยันชื่อในเกมก่อนบันทึกเพชร (กันเขียนผิดบัญชี)</label>'
+    + '<div style="border-top:1px solid #1B2434;padding-top:12px;display:flex;flex-direction:column;gap:9px">'
+    +   '<div style="font-size:12px;color:#90A0B7">เว็บ Save Web Game (ส่งเพชรขึ้นเว็บอัตโนมัติหลังรัน):</div>'
+    +   '<div style="display:flex;gap:8px"><input id="dmWebUrl" class="in" value="'+esc(s.web_base_url||'')+'" placeholder="https://your-app.vercel.app" style="flex:1;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 11px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#C7D2E0">'
+    +   '<button class="in" onclick="PY.save_diamond_opts(null,document.getElementById(\'dmWebUrl\').value,null)" style="padding:0 13px;height:36px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer">บันทึก URL</button></div>'
+    +   '<div style="display:flex;gap:8px">'
+    +   '<button class="in" onclick="matchWebNow()" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="link" width="13" height="13"></i>จับคู่ชื่อกับเว็บ</button>'
+    +   '<button class="in" onclick="pushWebNow()" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="upload-cloud" width="13" height="13"></i>ส่งเพชรขึ้นเว็บตอนนี้</button></div>'
+    + '</div></div>');
+}
+async function pickDiamondRegion(which){
+  const label = which==='region' ? 'พื้นที่ตัวเลขเพชร' : 'พื้นที่ชื่อในเกม';
+  await pickRegionGeneric('ตั้ง'+label, 'ลากกรอบคลุมเฉพาะ'+(which==='region'?'ตัวเลขจำนวนเพชร':'ชื่อตัวละครมุมซ้ายบน'),
+    async g => { await PY.save_diamond_region(g.x, g.y, g.w, g.h, which); openDiamondTools(); });
+}
+async function matchWebNow(){ const r = await PY.match_web_accounts(); if(r) notReady2('จับคู่ได้ '+(r.matched||0)+' รหัส'); }
+async function pushWebNow(){ const r = await PY.push_diamonds_web(); if(r&&r.ok) notReady2('ส่งสำเร็จ '+r.sent+' · พลาด '+r.failed); }
+function notReady2(msg){ if(window.onLog) window.onLog({ts:new Date().toTimeString().slice(0,8),text:msg,kind:'ok'}); }
+
+// ---- รายงานจุดที่ติด ----
+async function openErrorReports(){
+  if(!needPy('รายงานจุดที่ติด')) return;
+  const r = await PY.list_error_reports(30);
+  const rows = (r.reports||[]).map((x,i)=>(
+    '<div onclick="showErrorImage('+i+')" style="display:flex;gap:9px;align-items:center;padding:9px 11px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;cursor:pointer">'
+    +'<i data-lucide="image" width="14" height="14" style="color:#F87171;flex:none"></i>'
+    +'<div style="flex:1;min-width:0"><div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.name||x.email||'-')+' · ขั้น '+esc(String(x.step_path!=null?x.step_path:(x.step||'')))+' '+esc(x.step_desc||'')+'</div>'
+    +'<div style="font-size:10.5px;color:#7C8CA3">'+esc(x.time||'')+' · '+esc(x.device||'')+' · '+esc(x.reason||'')+'</div></div></div>'
+  )).join('');
+  window._errReports = r.reports||[];
+  openModal('รายงานจุดที่ติด ('+(r.reports||[]).length+' ล่าสุด)','file-warning',
+    '<div style="display:flex;gap:8px;margin-bottom:10px"><button class="in" onclick="PY.open_error_folder()" style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="folder-open" width="13" height="13"></i>เปิดโฟลเดอร์</button></div>'
+    +'<div style="display:flex;flex-direction:column;gap:5px">'+(rows||'<div style="font-size:12px;color:#5C6B82">ยังไม่มีรายงาน — จะบันทึกอัตโนมัติเมื่อบัญชีติดปัญหาตอนรัน</div>')+'</div>'
+    +'<div id="errImgBox" style="margin-top:12px"></div>');
+}
+async function showErrorImage(i){
+  const rep = (window._errReports||[])[i];
+  if(!rep || !rep.image) return;
+  const r = await PY.error_image_b64(rep.image);
+  const box = document.getElementById('errImgBox');
+  if(box) box.innerHTML = r&&r.ok ? '<img src="'+r.img+'" style="max-width:100%;border-radius:10px;border:1px solid #24344B">'
+                                  : '<div style="font-size:12px;color:#FCA5A5">เปิดภาพไม่ได้ (ไฟล์อาจถูกลบ)</div>';
+}
+
+// ---- จัดการพรีเซ็ตพิกัด ----
+async function openPresetManager(){
+  if(!needPy('พรีเซ็ตพิกัด')) return;
+  const r = await PY.get_presets();
+  renderPresetManager(r.presets||[]);
+}
+function renderPresetManager(ps){
+  const rows = ps.length ? ps.map(p=>(
+    '<div style="display:flex;gap:9px;align-items:center;padding:8px 11px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434">'
+    +'<i data-lucide="map-pin" width="13" height="13" style="color:#7DD3FC;flex:none"></i>'
+    +'<span style="flex:1;font-size:12.5px">'+esc(p.name)+'</span>'
+    +'<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:#5C6B82">'+Math.round(p.x)+','+Math.round(p.y)+'</span>'
+    +'<button class="in" onclick="delPresetNow(\''+esc(p.name).replace(/'/g,"\\'")+'\')" style="width:26px;height:26px;border-radius:6px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;cursor:pointer;display:flex;align-items:center;justify-content:center"><i data-lucide="trash-2" width="12" height="12"></i></button></div>'
+  )).join('') : '<div style="font-size:12px;color:#5C6B82">ยังไม่มีพรีเซ็ต</div>';
+  openModal('จัดการพรีเซ็ตพิกัด','map-pin',
+    '<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:14px">'+rows+'</div>'
+    +'<div style="border-top:1px solid #1B2434;padding-top:12px;display:flex;flex-direction:column;gap:8px">'
+    +'<div style="font-size:12px;color:#90A0B7">เพิ่มพรีเซ็ตใหม่จากภาพจอ: ตั้งชื่อก่อน แล้วคลิกจุดบนภาพ</div>'
+    +'<div style="display:flex;gap:8px"><input id="npName" class="in" placeholder="ชื่อพรีเซ็ต เช่น ปุ่มยืนยัน" style="flex:1;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 11px;font-size:12.5px;color:#C7D2E0">'
+    +'<button class="in" onclick="addPresetFromShot()" style="display:flex;align-items:center;gap:6px;padding:0 13px;height:36px;border-radius:8px;background:#10B981;color:#04120C;font-size:12px;font-weight:600;cursor:pointer"><i data-lucide="crosshair" width="13" height="13" stroke-width="2"></i>เลือกจุดจากภาพจอ</button></div></div>');
+}
+async function delPresetNow(name){ const r = await PY.delete_preset(name); renderPresetManager(r.presets||[]); }
+async function addPresetFromShot(){
+  const name = ((document.getElementById('npName')||{}).value||'').trim();
+  if(!name){ notReady('ตั้งชื่อพรีเซ็ตก่อน'); return; }
+  const shot = await PY.screenshot_b64();
+  if(!shot || !shot.ok){ notReady('แคปจอไม่ได้ — เลือกจอก่อน'); return; }
+  openModal('คลิกจุดที่จะบันทึกเป็น "'+esc(name)+'"','crosshair',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:8px">คลิกตำแหน่งบนภาพ (จอ '+shot.w+'×'+shot.h+')</div>'
+    +'<div style="position:relative;display:inline-block;max-width:100%"><img id="npImg" src="'+shot.img+'" data-w="'+shot.w+'" data-h="'+shot.h+'" style="max-width:100%;border-radius:10px;border:1px solid #24344B;cursor:crosshair;display:block"></div>');
+  const img = document.getElementById('npImg');
+  img.addEventListener('click', async ev => {
+    const rc = img.getBoundingClientRect();
+    const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h;
+    const x = (ev.clientX-rc.left)/rc.width*rw;
+    const y = (ev.clientY-rc.top)/rc.height*rh;
+    const r = await PY.add_preset(name, x, y);
+    renderPresetManager(r.presets||[]);
+  });
+}
+
+// ---- คอนโซล log เต็ม (คลิกจากแถบล่าง) — ดูทั้งหมด + คัดลอกส่งได้ ----
+const LOG_COLOR = { ok:'#6EE7B7', warn:'#FBBF24', err:'#F87171', info:'#90A0B7' };
+let LOG_POLL = null;
+async function openLogConsole(){
+  if(!hasPy()){
+    openModal('คอนโซลบันทึกการทำงาน','terminal',
+      '<div style="font-size:12.5px;color:#5C6B82">(พรีวิวเบราว์เซอร์ — เปิดผ่าน .exe ถึงจะมี log จริง)</div>');
+    return;
+  }
+  openModal('คอนโซลบันทึกการทำงาน','terminal',
+    '<div style="display:flex;gap:8px;margin-bottom:10px">'
+    + '<button class="in" onclick="copyAllLogs()" style="display:flex;align-items:center;gap:6px;padding:7px 13px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="copy" width="13" height="13" stroke-width="1.75"></i>คัดลอกทั้งหมด</button>'
+    + '<span id="logCount" style="font-size:11.5px;color:#5C6B82;align-self:center"></span>'
+    + '<span style="flex:1"></span>'
+    + '<label style="display:flex;gap:6px;align-items:center;font-size:11.5px;color:#90A0B7;cursor:pointer"><input type="checkbox" id="logFollow" checked>เลื่อนตามอัตโนมัติ</label></div>'
+    + '<div id="logFull" class="sc" style="height:380px;overflow-y:auto;border-radius:9px;background:#060A12;border:1px solid #1B2434;padding:10px;font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;line-height:1.75;user-select:text"></div>');
+  await refreshLogConsole();
+  // อัปเดตสดทุกวิ ระหว่างโมดัลเปิด (หยุดเองเมื่อปิด)
+  if(LOG_POLL) clearInterval(LOG_POLL);
+  LOG_POLL = setInterval(async () => {
+    if(document.getElementById('modalWrap').style.display !== 'flex' || !document.getElementById('logFull')){
+      clearInterval(LOG_POLL); LOG_POLL = null; return;
+    }
+    await refreshLogConsole();
+  }, 1000);
+}
+async function refreshLogConsole(){
+  const r = await PY.get_logs();
+  const box = document.getElementById('logFull');
+  if(!box) return;
+  const logs = (r && r.logs) || [];
+  window._allLogs = logs;
+  box.innerHTML = logs.map(e =>
+    '<div><span style="color:#4A5A72">[' + esc(e.ts||'') + ']</span> <span style="color:' + (LOG_COLOR[e.kind]||LOG_COLOR.info) + '">' + esc(e.text||'') + '</span></div>'
+  ).join('') || '<div style="color:#5C6B82">— ยังไม่มีบันทึก —</div>';
+  const cnt = document.getElementById('logCount');
+  if(cnt) cnt.textContent = logs.length + ' บรรทัด';
+  const follow = document.getElementById('logFollow');
+  if(!follow || follow.checked) box.scrollTop = box.scrollHeight;
+}
+function copyAllLogs(){
+  const logs = window._allLogs || [];
+  const txt = logs.map(e => '[' + (e.ts||'') + '] ' + (e.text||'')).join('\n');
+  try { navigator.clipboard.writeText(txt); } catch(_){}
+  if(window.onLog) window.onLog({ts:new Date().toTimeString().slice(0,8),
+    text:'คัดลอก log ' + logs.length + ' บรรทัดแล้ว — วางส่งได้เลย', kind:'ok'});
+}
+
+// ---- ตั้งค่ารีเซ็ตเกม (การ์ดในหน้าตั้งค่า) ----
+async function loadResetCfg(){
+  if(!hasPy()) return;
+  const s = await PY.get_reset_settings();
+  const g=id=>document.getElementById(id);
+  if(g('rstEnabled')) g('rstEnabled').checked = !!s.enabled;
+  if(g('rstPackage')) g('rstPackage').value = s.package||'';
+  if(g('rstBootWait')) g('rstBootWait').value = s.boot_wait;
+}
+async function saveResetCfg(){
+  if(!needPy('รีเซ็ตเกม')) return;
+  const g=id=>(document.getElementById(id)||{});
+  await PY.save_reset_settings(g('rstEnabled').checked, g('rstPackage').value, g('rstBootWait').value);
+}
