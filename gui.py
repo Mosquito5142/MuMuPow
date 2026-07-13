@@ -241,6 +241,7 @@ ANCHOR_ONFAIL_LABELS = [
     ("abort", "หยุดจอนี้ (กันกดมั่ว)"),
     ("skip", "ข้ามสเต็ปนี้ไป"),
     ("tap", "กดตามพิกัดเดิม (เสี่ยง)"),
+    ("retry", "วนกลับไปทำขั้นที่เลือกใหม่ (ลองซ้ำ)"),
 ]
 ANCHOR_ONFAIL_TO_LABEL = {v: l for v, l in ANCHOR_ONFAIL_LABELS}
 ANCHOR_ONFAIL_FROM_LABEL = {l: v for v, l in ANCHOR_ONFAIL_LABELS}
@@ -5697,7 +5698,8 @@ class MuMuGUI(tk.Tk):
 
         # คงข้อมูล anchor (ภาพ+ตั้งค่า) ที่ไม่ได้อยู่ในฟอร์มไว้ ไม่ให้หายตอนอัปเดตสเต็ป
         old = self.macro_steps[idx] if idx < len(self.macro_steps) else {}
-        for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+        for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout", "anchor_threshold",
+                  "anchor_on_fail", "anchor_retry_target", "anchor_retry_limit"):
             if k in old:
                 step[k] = old[k]
 
@@ -5782,6 +5784,7 @@ class MuMuGUI(tk.Tk):
             "find_yellow_stage": "ด่านเหลือง", "run_set": "ชุดคำสั่ง",
         }
         GREEN, ORANGE, BLUE, RED, GRAY, SEL = "#4CAF50", "#ED9F27", "#4472C4", "#E53935", "#8DA0B8", "#FFD54F"
+        GOLD = "#FBBF24"  # สีเส้นวนกลับ (retry) — ใช้เฉดเดียวกับผังโฟลว์ฝั่งเว็บ ให้ดูเป็นระบบเดียวกัน
 
         dlg = tk.Toplevel(self)
         dlg.title("🔀 ผังงานสคริปต์")
@@ -5886,6 +5889,18 @@ class MuMuGUI(tk.Tk):
             prev_bottom = 65
             for i, step in enumerate(self.macro_steps):
                 cy = cys[i]
+                # บล็อกทางเลือก (if_image) — เช็คก่อนเสมอ เพราะอาจมี anchor_img ติดมาด้วย (ภาพเงื่อนไข)
+                # ไม่ใช่ anchor gate ของ tap/swipe จะปล่อยไหลไปวาดเป็นเพชร abort/skip/retry ผิดความหมาย
+                # ผังนี้แสดงได้แค่ว่า "มีบล็อกทางเลือกตรงนี้" — แก้ไข/ดูเนื้อในกิ่งต้องใช้เว็บ (MuMupow_new)
+                if step.get("type") == "if_image":
+                    down(prev_bottom, cy - 30)
+                    n_then, n_else = len(step.get("then") or []), len(step.get("else") or [])
+                    label = f"{i + 1}. 🔀 {step.get('desc') or 'ถ้าเจอภาพ?'}"
+                    shape(CX, cy, "diamond", GOLD, label, i, 105, 30)
+                    cv.create_text(CX, cy + 42, text=f"เจอ={n_then} ขั้น · ไม่เจอ={n_else} ขั้น (แก้ไขที่เว็บ)",
+                                  fill=GOLD, font=("Segoe UI", 8, "italic"))
+                    prev_bottom = cy + 56
+                    continue
                 anchored = bool(step.get("anchor_img"))
                 th = TYPE_TH.get(step.get("type", "tap"), step.get("type", ""))
                 mark = ("🎯" if step.get("anchor_tap") else "📷") if anchored else ""
@@ -5905,6 +5920,20 @@ class MuMuGUI(tk.Tk):
                         cv.create_line(CX + 100, cy, 430, cy, 430, nx, CX + 92, nx,
                                        fill=ORANGE, width=2, arrow=tk.LAST)
                         cv.create_text(440, cy - 11, text="No→ข้าม", fill=ORANGE, font=("Segoe UI", 8), anchor="w")
+                    elif onf == "retry":
+                        target = step.get("anchor_retry_target")
+                        limit = step.get("anchor_retry_limit", 3)
+                        if target is not None and 0 <= int(target) < n:
+                            ty = cys[int(target)]
+                            bulge = CX + 240
+                            cv.create_line(CX + 100, cy, bulge, cy, bulge, ty, CX + 92, ty,
+                                          fill=GOLD, width=2, arrow=tk.LAST, dash=(5, 3))
+                            cv.create_text(bulge + 8, (cy + ty) // 2,
+                                          text=f"No→วนขั้น {int(target) + 1} (สูงสุด {limit} รอบ)",
+                                          fill=GOLD, font=("Segoe UI", 8), anchor="w")
+                        else:
+                            cv.create_text(CX + 108, cy, text="⚠ No→วนกลับ (ยังไม่ตั้งขั้นเป้าหมาย!)",
+                                          fill=RED, font=("Segoe UI", 8), anchor="w")
                     else:
                         cv.create_text(CX + 108, cy, text="No→กดเลย", fill=BLUE, font=("Segoe UI", 8), anchor="w")
                 else:
@@ -6078,6 +6107,11 @@ class MuMuGUI(tk.Tk):
             else:
                 status.configure(text=f"⚠️ {msg}\nถ้าจอไม่เปลี่ยนแต่ match ต่ำ = เลือกจุดที่ขยับ ลองเลือกจุดนิ่งกว่านี้", fg=ACCENT_ORANGE)
 
+        # รายชื่อขั้นทั้งหมด (สำหรับตัวเลือก 'วนกลับไปขั้นที่...') — dialog เป็น modal (grab_set แล้ว)
+        # self.macro_steps จะไม่ถูกแก้จากที่อื่นระหว่างเปิดอยู่ จึงสร้าง label ครั้งเดียวตรงนี้ได้เลย
+        target_labels = [f"ขั้น {i + 1}: {(s.get('desc') or s.get('type', ''))[:30]}"
+                         for i, s in enumerate(self.macro_steps)]
+
         def save_and_close():
             tb = _crop_bytes()
             if tb is None:
@@ -6090,13 +6124,24 @@ class MuMuGUI(tk.Tk):
             except (TypeError, ValueError):
                 step["anchor_timeout"] = 8.0
             step["anchor_on_fail"] = ANCHOR_ONFAIL_FROM_LABEL.get(onfail_var.get(), "abort")
+            if step["anchor_on_fail"] == "retry":
+                sel_label = retry_target_var.get()
+                if sel_label in target_labels:
+                    step["anchor_retry_target"] = target_labels.index(sel_label)
+                try:
+                    step["anchor_retry_limit"] = max(1, int(float(retry_limit_var.get())))
+                except (TypeError, ValueError):
+                    step["anchor_retry_limit"] = 3
+            else:
+                step.pop("anchor_retry_target", None)
+                step.pop("anchor_retry_limit", None)
             step.setdefault("anchor_threshold", 0.8)
             self.refresh_listbox()
             self.step_listbox.selection_set(idx)
             self.write_log(f"📷 ตั้งพื้นที่ Anchor สเต็ป {idx+1} แล้ว (อย่าลืมกด 'บันทึกโปรไฟล์' เพื่อเก็บลงไฟล์)", "success")
             on_close()
 
-        # ตั้งค่า anchor: ไม่เจอภาพแล้วทำยังไง + รอสูงสุดกี่วิ — ใช้ทำ 'if แบบลูกโซ่ skip'
+        # ตั้งค่า anchor: ไม่เจอภาพแล้วทำยังไง + รอสูงสุดกี่วิ — ใช้ทำ 'if แบบลูกโซ่ skip' หรือ 'วนกลับลองใหม่'
         cfgf = tk.Frame(right, bg=BG_DARK); cfgf.pack(fill="x", pady=(10, 0))
         tk.Label(cfgf, text="ถ้าไม่เจอภาพ:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
         onfail_var = tk.StringVar(value=ANCHOR_ONFAIL_TO_LABEL.get(step.get("anchor_on_fail", "abort"), ANCHOR_ONFAIL_LABELS[0][1]))
@@ -6106,6 +6151,31 @@ class MuMuGUI(tk.Tk):
         timeout_var = tk.StringVar(value=str(step.get("anchor_timeout", 8.0)))
         tk.Entry(cfgf, textvariable=timeout_var, width=8, bg=BG_INPUT, fg=FG_WHITE,
                  insertbackground=FG_WHITE, relief="flat").grid(row=1, column=1, sticky="w", padx=6, pady=(5, 0))
+
+        # กล่อง 'วนกลับไปขั้นที่...' — โชว์เฉพาะตอนเลือกนโยบาย retry (ซ่อน/โชว์ผ่าน trace ของ onfail_var)
+        retryf = tk.Frame(right, bg=BG_DARK)
+        tk.Label(retryf, text="🔁 วนกลับไปขั้นที่:", bg=BG_DARK, fg="#FBBF24", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w")
+        cur_target = step.get("anchor_retry_target")
+        retry_target_var = tk.StringVar(value=(
+            target_labels[int(cur_target)] if (cur_target is not None and 0 <= int(cur_target) < len(target_labels))
+            else (target_labels[0] if target_labels else "")))
+        ttk.Combobox(retryf, textvariable=retry_target_var, state="readonly", width=28,
+                     values=target_labels).grid(row=0, column=1, sticky="w", padx=6)
+        tk.Label(retryf, text="วนได้สูงสุด(รอบ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        retry_limit_var = tk.StringVar(value=str(step.get("anchor_retry_limit", 3)))
+        tk.Entry(retryf, textvariable=retry_limit_var, width=8, bg=BG_INPUT, fg=FG_WHITE,
+                 insertbackground=FG_WHITE, relief="flat").grid(row=1, column=1, sticky="w", padx=6, pady=(5, 0))
+        tk.Label(retryf, text="ครบรอบแล้วยังไม่เจอ จะหยุดจอนี้เอง กันวนไม่รู้จบ", bg=BG_DARK, fg=FG_MUTED,
+                 font=("Segoe UI", 8, "italic"), wraplength=240, justify="left").grid(row=2, column=0, columnspan=2, sticky="w", pady=(3, 0))
+
+        def _toggle_retry_fields(*_a):
+            if onfail_var.get() == ANCHOR_ONFAIL_TO_LABEL.get("retry"):
+                retryf.pack(fill="x", pady=(8, 0), after=cfgf)
+            else:
+                retryf.pack_forget()
+        onfail_var.trace_add("write", _toggle_retry_fields)
+        _toggle_retry_fields()
+
         tk.Label(right, text="🔀 if แบบลูกโซ่: ตั้ง 'ข้ามสเต็ปนี้ไป' + 'รอสั้น 1-2วิ' หลายสเต็ปต่อกัน (เจอแบบไหนกดแบบนั้น)",
                  bg=BG_DARK, fg=FG_MUTED, font=("Segoe UI", 8, "italic"), wraplength=240, justify="left").pack(anchor="w", pady=(3, 0))
 
@@ -6179,7 +6249,8 @@ class MuMuGUI(tk.Tk):
         step = self.macro_steps[idx]
         if not step.get("anchor_img"):
             return
-        for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+        for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout", "anchor_threshold",
+                  "anchor_on_fail", "anchor_retry_target", "anchor_retry_limit"):
             step.pop(k, None)
         self.refresh_listbox()
         self.step_listbox.selection_set(idx)
@@ -7029,16 +7100,20 @@ class MuMuGUI(tk.Tk):
             
         return None
 
-    def _save_failure_report(self, device, account, idx, total, step, reason):
+    def _save_failure_report(self, device, account, step_num, total, step, reason):
         """บันทึก 'จุดที่ติด' ตอนรัน auto: แคปภาพหน้าจอ ณ ตอนนั้น + ข้อมูล (บัญชี/สคริปต์/ขั้นที่เท่าไหร่/
-        เหตุผล) ลง error_reports/ เพื่อย้อนดูภายหลังว่าติดตรงไหน ภาพตอนนั้นเป็นยังไง"""
+        เหตุผล) ลง error_reports/ เพื่อย้อนดูภายหลังว่าติดตรงไหน ภาพตอนนั้นเป็นยังไง
+
+        step_num = เลขขั้นแบบ 1-based พร้อมแสดงผลแล้ว (int ธรรมดา เช่น 4, หรือ str เช่น '4.เจอ.1'
+        สำหรับขั้นที่อยู่ในกิ่ง if_image) — ฟังก์ชันนี้แค่ format แสดงผล ไม่มีการบวกเลขต่อแล้ว"""
         try:
             import datetime, json as _json
             now = datetime.datetime.now()
             folder = os.path.join(self.error_reports_dir, now.strftime("%Y%m%d"))
             os.makedirs(folder, exist_ok=True)
             port = str(device).split(":")[-1]
-            img_path = os.path.join(folder, f"{now.strftime('%H%M%S')}_{port}_step{idx+1}.png")
+            safe_num = str(step_num).replace(".", "-")
+            img_path = os.path.join(folder, f"{now.strftime('%H%M%S')}_{port}_step{safe_num}.png")
             saved = ""
             ok, data = self.controller.capture_screenshot_bytes(device)
             if ok and data:
@@ -7050,13 +7125,13 @@ class MuMuGUI(tk.Tk):
                 "email": (account or {}).get("email", ""),
                 "name": account_display_name(account) if account else "",
                 "profile": getattr(self, "_active_profile_name", ""),
-                "step": idx + 1, "total": total,
+                "step": step_num, "total": total,
                 "step_type": step.get("type", ""), "step_desc": step.get("desc", ""),
                 "reason": reason, "image": saved,
             }
             with open(os.path.join(self.error_reports_dir, "report.jsonl"), "a", encoding="utf-8") as f:
                 f.write(_json.dumps(rec, ensure_ascii=False) + "\n")
-            self.write_log(f"   📸 [{device}] บันทึกจุดที่ติด: ขั้น {idx+1}/{total} "
+            self.write_log(f"   📸 [{device}] บันทึกจุดที่ติด: ขั้น {step_num}/{total} "
                            f"'{step.get('desc','')}' ({reason}) -> {saved or 'แคปจอไม่ได้'}", "warning")
             return saved
         except Exception as e:
@@ -7109,7 +7184,7 @@ class MuMuGUI(tk.Tk):
                 self.write_log(f"   ❌ [{device}] คำสั่ง {label} ล้มเหลว: {out}", "error")
             return ok
 
-        progress = {"idx": -1, "step": None, "total": 0}  # ขั้นล่าสุดที่ทำ (ให้รายงานปัญหารู้ว่าติดตรงไหน)
+        progress = {"num": None, "step": None, "total": 0}  # ขั้นล่าสุดที่ทำ (ให้รายงานปัญหารู้ว่าติดตรงไหน)
 
         def finish():
             result["duration"] = round(time.time() - run_start, 1)
@@ -7119,16 +7194,16 @@ class MuMuGUI(tk.Tk):
             # กันโดมิโน่: ถ้าไม่รีเซ็ต บัญชีถัดไปในคิวจอนี้จะเริ่มจากจอค้าง แล้วพังต่อกันหมด
             if result["status"] in ("device_error", "macro_error"):
                 if not result.get("_reported") and progress["step"] is not None:
-                    self._save_failure_report(device, account, progress["idx"], progress["total"],
+                    self._save_failure_report(device, account, progress["num"], progress["total"],
                                               progress["step"], result.get("error") or "error")
                 self._device_run_state.setdefault(device, {})["status"] = "stuck"
                 self._reset_device_to_login(device)
             return result
 
-        # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี
+        # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี — ไล่เข้ากิ่ง then/else ของ if_image ด้วย
         resolver = lambda name: self.script_sets.get(name)
         try:
-            steps_to_run = expand_steps_with_sets(self.macro_steps, resolver)
+            steps_to_run = self._expand_steps_with_sets_recursive(self.macro_steps, resolver)
         except Exception as e:
             self.write_log(f"❌ เกิดข้อผิดพลาดในการขยายชุดคำสั่ง (Script Sets): {e}", "error")
             result["status"] = "macro_error"
@@ -7140,27 +7215,128 @@ class MuMuGUI(tk.Tk):
         ctx = types.SimpleNamespace(device=device, account=account, record=record, step_delay=0.0)
         handlers = self._get_step_handlers()
 
-        for idx, step in enumerate(steps_to_run):
+        status = self._run_macro_steps(device, account, steps_to_run, ctx, handlers, result,
+                                       progress, st, highlight)
+        if status != "completed":
+            result["status"] = status
+        return finish()
+
+    # จำกัดความลึกกิ่งซ้อนของ if_image (กันสคริปต์ตั้งวนอ้างตัวเองไม่รู้จบ) — ตรงกับ macro_runner.py
+    MAX_BRANCH_DEPTH = 5
+
+    def _tree_has_run_set(self, steps):
+        """เช็คว่ามี run_set ที่ไหนสักแห่ง (รวมในกิ่ง then/else ของ if_image) — พอร์ตจาก macro_runner.py"""
+        for s in steps:
+            if s.get("type") == "run_set":
+                return True
+            for k in ("then", "else"):
+                if s.get(k) and self._tree_has_run_set(s[k]):
+                    return True
+        return False
+
+    def _expand_steps_with_sets_recursive(self, steps, resolver):
+        """ขยาย run_set ให้กลายเป็นขั้นย่อยจริง รวมถึง run_set ที่ซ่อนอยู่ในกิ่ง then/else
+        (expand_steps_with_sets เดิมรู้จักแค่ลิสต์แบน ไม่รู้จักโครงสร้างกิ่ง) — พอร์ตจาก macro_runner.py"""
+        if not self._tree_has_run_set(steps):
+            return steps
+        flat = expand_steps_with_sets(steps, resolver)
+        for s in flat:
+            if s.get("type") == "if_image":
+                for k in ("then", "else"):
+                    if s.get(k):
+                        s[k] = self._expand_steps_with_sets_recursive(s[k], resolver)
+        return flat
+
+    def _eval_if_image_gui(self, device, step):
+        """ประเมินเงื่อนไข if_image: เจอภาพภายใน timeout -> 'then' ไม่เจอ -> 'else'
+        ภาพเงื่อนไขมาจาก anchor_img (base64 ที่ลากกรอบ) หรือ text (ไฟล์ใน templates/)
+        พอร์ตจาก macro_runner.MacroRunner._eval_if_image ให้พฤติกรรมตรงกันเป๊ะทั้งสองแอป"""
+        import base64
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        timeout = float(step.get("timeout", 2.0) or 2.0)
+
+        tmpl_bytes, tmpl_path = None, None
+        b64 = step.get("anchor_img") or ""
+        if b64:
+            try:
+                tmpl_bytes = base64.b64decode(b64) or None
+            except Exception:
+                tmpl_bytes = None
+        if tmpl_bytes is None:
+            tf = (step.get("text") or "").strip()
+            p = os.path.join(self.templates_dir, tf) if tf else ""
+            if p and os.path.exists(p):
+                tmpl_path = p
+        if tmpl_bytes is None and tmpl_path is None:
+            self.write_log(f"   ⚠️ [{device}] if_image: ไม่ได้ตั้งภาพเงื่อนไข -> ถือว่า 'ไม่เจอ'", "warning")
+            return "else"
+
+        deadline = time.time() + timeout
+        while True:
+            if not self.macro_running:
+                return "stopped"
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok:
+                if tmpl_bytes is not None:
+                    found, _x, _y, _m = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
+                else:
+                    found, _x, _y, _m = self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
+                if found:
+                    self.write_log(f"   🔀 [{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' -> ✅ เจอ", "info")
+                    return "then"
+            if time.time() >= deadline:
+                self.write_log(f"   🔀 [{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' -> ❌ ไม่เจอ", "info")
+                return "else"
+            waited = 0.0
+            while waited < 0.4:
+                if not self.macro_running:
+                    return "stopped"
+                time.sleep(0.1)
+                waited += 0.1
+
+    def _run_macro_steps(self, device, account, steps, ctx, handlers, result, progress, st,
+                         highlight, path="", depth=0, disp=""):
+        """รันลิสต์ขั้นตอน — เรียกซ้ำตัวเองเข้าไปในกิ่ง then/else ของ if_image ได้ (พอร์ตจาก macro_runner.py
+        MacroRunner._run_steps ให้ตัวรันทั้งสองแอปมีตรรกะเดียวกันเป๊ะ) mutate result[]/progress[] ให้ตรง
+        ก่อน return เสมอ (ยกเว้น "completed") คืน "completed" | "stopped" | "device_error"
+
+        ใช้ while + ตัวชี้ idx เดินเอง (ไม่ใช่ for) เพราะ anchor_on_fail="retry" ต้องกระโดด
+        ตัวชี้ถอยหลังไปทำขั้นก่อนหน้าใหม่ในลิสต์เดียวกันได้ (วนทำซ้ำ ไม่ใช่แค่ไล่หน้าเดียว)
+        """
+        if depth > self.MAX_BRANCH_DEPTH:
+            self.write_log(f"   ⚠️ [{device}] กิ่งซ้อนเกิน {self.MAX_BRANCH_DEPTH} ชั้น -> ข้ามกิ่งนี้ (กันวนไม่รู้จบ)", "warning")
+            return "completed"
+
+        total = len(steps)
+        in_branch = bool(path)
+        retry_counts = {}  # idx ของขั้นนี้ -> จำนวนรอบที่วนไปแล้ว (รีเซ็ตใหม่ทุกครั้งที่เรียกฟังก์ชันนี้)
+        idx = 0
+        while idx < total:
             if not self.macro_running:
                 result["status"] = "stopped"
-                return finish()
+                return "stopped"
 
+            step = steps[idx]
             t = step.get("type", "tap")
+            here = f"{path}.{idx}" if path else str(idx)
+            num = f"{disp}{idx + 1}"  # เลขขั้นให้คนอ่าน เช่น "4" หรือ "4.เจอ.1"
             desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
-            progress["idx"], progress["step"], progress["total"] = idx, step, len(steps_to_run)
-            st.update({"step_idx": idx + 1, "step_total": len(steps_to_run), "step_desc": desc})
+            if not in_branch:
+                progress["num"], progress["step"], progress["total"] = num, step, total
+                st.update({"step_idx": idx + 1, "step_total": total, "step_desc": desc})
             email_log = ""
             if account:
                 acc_name = account_display_name(account)
                 email_log = f" ({acc_name if acc_name and acc_name != '-' else account['email']})"
-            self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {idx+1}/{len(steps_to_run)}: {desc}...", "info")
-            
-            # ไฮไลท์การทำงานบนลิสต์บ็อกซ์ GUI เฉพาะกรณีที่ระบุไฮไลท์
-            if highlight and idx < self.step_listbox.size():
+            self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {num}"
+                           f"{f'/{total}' if not in_branch else ''}: {desc}...", "info")
+
+            # ไฮไลท์การทำงานบนลิสต์บ็อกซ์ GUI เฉพาะเส้นหลัก (กิ่งไม่มีแถวใน listbox ให้ชี้)
+            if highlight and not in_branch and idx < self.step_listbox.size():
                 self.after(0, lambda i=idx: self.step_listbox.selection_clear(0, tk.END))
                 self.after(0, lambda i=idx: self.step_listbox.selection_set(i))
                 self.after(0, lambda i=idx: self.step_listbox.see(i))
-            
+
             # ดึงค่าหน่วงเวลาเฉพาะของขั้นตอนนี้ (ถ้าไม่มีให้ดึงค่าดีฟอลต์มาใช้)
             step_delay = step.get("delay")
             if step_delay is None:
@@ -7169,6 +7345,29 @@ class MuMuGUI(tk.Tk):
                 step_delay = float(step_delay)
             if step_delay > 0:
                 step_delay = step_delay * random.uniform(0.8, 1.4)
+
+            # ---- บล็อกทางเลือก: เจอภาพ -> กิ่ง then จนจบ แล้วกลับมาต่อเส้นนี้ / ไม่เจอ -> กิ่ง else ----
+            if t == "if_image":
+                branch = self._eval_if_image_gui(device, step)
+                if branch == "stopped":
+                    result["status"] = "stopped"
+                    return "stopped"
+                sub = step.get(branch) or []
+                bname = "เจอ" if branch == "then" else "ไม่เจอ"
+                if sub:
+                    self.write_log(f"   🔀 [{device}] ขั้น {num}: เข้ากิ่ง '{bname}' ({len(sub)} ขั้น)", "info")
+                    r = self._run_macro_steps(device, account, sub, ctx, handlers, result, progress, st,
+                                              highlight, path=f"{here}.{branch}", depth=depth + 1,
+                                              disp=f"{num}.{bname}.")
+                    if r != "completed":
+                        return r
+                    self.write_log(f"   ↩️ [{device}] ขั้น {num}: จบกิ่ง '{bname}' -> กลับเส้นหลัก", "info")
+                else:
+                    self.write_log(f"   🔀 [{device}] ขั้น {num}: กิ่ง '{bname}' ว่าง (ไม่มีขั้นให้ทำ) -> ไปต่อ", "warning")
+                if step_delay > 0:
+                    time.sleep(step_delay)
+                idx += 1
+                continue
 
             # === Anchor gate (ชั้น B): ถ้าสเต็ปมีภาพ anchor -> 'รอจนเห็นภาพนั้นบนจอ' ก่อนทำ ===
             # กันปัญหาจอช้า/ค้างแล้วกดตาบอดจนมั่ว: จอช้า=รอจนตามทัน, จอไม่ตรง=ตามนโยบาย anchor_on_fail
@@ -7179,35 +7378,56 @@ class MuMuGUI(tk.Tk):
                     ctx.anchor_hit = (ax, ay)
                 if gate == "stopped":
                     result["status"] = "stopped"
-                    return finish()
+                    return "stopped"
                 if gate == "missing":
                     policy = step.get("anchor_on_fail", "abort")
-                    if policy == "skip":
-                        self.write_log(f"   ⏭️ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} ({desc}) -> ข้ามขั้นนี้", "warning")
-                        continue
-                    elif policy == "tap":
-                        self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
-                    else:  # abort — หยุดจอนี้ (กันรันมั่ว) จออื่นเดินต่อ + รายงานให้ตามเก็บ
-                        self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {idx+1} ({desc}) -> หยุดจอนี้ กันรันมั่ว", "error")
-                        # บันทึกภาพหน้าจอ ณ จุดที่ติด ก่อนรีเซ็ต (ให้ย้อนดูได้ว่าจอตอนนั้นเป็นยังไง)
-                        self._save_failure_report(device, account, idx, len(steps_to_run), step, "ไม่เจอภาพ anchor (abort)")
+                    if policy == "retry":
+                        target = step.get("anchor_retry_target")
+                        limit = int(step.get("anchor_retry_limit", 3) or 3)
+                        cnt = retry_counts.get(idx, 0)
+                        if target is not None and 0 <= int(target) < total and cnt < limit:
+                            retry_counts[idx] = cnt + 1
+                            self.write_log(f"   🔁 [{device}] ไม่เจอภาพ anchor ขั้น {num} -> วนกลับไปทำขั้นที่ {int(target)+1} ใหม่ "
+                                          f"(รอบที่ {cnt+1}/{limit})", "warning")
+                            idx = int(target)
+                            continue
+                        reason = "ยังไม่ได้ตั้งขั้นเป้าหมายให้วนกลับ" if target is None else f"วนครบ {limit} รอบแล้วยังไม่เจอ"
+                        self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> {reason} -> หยุดจอนี้ กันรันมั่ว", "error")
+                        self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (retry หมดรอบ)")
                         result["_reported"] = True
                         result["status"] = "device_error"
-                        result["error"] = f"anchor_fail: ขั้น {idx+1} {desc}"
-                        return finish()
+                        result["error"] = f"anchor_fail_retry_exhausted: ขั้น {num} {desc}"
+                        return "device_error"
+                    elif policy == "skip":
+                        self.write_log(f"   ⏭️ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> ข้ามขั้นนี้", "warning")
+                        idx += 1
+                        continue
+                    elif policy == "tap":
+                        self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {num} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
+                    else:  # abort — หยุดจอนี้ (กันรันมั่ว) จออื่นเดินต่อ + รายงานให้ตามเก็บ
+                        self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> หยุดจอนี้ กันรันมั่ว", "error")
+                        # บันทึกภาพหน้าจอ ณ จุดที่ติด ก่อนรีเซ็ต (ให้ย้อนดูได้ว่าจอตอนนั้นเป็นยังไง)
+                        self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (abort)")
+                        result["_reported"] = True
+                        result["status"] = "device_error"
+                        result["error"] = f"anchor_fail: ขั้น {num} {desc}"
+                        return "device_error"
 
             # ประมวลผลคำสั่งมาโคร ผ่านตาราง dispatch (handler ต่อชนิด step)
             ctx.step_delay = step_delay
             handler = handlers.get(t)
             if handler is None:
                 self.write_log(f"   ⚠️ [{device}] ไม่รู้จักชนิดขั้นตอน '{t}' -> ข้าม", "warning")
+                idx += 1
                 continue
             signal = handler(ctx, step)
             if signal == "stop":
                 result["status"] = "stopped"
-                return finish()
+                return "stopped"
 
-        return finish()
+            idx += 1
+
+        return "completed"
 
     def _update_anchor_poll(self):
         """อัปเดตค่าความถี่วนเช็ค anchor (เก็บเป็น float แยก) จากช่อง UI — ทำบนเธรดหลัก
@@ -7282,14 +7502,10 @@ class MuMuGUI(tk.Tk):
                 "read_diamond": self._step_read_diamond,
                 "story_auto": self._step_story_auto,
                 "find_yellow_stage": self._step_find_yellow_stage,
-                "if_image": self._step_if_image_unsupported,
+                # หมายเหตุ: if_image ไม่อยู่ในตารางนี้ — ถูกดักจัดการพิเศษใน _run_macro_steps
+                # ก่อนถึงจุด dispatch เสมอ (ต้องแตกกิ่ง then/else ไม่ใช่ handler ปกติ)
             }
         return self._step_handlers
-
-    def _step_if_image_unsupported(self, ctx, step):
-        """บล็อกทางเลือก (if_image) สร้างจากโปรแกรมใหม่ — แอปนี้ยังรันไม่ได้ แจ้งชัดๆ กันเงียบหาย"""
-        self.write_log(f"   ⚠️ [{ctx.device}] สคริปต์นี้มี 'บล็อกทางเลือก (if_image)' "
-                       f"ต้องรันด้วยโปรแกรมใหม่ (MuMupow_new) -> ข้ามบล็อกนี้", "warning")
 
     # ===== Story Auto: เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ) =====
     def _story_button_templates(self, buttons_field=""):
