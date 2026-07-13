@@ -167,7 +167,10 @@ class Api:
             return self.get_state()
         try:
             ok, out = self.controller.connect_device(addr)
-            self.devices = self.controller.get_connected_devices()
+            # ต้องกรองจอซ้ำ (เครื่องจริงเดียวกันอาจโผล่หลายพอร์ต) เหมือน scan() —
+            # ตัวนี้เคยลืมเรียก get_unique_devices ทำให้กดเชื่อมต่อเองแล้วจอซ้ำโผล่ในลิสต์
+            connected = self.controller.get_connected_devices()
+            self.devices = self.controller.get_unique_devices(connected)
             self.selected |= set(self.devices)
             self._push_log(f"เชื่อมต่อ {addr}: {'สำเร็จ' if ok else out}", "ok" if ok else "err")
         except Exception as e:
@@ -456,7 +459,11 @@ class Api:
         q = (search or "").strip().lower()
         groups = {}
         for a in accts:
-            name = a.get("ingamename") or a.get("name") or a.get("title") or a.get("email", "")
+            # ลำดับต้องตรงกับ gui.py's account_display_name เป๊ะ: ชื่อที่ตั้งบนเว็บ (save_web_game_title,
+            # ค่าดิบตอน import ไม่โดนแก้ทับ) ก่อนเสมอ แล้วค่อย title/ingamename/name/email
+            # (เดิมเรียงผิด เอา ingamename ขึ้นก่อน เลยเห็นชื่อในเกมแทนชื่อที่ตั้งในเว็บ)
+            name = (a.get("save_web_game_title") or a.get("title") or a.get("ingamename")
+                    or a.get("name") or a.get("email", ""))
             grp = (a.get("group") or "ทั่วไป").strip()
             if q and q not in (name + " " + a.get("email", "") + " " + grp).lower():
                 continue
@@ -609,6 +616,74 @@ class Api:
         else:
             self._push_log(f"ไม่มีบัญชีใหม่ถูกนำเข้า · ซ้ำ {duplicate} · ไม่ถูกต้อง {invalid}", "warn")
         return {"ok": bool(imported), "imported": imported, "duplicate": duplicate, "invalid": invalid}
+
+    @staticmethod
+    def _norm_name(value):
+        """ปรับชื่อให้เทียบกันง่าย: รวบช่องว่างซ้ำ ตัดหัวท้าย ตัวพิมพ์เล็ก
+        (ใช้สูตรเดียวกับ save_web_game_import._norm_name ให้จับคู่ชื่อตรงกันเป๊ะ)"""
+        return " ".join(str(value or "").split()).strip().lower()
+
+    @staticmethod
+    def _parse_pasted_select_line(ln):
+        """แยกบรรทัดที่วางมา: รองรับทั้ง 'gameAccountId|ชื่อ' (จากปุ่มคัดลอกในเว็บฟาม —
+        แม่นสุดเพราะจับคู่ด้วย id) และชื่อเปล่าๆ บรรทัดเดียว (พิมพ์เอง/รูปแบบเก่า)"""
+        ln = ln.strip()
+        if not ln:
+            return None
+        if "|" in ln:
+            gid, _, label = ln.partition("|")
+            gid = gid.strip()
+            label = label.strip() or gid
+            return {"gid": gid, "label": label}
+        return {"gid": "", "label": ln}
+
+    def select_by_pasted_names(self, raw_text):
+        """วางรายชื่อ/รหัสที่คัดลอกจากหน้า 'ยังไม่ฟาม' ของเว็บ Save Web Game (บรรทัดละ 1 รายการ)
+        → ติ๊กเฉพาะบัญชีที่ตรง ส่วนที่เหลือถอนติ๊กออกให้หมด ทำให้กดรันแล้วฟามได้เฉพาะรหัสที่ยังไม่ฟามจริงๆ
+
+        จับคู่ 2 ชั้น: (1) save_web_game_id ตรงเป๊ะ (แม่นสุด — มาจากตอน import JSON) ก่อนเสมอ
+        (2) ถ้าบัญชีนั้นยังไม่เคย import id เข้ามา ค่อย fallback ไปเทียบชื่อ (name/ingamename/email)"""
+        raw_text = (raw_text or "").strip()
+        if not raw_text:
+            self._push_log("ยังไม่ได้วางรายชื่อ", "warn")
+            return {"ok": False, "matched": 0, "unmatched": []}
+
+        lines = [x for x in (self._parse_pasted_select_line(ln) for ln in raw_text.splitlines()) if x]
+        if not lines:
+            self._push_log("ไม่พบรายชื่อที่วางมา", "warn")
+            return {"ok": False, "matched": 0, "unmatched": []}
+
+        id_set = {x["gid"] for x in lines if x["gid"]}
+        name_set = {self._norm_name(x["label"]) for x in lines}
+
+        accts = self._accounts()
+        matched_ids, matched_names = set(), set()
+        for a in accts:
+            gid = str(a.get("save_web_game_id") or "").strip()
+            hit = bool(gid and gid in id_set)
+            if hit:
+                matched_ids.add(gid)
+            else:
+                keys = {self._norm_name(a.get("name")), self._norm_name(a.get("ingamename")),
+                        self._norm_name(a.get("email"))}
+                keys.discard("")
+                overlap = keys & name_set
+                if overlap:
+                    hit = True
+                    matched_names |= overlap
+            a["checked"] = hit
+
+        self._save_accounts(accts)
+        unmatched = [x["label"] for x in lines
+                    if not (x["gid"] and x["gid"] in matched_ids)
+                    and self._norm_name(x["label"]) not in matched_names]
+        matched = len(lines) - len(unmatched)
+        by_id = len(matched_ids)
+        self._push_log(f"เลือกจากรายชื่อที่วาง: ติ๊กแล้ว {matched}/{len(lines)} รหัส"
+                       + (f" (จับด้วย id {by_id})" if by_id else "")
+                       + (f" · หาไม่เจอ {len(unmatched)}" if unmatched else ""),
+                       "ok" if not unmatched else "warn")
+        return {"ok": True, "matched": matched, "total": len(lines), "unmatched": unmatched}
 
     # ================= หน้าสคริปต์ =================
     _STEP_TH = {"tap": "แตะ", "swipe": "ปัด", "text": "พิมพ์", "keyevent": "ปุ่มระบบ", "sleep": "รอเวลา",
@@ -808,6 +883,18 @@ class Api:
         self.macro_steps.insert(i + 1, step)
         return self.get_steps()
 
+    def duplicate_step(self, idx):
+        """คัดลอกขั้นนี้แล้ววางต่อท้ายทันที (ใช้ก็อปปุ่ม/พิกัดเดิมเวลาต้องสแปมกดซ้ำๆ
+        ไม่ต้องตั้งค่าใหม่ทุกครั้ง) — deep copy กันกิ่ง then/else ของ if_image ใช้ list ร่วมกัน"""
+        try:
+            i = int(idx)
+            copy = json.loads(json.dumps(self.macro_steps[i]))
+            self.macro_steps.insert(i + 1, copy)
+            self._push_log(f"คัดลอกขั้น {i+1} แล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"คัดลอกขั้นไม่สำเร็จ: {e}", "warn")
+        return self.get_steps()
+
     def delete_step(self, idx):
         try:
             self.macro_steps.pop(int(idx))
@@ -918,6 +1005,17 @@ class Api:
             self._push_log(f"ลบบล็อกไม่ได้: {e}", "warn")
         return self.get_flow()
 
+    def flow_duplicate(self, path):
+        """คัดลอกบล็อกนี้ (รวมกิ่ง then/else ถ้าเป็นบล็อกทางเลือก) วางต่อท้ายในเลนเดียวกันทันที"""
+        try:
+            lst, i = self._locate(path)
+            copy = json.loads(json.dumps(lst[i]))   # deep copy กัน then/else อ้าง list ร่วมกัน
+            lst.insert(i + 1, copy)
+            self._push_log("คัดลอกบล็อกแล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"คัดลอกบล็อกไม่ได้: {e}", "warn")
+        return self.get_flow()
+
     def flow_move(self, path, direction):
         try:
             lst, i = self._locate(path)
@@ -972,24 +1070,42 @@ class Api:
         """ลบภาพ anchor/เงื่อนไขออกจากบล็อก"""
         try:
             lst, i = self._locate(path)
-            for k in ("anchor_img", "anchor_region", "anchor_tap",
-                      "anchor_timeout", "anchor_threshold", "anchor_on_fail"):
+            for k in ("anchor_img", "anchor_region", "anchor_tap", "anchor_timeout",
+                      "anchor_threshold", "anchor_on_fail", "anchor_retry_target", "anchor_retry_limit"):
                 lst[i].pop(k, None)
         except Exception as e:
             self._push_log(f"ลบภาพไม่ได้: {e}", "warn")
         return self.get_flow()
 
-    def flow_set_anchor_opts(self, path, on_fail=None, timeout=None, anchor_tap=None):
-        """ตั้งค่า anchor gate: ไม่เจอทำอะไร (abort/skip/tap) / รอสูงสุด / กดตรงที่เจอภาพ"""
+    def list_siblings(self, path):
+        """คืนขั้นทั้งหมดในลิสต์เดียวกับ path (ให้เลือก 'ขั้นเป้าหมาย' ตอนวนกลับ — จำกัดแค่ระดับ
+        เดียวกัน ไม่ข้ามกิ่ง/ไม่ข้ามไปเส้นหลัก กันสับสนว่าวนกลับไปที่ไหนกันแน่)"""
+        try:
+            lst, i = self._locate(path)
+            return {"ok": True, "current": i,
+                    "steps": [{"idx": j, "desc": s.get("desc") or f"ขั้น {j + 1}", "type": s.get("type", "tap")}
+                             for j, s in enumerate(lst)]}
+        except Exception as e:
+            self._push_log(f"อ่านรายการขั้นไม่ได้: {e}", "warn")
+            return {"ok": False, "steps": []}
+
+    def flow_set_anchor_opts(self, path, on_fail=None, timeout=None, anchor_tap=None,
+                             retry_target=None, retry_limit=None):
+        """ตั้งค่า anchor gate: ไม่เจอทำอะไร (abort/skip/tap/retry) / รอสูงสุด / กดตรงที่เจอภาพ
+        retry = วนกลับไปทำขั้นที่ retry_target ใหม่ (ในลิสต์เดียวกัน) สูงสุด retry_limit รอบ ก่อน fallback ไปหยุดจอ"""
         try:
             lst, i = self._locate(path)
             s = lst[i]
-            if on_fail in ("abort", "skip", "tap"):
+            if on_fail in ("abort", "skip", "tap", "retry"):
                 s["anchor_on_fail"] = on_fail
             if timeout is not None:
                 s["anchor_timeout"] = float(timeout)
             if anchor_tap is not None:
                 s["anchor_tap"] = bool(anchor_tap)
+            if retry_target is not None and str(retry_target) != "":
+                s["anchor_retry_target"] = int(retry_target)
+            if retry_limit is not None and str(retry_limit) != "":
+                s["anchor_retry_limit"] = max(1, int(retry_limit))
         except Exception as e:
             self._push_log(f"ตั้งค่า anchor ไม่ได้: {e}", "warn")
         return self.get_flow()
