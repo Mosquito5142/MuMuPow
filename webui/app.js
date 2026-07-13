@@ -103,9 +103,16 @@ function render(s){
   if(s.log && s.log.length) onLog(s.log[s.log.length-1]);
   icons();
 }
+let LAST_PROGRESS_SIG = null;
 function renderProgressList(arr){
   const box = document.getElementById('progressList');
   if(!box) return;
+  // ข้ามรีเรนเดอร์ถ้าข้อมูลเหมือนเดิมทุกตัวอักษร — poll ทุก 1 วิ แต่หลายขั้น (sleep/รอภาพ) ไม่ขยับ
+  // สถานะหลายวิ ถ้ารีบิลด์ DOM+ไอคอนทุกครั้งอยู่ดี จะแย่ง CPU จากจอ ADB โดยเปล่าประโยชน์
+  // โดยเฉพาะตอนรันพร้อมกันหลายจอ (10 จอ = 10 การ์ดรีบิลด์ทุกวิ ทั้งที่ส่วนใหญ่ไม่เปลี่ยน)
+  const sig = JSON.stringify(arr || []);
+  if(sig === LAST_PROGRESS_SIG) return;
+  LAST_PROGRESS_SIG = sig;
   if(arr && arr.length){
     box.innerHTML = arr.map(p=>(
       '<div style="border-radius:11px;background:#121A28;border:1px solid #1B2434;padding:13px 15px;display:flex;flex-direction:column;gap:9px">'
@@ -152,12 +159,12 @@ async function runMacro(){
   const poll = (document.getElementById('anchorPoll')||{}).value || '0.5';
   const pauseBatch = !!(document.getElementById('pauseBatch')||{}).checked;
   const r = await PY.run(poll, pauseBatch);
-  if(r && r.ok){ setRunBtn('running'); startRunPoll(); }
+  if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }
 }
 async function continueBatch(){
   if(!hasPy()) return;
   const r = await PY.continue_batch();
-  if(r && r.ok){ setRunBtn('running'); startRunPoll(); }
+  if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }
 }
 async function stopMacro(){ if(hasPy()) await PY.stop(); AWAITING_BATCH=false; setRunBtn('idle'); }
 function startRunPoll(){
