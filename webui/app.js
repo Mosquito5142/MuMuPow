@@ -375,6 +375,22 @@ async function updateStep(){
 async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; const t=(document.getElementById('sfType')||{}).value||'tap'; await PY.add_step(at, t); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); renderSteps(); selectStep(SEL_STEP); } }
 async function deleteStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.delete_step(SEL_STEP); SEL_STEP=null; renderSteps(); }
 async function moveStep(dir){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.move_step(SEL_STEP,dir); const nj=SEL_STEP+dir; if(nj>=0) SEL_STEP=nj; renderSteps(); }
+async function duplicateStep(){
+  // โหมดโฟลว์ → คัดลอกบล็อกตาม path (ในกิ่งก็คัดลอกได้ วางต่อท้ายในเลนเดียวกัน)
+  if(typeof SCRIPT_VIEW!=='undefined' && SCRIPT_VIEW==='flow'){
+    if(!hasPy()||!SEL_PATH){ notReady('คลิกเลือกบล็อกบนผังก่อน'); return; }
+    FLOW = await PY.flow_duplicate(SEL_PATH);
+    // เลือกบล็อกที่คัดลอกมาใหม่ (วางต่อท้ายตัวเดิมในเลนเดียวกันทันที)
+    const np = SEL_PATH.slice(); np[np.length-1] = np[np.length-1] + 1;
+    await flowSelect(np);
+    return;
+  }
+  if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; }
+  await PY.duplicate_step(SEL_STEP);
+  SEL_STEP = SEL_STEP + 1;  // เลือกตัวที่คัดลอกมาใหม่ (วางต่อท้ายตัวเดิมทันที)
+  renderSteps();
+  selectStep(SEL_STEP);
+}
 async function testStep(){
   // โหมดโฟลว์ → ทดสอบตาม path (บล็อกในกิ่งก็ทดสอบได้ / if_image = เช็คว่าเจอภาพไหม)
   if(typeof SCRIPT_VIEW!=='undefined' && SCRIPT_VIEW==='flow'){
@@ -424,7 +440,9 @@ async function saveGemini(){ if(hasPy()){ await PY.save_gemini(document.getEleme
 async function checkCap(){ if(hasPy()){ const r=await PY.check_capacity(); document.getElementById('setCap').textContent=r.cap; } }
 
 // ---------- boot ----------
-function boot(){ renderNav(); switchPage("home"); refresh(); icons(); }
+// สแกนหา Emulator ทันทีที่เปิดแอป (แอปเดิม Tkinter ทำแบบนี้ตั้งแต่ __init__ — เว็บเคยลืมทำจุดนี้
+// ต้องกดปุ่มสแกนเองก่อนถึงจะเห็นจอ) ใน DEMO mode (ไม่มี Python) scanPorts() แค่ log เฉยๆ ไม่พัง
+function boot(){ renderNav(); switchPage("home"); if(hasPy()){ scanPorts(); } else { refresh(); } icons(); }
 window.addEventListener('pywebviewready', ()=>{ PY = window.pywebview.api; boot(); });
 // เผื่อเปิดในเบราว์เซอร์ธรรมดา (พรีวิว) — ไม่มี pywebviewready
 setTimeout(()=>{ if(!hasPy()) boot(); }, 400);

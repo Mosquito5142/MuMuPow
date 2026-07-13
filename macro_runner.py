@@ -32,9 +32,12 @@ def base_dir():
 
 
 def account_display_name(acc):
+    """ชื่อที่ใช้ 'แสดงผล' ในล็อก/รายงาน — ต้องตรงกับ gui.py's account_display_name เป๊ะ:
+    save_web_game_title (ชื่อดิบจากตอน import เว็บ ไม่โดนแก้ทับ) ก่อนเสมอ แล้วค่อย title/ingamename/name/email"""
     if not acc:
         return "-"
-    return acc.get("title") or acc.get("ingamename") or acc.get("name") or acc.get("email", "-")
+    return (acc.get("save_web_game_title") or acc.get("title") or acc.get("ingamename")
+            or acc.get("name") or acc.get("email") or "-")
 
 
 def substitute_account(text, account):
@@ -401,16 +404,22 @@ class MacroRunner:
         path = ตำแหน่งกิ่ง เช่น "" (เส้นหลัก), "2.then" — ใช้รายงานว่ารันถึงไหน
         disp = เลขขั้นแบบอ่านง่ายสำหรับ log เช่น "" หรือ "4.เจอ." (1-based)
         คืน "completed" | "stopped" | "device_error"
+
+        ใช้ while + ตัวชี้ idx เดินเอง (ไม่ใช่ for) เพราะ anchor_on_fail="retry" ต้อง
+        กระโดดตัวชี้ถอยหลังไปขั้นก่อนหน้าในลิสต์เดียวกันได้ (วนทำซ้ำ ไม่ใช่แค่ไล่หน้าเดียว)
         """
         if depth > self.MAX_BRANCH_DEPTH:
             self.log(f"[{device}] กิ่งซ้อนเกิน {self.MAX_BRANCH_DEPTH} ชั้น → ข้ามกิ่งนี้ (กันวนไม่รู้จบ)", "warn")
             return "completed"
         total = len(self.steps)  # ตัวเลข x/y บนการ์ดอิงเส้นหลักเสมอ (กิ่งใช้ desc นำหน้า ↳ บอกแทน)
         in_branch = bool(path)
+        retry_counts = {}  # idx ของขั้นนี้ -> จำนวนรอบที่วนไปแล้ว (รีเซ็ตใหม่ทุกครั้งที่เรียกฟังก์ชันนี้)
 
-        for idx, step in enumerate(steps):
+        idx = 0
+        while idx < len(steps):
             if not self.running():
                 return "stopped"
+            step = steps[idx]
             t = step.get("type", "tap")
             here = f"{path}.{idx}" if path else str(idx)
             num = f"{disp}{idx + 1}"      # เลขขั้นให้คนอ่าน เช่น "4" หรือ "4.เจอ.1"
@@ -452,6 +461,7 @@ class MacroRunner:
                 d = self._delay(step)
                 if d > 0:
                     time.sleep(d)
+                idx += 1
                 continue
 
             # ---- Anchor gate: รอภาพก่อนกด (กันจอมั่ว) ----
@@ -464,8 +474,23 @@ class MacroRunner:
                     anchor_hit = (ax, ay)
                 if gate == "missing":
                     pol = step.get("anchor_on_fail", "abort")
-                    if pol == "skip":
+                    if pol == "retry":
+                        target = step.get("anchor_retry_target")
+                        limit = int(step.get("anchor_retry_limit", 3) or 3)
+                        cnt = retry_counts.get(idx, 0)
+                        if target is not None and 0 <= int(target) < len(steps) and cnt < limit:
+                            retry_counts[idx] = cnt + 1
+                            self.log(f"[{device}] ไม่เจอภาพขั้น {num} → วนกลับไปทำขั้นที่ {int(target) + 1} ใหม่ "
+                                     f"(รอบที่ {cnt + 1}/{limit})", "warn")
+                            idx = int(target)
+                            continue
+                        reason = "ยังไม่ได้ตั้งขั้นเป้าหมายให้วนกลับ" if target is None else f"วนครบ {limit} รอบแล้วยังไม่เจอ"
+                        self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → {reason} → หยุดจอนี้ กันรันมั่ว", "err")
+                        self._save_failure_report(device, account, here, step, "anchor_missing_retry_exhausted")
+                        return "device_error"
+                    elif pol == "skip":
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} → ข้ามสเต็ปนี้ไป", "warn")
+                        idx += 1
                         continue
                     elif pol == "tap":
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} → กดตามพิกัดเดิม (เสี่ยง)", "warn")
@@ -480,6 +505,8 @@ class MacroRunner:
                 self.log(f"[{device}] ขั้น {num} ล้มเหลว: {e}", "err")
                 self._save_failure_report(device, account, here, step, str(e))
                 return "device_error"
+
+            idx += 1
 
         return "completed"
 

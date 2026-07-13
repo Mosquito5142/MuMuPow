@@ -408,3 +408,33 @@ async function doBatchImport(){
       kind: r.imported ? 'ok' : 'warn'});
   }
 }
+
+// ---- เลือกเฉพาะบัญชีจากรายชื่อที่วาง (เช่น คัดลอกจากหน้า "ยังไม่ฟาม" ของเว็บ Save Web Game) ----
+function openSelectByPaste(){
+  if(!needPy('เลือกเฉพาะจากรายชื่อ')) return;
+  openModal('เลือกเฉพาะจากรายชื่อ (วางจากเว็บฟาม)', 'target',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:10px;line-height:1.6">วางข้อมูลจากปุ่ม 📋 ในหน้า <b>"ฟามรหัส"</b> ของเว็บ Save Web Game (กด Ctrl+V ได้เลย)<br>ระบบจะจับคู่ด้วย <b>id ก่อนเสมอ</b> (แม่นสุด) แล้วค่อย fallback ไปเทียบชื่อถ้าบัญชียังไม่เคย import id — <b>ติ๊กเฉพาะที่ตรง ถอนติ๊กที่เหลือทั้งหมด</b> ให้อัตโนมัติ (พิมพ์ชื่อเปล่าๆ เองทีละบรรทัดก็ยังใช้ได้เหมือนเดิม)</div>'
+    + '<textarea id="sbpText" class="in" placeholder="uuid-xxxx|thanapon_017&#10;uuid-yyyy|somchai_099&#10;... (หรือพิมพ์แค่ชื่อก็ได้)" style="width:100%;height:220px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;padding:11px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#C7D2E0;line-height:1.7;resize:vertical"></textarea>'
+    + '<button class="in" onclick="doSelectByPaste()" style="margin-top:14px;width:100%;display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border-radius:10px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="target" width="15" height="15" stroke-width="2"></i>ติ๊กเฉพาะที่ตรง</button>');
+}
+async function doSelectByPaste(){
+  const text = (document.getElementById('sbpText')||{}).value || '';
+  if(!text.trim()){ notReady('วางรายชื่อก่อน'); return; }
+  const r = await PY.select_by_pasted_names(text);
+  if(r && r.ok){
+    if(typeof renderAccounts === 'function') renderAccounts();
+    const unmatchedNote = (r.unmatched && r.unmatched.length)
+      ? ' — หาไม่เจอ '+r.unmatched.length+' ชื่อ: '+r.unmatched.slice(0,5).join(', ')+(r.unmatched.length>5?'…':'')
+      : '';
+    if(!r.unmatched || !r.unmatched.length) closeModal();
+    else {
+      // เจอบางชื่อไม่ตรง — โชว์รายชื่อที่หาไม่เจอไว้ในโมดัลเดิม ไม่ปิดทันทีให้แก้ก่อนได้
+      const box = document.getElementById('modalBody');
+      if(box) box.insertAdjacentHTML('beforeend',
+        '<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#2E1010;border:1px solid #7F1D1D;font-size:12px;color:#FCA5A5">หาไม่เจอ '+r.unmatched.length+' ชื่อ (สะกดต่างจากในระบบ หรือยังไม่มีบัญชีนี้):<br>'+esc(r.unmatched.join(', '))+'</div>');
+    }
+    window.onLog && window.onLog({ts:new Date().toTimeString().slice(0,8),
+      text:'เลือกจากรายชื่อ: ติ๊กแล้ว '+r.matched+'/'+r.total+' รหัส'+unmatchedNote,
+      kind: r.unmatched && r.unmatched.length ? 'warn' : 'ok'});
+  }
+}

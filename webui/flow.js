@@ -7,6 +7,7 @@ let SCRIPT_VIEW = 'list';     // 'list' | 'flow'
 let FLOW = null;              // tree ล่าสุดจาก get_flow()
 let SEL_PATH = null;          // path ของบล็อกที่เลือก เช่น [1,'then',0]
 let FLOW_HL = null;           // path ไฮไลต์สดตอนรัน (string เช่น "1.then.0")
+let RETRY_ARROWS = [];        // เส้นวนกลับที่ต้องวาด: [{from, to}] (path string ทั้งคู่) — เก็บระหว่างเรนเดอร์บล็อก
 
 const DEMO_FLOW = { name: 'ล็อกอิน + เก็บของ', typeOptions: null, steps: [
   { type: 'start_app', text: 'com.game.app', desc: 'เปิดเกม', delay: 5 },
@@ -37,12 +38,64 @@ async function renderFlow(){
   const cv = document.getElementById('flowCanvas');
   if(!cv) return;
   const steps = FLOW.steps || [];
-  cv.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;padding:14px 6px">'
+  RETRY_ARROWS = [];   // flowChain/flowBlock เก็บคู่ {from,to} เข้ามาระหว่างสร้าง HTML ด้านล่าง
+  const chainHtml = flowChain(steps, []);
+  cv.innerHTML = '<div id="flowInner" style="position:relative;display:flex;flex-direction:column;align-items:center;padding:14px 6px">'
+    + '<svg id="flowArrowsSvg" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>'
     + '<div style="display:flex;align-items:center;gap:7px;padding:7px 16px;border-radius:999px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:#6EE7B7;font-size:12px;font-weight:600"><i data-lucide="play" width="12" height="12" stroke-width="2.5"></i>เริ่ม</div>'
-    + flowChain(steps, [])
+    + chainHtml
     + '<div style="display:flex;align-items:center;gap:7px;padding:7px 16px;border-radius:999px;background:#121A28;border:1px solid #24344B;color:#7C8CA3;font-size:12px;font-weight:600;margin-top:2px"><i data-lucide="flag" width="12" height="12" stroke-width="2"></i>จบ</div>'
     + '</div>';
   icons();
+  drawRetryArrows();  // ต่อจาก icons() เสมอ — ไอคอนแทนที่ <i> ด้วย <svg> ทำให้ขนาดบล็อกเปลี่ยนนิดหน่อย ต้องวัดตำแหน่งหลังสุด
+}
+
+// ---------- วาดเส้นวนกลับ (แบบ flowchart goto-arrow) ให้บล็อกที่ตั้ง anchor_on_fail='retry' ----------
+function drawRetryArrows(){
+  const inner = document.getElementById('flowInner');
+  const svg = document.getElementById('flowArrowsSvg');
+  if(!inner || !svg) return;
+  if(!RETRY_ARROWS.length){ svg.setAttribute('width', 0); svg.setAttribute('height', 0); svg.innerHTML = ''; return; }
+
+  const w = inner.scrollWidth, h = inner.scrollHeight;
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  const ir = inner.getBoundingClientRect();
+
+  let body = '<defs><marker id="retryArrowHead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
+    + '<path d="M0,0 L10,5 L0,10 z" fill="#FBBF24"/></marker></defs>';
+
+  RETRY_ARROWS.forEach(({from, to}, i) => {
+    const a = inner.querySelector('[data-fpath="' + from + '"]');
+    const b = inner.querySelector('[data-fpath="' + to + '"]');
+    if(!a || !b) return;
+    const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+    const x1 = ar.right - ir.left, y1 = ar.top - ir.top + ar.height / 2;
+    const x2 = br.right - ir.left, y2 = br.top - ir.top + br.height / 2;
+
+    if(from === to){
+      // วนกลับหาตัวเอง — วาดเป็นห่วงเล็กๆ ยื่นออกทางขวาของบล็อกเดียวกัน
+      const r = 20;
+      const path = 'M ' + x1 + ' ' + (y1 - 9) + ' C ' + (x1 + r * 2) + ' ' + (y1 - 9) + ', '
+        + (x1 + r * 2) + ' ' + (y1 + 9) + ', ' + (x1 + 4) + ' ' + (y1 + 9);
+      body += '<path d="' + path + '" fill="none" stroke="#FBBF24" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#retryArrowHead)" opacity="0.85"/>';
+      body += svgLabel(x1 + r * 2 + 6, y1, 'ลองซ้ำ');
+      return;
+    }
+
+    const bulge = Math.max(x1, x2) + 36 + i * 22;  // เยื้องออกทีละอันกันเส้นทับกันตอนมีหลายจุด
+    const path = 'M ' + x1 + ' ' + y1 + ' C ' + bulge + ' ' + y1 + ', ' + bulge + ' ' + y2 + ', ' + (x2 + 4) + ' ' + y2;
+    body += '<path d="' + path + '" fill="none" stroke="#FBBF24" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#retryArrowHead)" opacity="0.85"/>';
+    body += svgLabel(bulge + 6, (y1 + y2) / 2, 'ไม่เจอ → วนกลับ');
+  });
+
+  svg.innerHTML = body;
+}
+function svgLabel(x, y, text){
+  const w = 18 + text.length * 6.2;
+  return '<g><rect x="' + x + '" y="' + (y - 9) + '" width="' + w + '" height="18" rx="9" fill="#1A1206" stroke="#7A5A1E" stroke-width="1"/>'
+    + '<text x="' + (x + w / 2) + '" y="' + (y + 3.5) + '" fill="#FBBF24" font-size="9" font-family="\'IBM Plex Mono\',monospace" text-anchor="middle">🔁 ' + esc(text) + '</text></g>';
 }
 
 function pj(path){ return esc(JSON.stringify(path)).replace(/"/g,'&quot;'); }
@@ -88,6 +141,8 @@ function blockWarning(s){
   if((t === 'tap_text' || t === 'wait_for_text') && !String(s.text || '').trim()) return 'ยังไม่ใส่ข้อความ/id ที่จะหา';
   if(t === 'run_set' && !String(s.set || '').trim()) return 'ยังไม่เลือกชุดคำสั่ง';
   if(t === 'start_app' || t === 'stop_app'){ if(!String(s.text || '').trim()) return 'ยังไม่ใส่ชื่อแพ็กเกจแอป'; }
+  if(s.anchor_img && s.anchor_on_fail === 'retry' && s.anchor_retry_target == null)
+    return 'เลือก "วนกลับ" ไว้แต่ยังไม่ได้ตั้งขั้นเป้าหมาย — กด "ตั้งค่ารอภาพ"';
   return null;
 }
 
@@ -139,12 +194,20 @@ function flowBlock(s, path){
       + '</div>';
   }
 
+  // ตั้งวนกลับไว้ (anchor_on_fail='retry' + มีเป้าหมาย) — เก็บคู่ path ไว้วาดเส้นแบบ flowchart หลังเรนเดอร์เสร็จ
+  const hasRetry = hasImg && s.anchor_on_fail === 'retry' && s.anchor_retry_target != null;
+  if(hasRetry){
+    const targetPath = path.slice(0, -1).concat([s.anchor_retry_target]).join('.');
+    RETRY_ARROWS.push({from: pathStr, to: targetPath});
+  }
+
   const warn = blockWarning(s);
   const bColor = warn ? '#F87171' : border;
   return '<div onclick="flowSelect(' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;min-width:220px;max-width:330px;display:flex;gap:9px;align-items:center;padding:10px 13px;border-radius:11px;background:' + (selected?'rgba(16,185,129,.08)':'#0A0F19') + ';border:1.5px solid ' + bColor + '">'
     + '<i data-lucide="' + stepIcon(t) + '" width="15" height="15" stroke-width="1.9" style="color:' + (hasImg?'#FBBF24':'#7DD3FC') + ';flex:none"></i>'
     + '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:500">' + esc(s.desc || typeTH(t)) + '</div>'
     + '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:' + (warn?'#FCA5A5':'#7C8CA3') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (warn ? '⚠ ' + esc(warn) : esc(typeTH(t)) + ' · ' + esc(stepDetail(s))) + '</div></div>'
+    + (hasRetry ? '<i data-lucide="repeat" width="13" height="13" style="color:#FBBF24;flex:none" title="ไม่เจอภาพ → วนกลับไปทำขั้นก่อนหน้าใหม่"></i>' : '')
     + (hasImg ? '<i data-lucide="image" width="13" height="13" style="color:#FBBF24;flex:none" title="มีภาพ anchor"></i>' : '')
     + '</div>';
 }
@@ -339,23 +402,44 @@ async function flowClearImage(){
 async function flowAnchorOpts(){
   if(!hasPy() || !SEL_PATH) return;
   const st = (await PY.flow_get_step(SEL_PATH)).step || {};
+  const sib = await PY.list_siblings(SEL_PATH);
   const cur = st.anchor_on_fail || 'abort';
-  const opt = (v, label) => '<label style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;cursor:pointer;font-size:12.5px"><input type="radio" name="aof" value="' + v + '"' + (cur===v?' checked':'') + '>' + label + '</label>';
+  const opt = (v, label) => '<label style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;cursor:pointer;font-size:12.5px"><input type="radio" name="aof" value="' + v + '" onchange="toggleRetryFields()"' + (cur===v?' checked':'') + '>' + label + '</label>';
+  const steps = (sib && sib.ok) ? sib.steps : [];
+  const targetOpts = steps.map(s =>
+    '<option value="' + s.idx + '"' + (st.anchor_retry_target===s.idx?' selected':'') + '>ขั้น ' + (s.idx+1) + ': ' + esc(s.desc) + '</option>').join('');
   openModal('ตั้งค่ารอภาพก่อนกด', 'settings-2',
     '<div style="display:flex;flex-direction:column;gap:10px">'
     + '<div style="font-size:12px;color:#90A0B7">ถ้ารอจนหมดเวลาแล้ว "ไม่เจอภาพ" ให้ทำยังไง:</div>'
     + opt('abort','หยุดจอนี้ (กันกดมั่ว)') + opt('skip','ข้ามสเต็ปนี้ไป') + opt('tap','กดตามพิกัดเดิม (เสี่ยง)')
+    + opt('retry','🔁 วนกลับไปทำขั้นที่เลือกใหม่ (ลองซ้ำ)')
+    + '<div id="aofRetryBox" style="display:' + (cur==='retry'?'flex':'none') + ';flex-direction:column;gap:8px;padding:10px;border-radius:8px;background:#0A0F19;border:1px dashed #24344B;margin-left:4px">'
+    +   '<div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">วนกลับไปทำขั้นไหน (ในลิสต์เดียวกัน)</span>'
+    +   '<select id="aofTarget" class="in" style="height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 10px;font-size:12.5px;color:#C7D2E0;cursor:pointer">' + targetOpts + '</select></div>'
+    +   '<div style="display:flex;gap:10px;align-items:center"><span style="font-size:12px;color:#90A0B7">วนได้สูงสุด (รอบ):</span>'
+    +   '<input id="aofRetryLimit" class="in" value="' + (st.anchor_retry_limit!=null?st.anchor_retry_limit:3) + '" style="width:60px;height:34px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 10px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
+    +   '<div style="font-size:11px;color:#5C6B82">ครบรอบแล้วยังไม่เจอ จะ fallback ไปหยุดจอนี้เอง กันวนไม่รู้จบ</div>'
+    + '</div>'
     + '<div style="display:flex;gap:10px;align-items:center"><span style="font-size:12px;color:#90A0B7">รอสูงสุด (วิ):</span>'
     + '<input id="aofTimeout" class="in" value="' + (st.anchor_timeout!=null?st.anchor_timeout:8) + '" style="width:70px;height:34px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 10px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
     + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer"><input type="checkbox" id="aofTap"' + (st.anchor_tap?' checked':'') + '>🎯 กดตรงที่เจอภาพ (ปุ่มขยับก็กดโดน)</label>'
     + '<button class="in" onclick="flowSaveAnchorOpts()" style="display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="check" width="15" height="15" stroke-width="2.25"></i>บันทึก</button>'
     + '</div>');
 }
+function toggleRetryFields(){
+  const sel = document.querySelector('input[name="aof"]:checked');
+  const box = document.getElementById('aofRetryBox');
+  if(box) box.style.display = (sel && sel.value === 'retry') ? 'flex' : 'none';
+}
 async function flowSaveAnchorOpts(){
   const sel = document.querySelector('input[name="aof"]:checked');
   const to = parseFloat((document.getElementById('aofTimeout')||{}).value);
+  const isRetry = sel && sel.value === 'retry';
+  const target = isRetry ? (document.getElementById('aofTarget')||{}).value : null;
+  const limit = isRetry ? (document.getElementById('aofRetryLimit')||{}).value : null;
+  if(isRetry && (target === null || target === '')){ notReady('เลือกขั้นเป้าหมายก่อน'); return; }
   FLOW = await PY.flow_set_anchor_opts(SEL_PATH, sel ? sel.value : null, isNaN(to)?null:to,
-                                       (document.getElementById('aofTap')||{}).checked);
+                                       (document.getElementById('aofTap')||{}).checked, target, limit);
   closeModal();
   renderFlow();
 }
