@@ -515,6 +515,10 @@ class MuMuGUI(tk.Tk):
             arrowcolor=FG_MUTED,
         )
 
+        # ปรับแต่งเส้นแบ่งลากได้ (PanedWindow) ให้เข้ากับธีมมืด แทนสีเทาอ่อนดีฟอลต์
+        style.configure("TPanedwindow", background=BG_DARK)
+        style.configure("Sash", sashthickness=6, gripcount=0)
+
     def setup_thai_hotkeys(self):
         """แก้ไขปัญหาปุ่มลัด Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+X ไม่ทำงานเมื่อผู้ใช้เปลี่ยนเป็นคีย์บอร์ดภาษาไทย"""
         def handle_entry_ctrl(event):
@@ -598,18 +602,53 @@ class MuMuGUI(tk.Tk):
 
         self.build_status_bar()
 
-        # 2. พื้นที่เนื้อหาหลัก (แบ่งเป็น แถบซ้ายมือ และ แผงฟังก์ชันหลักขวามือ)
-        content_frame = tk.Frame(self, bg=BG_DARK)
-        content_frame.pack(fill="both", expand=True, padx=12, pady=12)
+        # 2. พื้นที่เนื้อหาหลัก + คอนโซล Log ด้านล่าง — ห่อด้วย PanedWindow แนวตั้งเพื่อให้ลากปรับความสูง
+        #    ของแผง Log ได้ (เส้นแบ่งลากได้), ส่วนแนวนอนข้างในก็ห่อด้วย PanedWindow เช่นกัน
+        #    เพื่อให้ลากปรับความกว้างแถบซ้าย/เนื้อหาหลักได้ตามที่แต่ละคนต้องการ
+        root_paned = ttk.PanedWindow(self, orient="vertical")
+        root_paned.pack(fill="both", expand=True, padx=10, pady=10)
+        self._root_paned = root_paned
 
-        # แถบไอคอนซ้ายสุด (สลับหน้า) -> แถบจัดการอุปกรณ์ -> เนื้อหาหลัก
+        content_frame = tk.Frame(root_paned, bg=BG_DARK)
+        root_paned.add(content_frame, weight=5)
+
+        # แถบไอคอนซ้ายสุด (สลับหน้า) — ความกว้างคงที่ ไม่ต้องลากปรับ
         self.build_nav_rail(content_frame)
-        self.build_sidebar(content_frame)
-        self.build_tabs_panel(content_frame)
 
-        # 3. แผงคอนโซล Log บันทึกระบบด้านล่างสุด
-        self.build_log_panel()
+        # แถบจัดการอุปกรณ์ (ลากปรับได้) -> เนื้อหาหลัก (ลากปรับได้)
+        content_h_paned = ttk.PanedWindow(content_frame, orient="horizontal")
+        content_h_paned.pack(fill="both", expand=True, side="left")
+        self._content_h_paned = content_h_paned
+
+        sidebar = self.build_sidebar(content_h_paned)
+        content_h_paned.add(sidebar, weight=0)
+        tabs_panel = self.build_tabs_panel(content_h_paned)
+        content_h_paned.add(tabs_panel, weight=1)
+
+        # 3. แผงคอนโซล Log บันทึกระบบด้านล่างสุด (ลากปรับความสูงได้)
+        self.build_log_panel(root_paned)
+        root_paned.add(self.log_frame, weight=0)
+
+        self.after(200, self._init_sash_positions)
         self.update_status_summary()
+
+    def _init_sash_positions(self):
+        """ตั้งตำแหน่งเส้นแบ่งเริ่มต้นให้ใกล้เคียงของเดิม (ลากปรับต่อได้อิสระหลังจากนี้)
+        ต้องบังคับ update_idletasks() ก่อนอ่าน winfo_height() ไม่งั้นค่าที่ได้อาจยังเป็นขนาด
+        ตอนเพิ่งสร้าง widget (เล็กกว่าจริง) ทำให้เส้นแบ่งเด้งไปผิดตำแหน่ง (แผง log บวมเต็มจอ)"""
+        self.update_idletasks()
+        try:
+            self._content_h_paned.sashpos(0, 260)
+        except Exception:
+            pass
+        try:
+            total_h = self._root_paned.winfo_height()
+            if total_h < 200:  # ยังไม่ได้ขนาดจริง (เช่น ยังไม่วาดเสร็จ) -> ลองใหม่อีกครั้ง
+                self.after(200, self._init_sash_positions)
+                return
+            self._root_paned.sashpos(0, max(80, total_h - 130))
+        except Exception:
+            pass
 
     def build_status_bar(self):
         status_frame = tk.Frame(self, bg=BG_PANEL, height=34)
@@ -693,8 +732,6 @@ class MuMuGUI(tk.Tk):
 
     def build_sidebar(self, parent):
         sidebar = tk.Frame(parent, bg=BG_PANEL, width=260)
-        sidebar.pack(fill="y", side="left", padx=(0, 12))
-        sidebar.pack_propagate(False)
 
         # หัวข้อแถบซ้าย
         lbl = tk.Label(sidebar, text="จัดการอุปกรณ์ Emulator", bg=BG_PANEL, fg=FG_WHITE, font=("Segoe UI", 12, "bold"))
@@ -741,12 +778,16 @@ class MuMuGUI(tk.Tk):
             lambda e: self.device_canvas.configure(scrollregion=self.device_canvas.bbox("all"))
         )
         
-        self.device_canvas.create_window((0, 0), window=self.device_scroll_frame, anchor="nw", width=230)
+        device_window_id = self.device_canvas.create_window((0, 0), window=self.device_scroll_frame, anchor="nw")
+        # ปรับความกว้างของลิสต์ให้เต็มขนาด canvas เสมอ — สำคัญเพราะตอนนี้แถบซ้ายลากปรับความกว้างได้
+        # (ถ้าไม่ทำ ลิสต์จะค้างความกว้าง 230px เดิม ล้นหรือแคบเกินความจริงตอนลากปรับ)
+        self.device_canvas.bind("<Configure>", lambda e: self.device_canvas.itemconfigure(device_window_id, width=e.width))
         self.device_canvas.configure(yscrollcommand=scrollbar.set)
         
         self.device_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.bind_canvas_mousewheel(self.device_canvas)
+        return sidebar
 
     # นิยามหน้า: key -> (ไอคอน, ป้ายชื่อ, ฟังก์ชันสร้างเนื้อหา, ปักไว้ล่างแถบไหม)
     _NAV_PAGES = [
@@ -761,7 +802,6 @@ class MuMuGUI(tk.Tk):
         """สร้างพื้นที่เนื้อหาหลัก — สลับหน้าด้วยแถบไอคอนซ้าย (build_nav_rail) แทนแท็บบน
         เก็บเป็น Frame ธรรมดาต่อหน้า (ไม่ใช้ ttk.Notebook) โชว์/ซ่อนเองผ่าน select_page()"""
         content = tk.Frame(parent, bg=BG_DARK)
-        content.pack(fill="both", expand=True, side="right")
 
         self._pages = {}
         self._page_order = [k for k, *_ in self._NAV_PAGES]
@@ -773,6 +813,7 @@ class MuMuGUI(tk.Tk):
         self._accounts_tab_widget = self._pages["accounts"]
 
         self.select_page("home")
+        return content
 
     def select_page(self, key):
         """สลับไปแสดงหน้า key (ซ่อนหน้าอื่นทั้งหมด) + ไฮไลท์ปุ่มแถบไอคอนซ้ายให้ตรง"""
@@ -823,13 +864,31 @@ class MuMuGUI(tk.Tk):
     def build_home_tab(self, parent):
         """หน้าแรก: เลือกสคริปต์ที่จะรัน + ปุ่มรัน/หยุด + ความคืบหน้าต่อจอ (เรียก logic เดิม)"""
         parent.configure(bg=BG_DARK)
-        main_pane = tk.Frame(parent, bg=BG_DARK)
+        main_pane = ttk.PanedWindow(parent, orient="horizontal")
         main_pane.pack(fill="both", expand=True)
 
         # ซ้าย: เลือกสคริปต์ + ปุ่มรัน/หยุด + ตัวเลือกการรัน
         left = tk.Frame(main_pane, bg=BG_CARD, width=380, highlightthickness=1, highlightbackground=LINE_SOFT)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 12))
-        pad = tk.Frame(left, bg=BG_CARD); pad.pack(fill="x", padx=16, pady=16)
+        main_pane.add(left, weight=3)
+
+        # ปุ่มรัน/หยุดต้องเห็นตลอดเวลาไม่ว่าจะบีบแผง/หน้าต่างแคบแค่ไหน -> แพคก่อนเป็นอันดับแรก
+        # (จองพื้นที่จากขอบล่างก่อน) ส่วนเนื้อหาด้านบนที่อาจยาวเกินพื้นที่เหลือ ห่อด้วย canvas เลื่อนได้
+        # แทน — เดิมแพคทุกอย่างต่อกันตรงๆ ไม่มีสกรอล พอหน้าต่างถูกย่อ ปุ่มรัน/หยุดที่แพคทีหลังเลย
+        # โดนตัดจนมองไม่เห็น (pack ให้พื้นที่ตามลำดับแพค ไม่ใช่ตาม side เพียงอย่างเดียว)
+        self.build_run_controls(left)
+
+        top_canvas = tk.Canvas(left, bg=BG_CARD, highlightthickness=0)
+        top_scrollbar = ttk.Scrollbar(left, orient="vertical", command=top_canvas.yview)
+        top_inner = tk.Frame(top_canvas, bg=BG_CARD)
+        top_inner.bind("<Configure>", lambda e: top_canvas.configure(scrollregion=top_canvas.bbox("all")))
+        top_window_id = top_canvas.create_window((0, 0), window=top_inner, anchor="nw")
+        top_canvas.bind("<Configure>", lambda e: top_canvas.itemconfigure(top_window_id, width=e.width))
+        top_canvas.configure(yscrollcommand=top_scrollbar.set)
+        top_canvas.pack(side="top", fill="both", expand=True)
+        top_scrollbar.pack(side="right", fill="y")
+        self.bind_canvas_mousewheel(top_canvas)
+
+        pad = tk.Frame(top_inner, bg=BG_CARD); pad.pack(fill="x", padx=16, pady=16)
         tk.Label(pad, text="เลือกสคริปต์ที่จะรัน", bg=BG_CARD, fg=FG_WHITE,
                  font=("Segoe UI", 13, "bold")).pack(anchor="w")
         tk.Label(pad, text="1) ติ๊กจอทางซ้าย   2) เลือกสคริปต์   3) กดรัน", bg=BG_CARD, fg=FG_MUTED,
@@ -839,7 +898,7 @@ class MuMuGUI(tk.Tk):
         self.profile_cb.bind("<<ComboboxSelected>>", self.on_profile_select)
 
         # การ์ด 'พร้อมรันไหม?' — เช็คก่อนกดว่าตั้งครบ (เติมช่องว่าง + กันกดรันแล้วไม่มีอะไรเกิด)
-        pf = tk.Frame(left, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT)
+        pf = tk.Frame(top_inner, bg=BG_PANEL, highlightthickness=1, highlightbackground=LINE_SOFT)
         pf.pack(fill="x", padx=16, pady=(0, 8))
         tk.Label(pf, text="พร้อมรันไหม?", bg=BG_PANEL, fg=FG_WHITE,
                  font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
@@ -852,21 +911,30 @@ class MuMuGUI(tk.Tk):
         self._pf_warn = tk.Label(pf, text="", bg=BG_PANEL, fg=ACCENT_ORANGE, font=("Segoe UI", 9),
                                  anchor="w", wraplength=330, justify="left")
         self._pf_warn.pack(fill="x", padx=12, pady=(4, 10))
-
-        self.build_run_controls(left)
+        self._bind_responsive_wraplength(self._pf_warn, pf, padding=24)
 
         # ขวา: ความคืบหน้าต่อจอ (จำลองสถานะให้ดูระหว่างรัน)
         right = tk.Frame(main_pane, bg=BG_CARD, width=320, highlightthickness=1, highlightbackground=LINE_SOFT)
-        right.pack(side="right", fill="both")
         right.pack_propagate(False)
+        main_pane.add(right, weight=1)
         tk.Label(right, text="ความคืบหน้าต่อจอ", bg=BG_CARD, fg=FG_WHITE,
                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=14, pady=(14, 2))
         tk.Label(right, text="แต่ละจอทำรหัสไหน/สถานะ (ดูรายละเอียดเต็มที่ Log)", bg=BG_CARD,
                  fg=FG_MUTED, font=("Segoe UI", 8)).pack(anchor="w", padx=14, pady=(0, 6))
         ModernButton(right, text="📁 เปิดรายงานปัญหา (ภาพจุดที่ติด)", command=self.open_error_reports_folder,
                      variant="subtle", font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 8))
-        self.home_progress_frame = tk.Frame(right, bg=BG_CARD)
-        self.home_progress_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+
+        # รายการความคืบหน้าอาจยาวเกินพื้นที่ (เช่นเลือกหลายสิบจอ) -> ห่อด้วย canvas เลื่อนได้เช่นกัน
+        progress_canvas = tk.Canvas(right, bg=BG_CARD, highlightthickness=0)
+        progress_scrollbar = ttk.Scrollbar(right, orient="vertical", command=progress_canvas.yview)
+        self.home_progress_frame = tk.Frame(progress_canvas, bg=BG_CARD)
+        self.home_progress_frame.bind("<Configure>", lambda e: progress_canvas.configure(scrollregion=progress_canvas.bbox("all")))
+        progress_window_id = progress_canvas.create_window((0, 0), window=self.home_progress_frame, anchor="nw")
+        progress_canvas.bind("<Configure>", lambda e: progress_canvas.itemconfigure(progress_window_id, width=e.width))
+        progress_canvas.configure(yscrollcommand=progress_scrollbar.set)
+        progress_canvas.pack(side="left", fill="both", expand=True, padx=(14, 0), pady=(0, 12))
+        progress_scrollbar.pack(side="right", fill="y", pady=(0, 12))
+        self.bind_canvas_mousewheel(progress_canvas)
         self._home_progress_sig = None
         self._tick_home_progress()
 
@@ -911,6 +979,16 @@ class MuMuGUI(tk.Tk):
         "stopped": ("หยุดแล้ว", FG_MUTED, FG_MUTED),
         "stuck":   ("ติด · บันทึกแล้ว", ACCENT_RED, "#F87171"),
     }
+
+    def _bind_responsive_wraplength(self, label, container, padding=24, minimum=120):
+        """ผูก wraplength ของ label ให้ตามความกว้างจริงของ container เสมอ — กันข้อความล้นออกนอกแผง
+        ตอนผู้ใช้ลากปรับแผงให้แคบลง (แต่เดิม wraplength เป็นเลขคงที่ ไม่รู้จักขนาดแผงที่ลากปรับได้แล้ว)"""
+        def _update(event=None):
+            w = container.winfo_width()
+            if w > 1:
+                label.configure(wraplength=max(minimum, w - padding))
+        container.bind("<Configure>", _update, add="+")
+        label.after(50, _update)
 
     def _mini_bar(self, parent, frac, color, width=140, height=6):
         """แถบความคืบหน้าบางๆ (ไม่มี widget bar สำเร็จรูปใน Tkinter — ประกอบเองจาก Frame ซ้อน)"""
@@ -975,8 +1053,12 @@ class MuMuGUI(tk.Tk):
 
                 mid = tk.Frame(card, bg=BG_INPUT); mid.pack(fill="x", padx=8, pady=(1, 4))
                 step_txt = f"{who} · {step_desc} ({step_idx}/{step_total})" if step_total else who
+                # การ์ดนี้ถูกสร้างใหม่ทุกรอบรีเฟรชอยู่แล้ว -> คำนวณ wraplength จากความกว้างจริงของแผง
+                # ตอนนั้นเลย ไม่ต้องผูก <Configure> เพิ่ม (กันข้อความล้นตอนแผงขวาถูกลากแคบ/กว้าง)
+                panel_w = self.home_progress_frame.winfo_width()
+                wrap = max(120, panel_w - 90) if panel_w > 1 else 260
                 tk.Label(mid, text=step_txt, bg=BG_INPUT, fg=FG_MUTED, font=("Segoe UI", 8),
-                         anchor="w", wraplength=260).pack(side="left", fill="x", expand=True)
+                         anchor="w", wraplength=wrap).pack(side="left", fill="x", expand=True)
                 if step_total:
                     self._mini_bar(mid, frac, dot).pack(side="right", padx=(6, 0))
         self.after(1200 if self.macro_running else 2500, self._tick_home_progress)
@@ -984,12 +1066,12 @@ class MuMuGUI(tk.Tk):
     def build_macro_tab(self, parent):
         parent.configure(bg=BG_DARK)
 
-        main_pane = tk.Frame(parent, bg=BG_DARK)
+        main_pane = ttk.PanedWindow(parent, orient="horizontal")
         main_pane.pack(fill="both", expand=True, padx=0, pady=0)
-        
+
         # ฝั่งซ้าย: จัดการโปรไฟล์และรายการคำสั่ง (Left Panel)
         left_panel = tk.Frame(main_pane, bg=BG_CARD, width=360, highlightthickness=1, highlightbackground=LINE_SOFT)
-        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 12))
+        main_pane.add(left_panel, weight=3)
         
         # (ตัวเลือกโปรไฟล์ 'เลือกสคริปต์ที่จะรัน' ย้ายไปหน้าแรก — ที่นี่เหลือแค่บันทึก/แก้ไข)
         tk.Label(left_panel, text="แก้ไขสคริปต์ที่โหลดอยู่ (เลือกสคริปต์ได้ที่หน้าแรก)",
@@ -1050,9 +1132,9 @@ class MuMuGUI(tk.Tk):
         
         # ฝั่งขวา: ฟอร์มป้อน/แก้ไขขั้นตอนคำสั่งการบอท (Right Panel)
         right_panel = tk.Frame(main_pane, bg=BG_CARD, width=340, highlightthickness=1, highlightbackground=LINE_SOFT)
-        right_panel.pack(side="right", fill="both")
         right_panel.pack_propagate(False)
-        
+        main_pane.add(right_panel, weight=1)
+
         # (ปุ่มรัน + ตัวเลือกการรัน ย้ายไปหน้าแรกแล้ว — build_run_controls)
 
         # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มได้
@@ -1195,12 +1277,12 @@ class MuMuGUI(tk.Tk):
     def build_accounts_tab(self, parent):
         parent.configure(bg=BG_DARK)
         
-        main_pane = tk.Frame(parent, bg=BG_DARK)
+        main_pane = ttk.PanedWindow(parent, orient="horizontal")
         main_pane.pack(fill="both", expand=True, padx=10, pady=10)
-        
+
         # ฝั่งซ้าย: รายการบัญชีบอททั้งหมด (Left Panel)
         left_panel = tk.Frame(main_pane, bg=BG_CARD, highlightthickness=1, highlightbackground=LINE_SOFT)
-        left_panel.pack(side="left", fill="both", expand=True, padx=(0, 12))
+        main_pane.add(left_panel, weight=3)
 
         left_header = tk.Frame(left_panel, bg=BG_PANEL, height=40)
         left_header.pack(fill="x")
@@ -1256,7 +1338,9 @@ class MuMuGUI(tk.Tk):
             lambda e: self.acc_canvas.configure(scrollregion=self.acc_canvas.bbox("all"))
         )
         
-        self.acc_canvas.create_window((0, 0), window=self.acc_scroll_frame, anchor="nw", width=340)
+        acc_window_id = self.acc_canvas.create_window((0, 0), window=self.acc_scroll_frame, anchor="nw")
+        # ปรับความกว้างรายการบัญชีให้เต็ม canvas เสมอ — กันค้างที่ 340px ตอนลากปรับช่องซ้าย/ขวา
+        self.acc_canvas.bind("<Configure>", lambda e: self.acc_canvas.itemconfigure(acc_window_id, width=e.width))
         self.acc_canvas.configure(yscrollcommand=scrollbar.set)
         
         self.acc_canvas.pack(side="left", fill="both", expand=True)
@@ -1265,9 +1349,9 @@ class MuMuGUI(tk.Tk):
         
         # ฝั่งขวา: ฟอร์มเพิ่มบัญชีใหม่และคู่มือรันบอทวนลูป (Right Panel)
         right_panel = tk.Frame(main_pane, bg=BG_CARD, width=340, highlightthickness=1, highlightbackground=LINE_SOFT)
-        right_panel.pack(side="right", fill="both")
         right_panel.pack_propagate(False)
-        
+        main_pane.add(right_panel, weight=1)
+
         # เพิ่ม scrollable canvas ให้กับ right_panel เพื่อให้เลื่อนดูฟอร์มและคู่มือด้านล่างได้หากความสูงหน้าจอต่ำ
         right_canvas = tk.Canvas(right_panel, bg=BG_CARD, highlightthickness=0)
         right_scrollbar = ttk.Scrollbar(right_panel, orient="vertical", command=right_canvas.yview)
@@ -1334,7 +1418,9 @@ class MuMuGUI(tk.Tk):
             "ใช้ {EMAIL}, {PASSWORD}, {NAME}, {GROUP} ในมาโครเพื่อแทนค่าจากบัญชีที่เลือก "
             "ระบบจะหยิบบัญชีตามคิวและกระจายลง Emulator ที่เลือกไว้"
         )
-        tk.Label(info_box, text=info_text, bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9), justify="left", wraplength=300).pack(anchor="w")
+        info_lbl = tk.Label(info_box, text=info_text, bg=BG_CARD, fg=FG_MUTED, font=("Segoe UI", 9), justify="left", wraplength=300)
+        info_lbl.pack(anchor="w")
+        self._bind_responsive_wraplength(info_lbl, info_box, padding=20)
         
         # วาดรายการบัญชีที่มีอยู่
         self.refresh_accounts_ui()
@@ -2406,9 +2492,8 @@ class MuMuGUI(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def build_log_panel(self):
-        self.log_frame = tk.Frame(self, bg=BG_PANEL, height=130)
-        self.log_frame.pack(fill="x", side="bottom", padx=10, pady=(0, 10))
+    def build_log_panel(self, parent):
+        self.log_frame = tk.Frame(parent, bg=BG_PANEL, height=130)
         self.log_frame.pack_propagate(False)
 
         # แถบหัวข้อคอนโซล Log
@@ -2444,19 +2529,41 @@ class MuMuGUI(tk.Tk):
         self.log_txt.tag_configure("warning", foreground=ACCENT_ORANGE)
 
     def toggle_log_panel(self):
+        """ย่อ/ขยายแผง Log — ตอนนี้แผงถูกจัดการโดย PanedWindow (ลากปรับเองได้) จึงต้องสั่งย้าย
+        ตำแหน่งเส้นแบ่ง (sashpos) แทนการสั่ง configure(height=) ตรงๆ แบบเดิม"""
         expanded = not self.log_expanded.get()
         self.log_expanded.set(expanded)
 
         if expanded:
-            self.log_frame.configure(height=130)
             self.log_txt.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 10))
             self.log_scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=(0, 10))
             self.log_toggle_btn.configure(text="ย่อ")
+            target_h = getattr(self, "_log_panel_expanded_height", 130) or 130
         else:
+            self._log_panel_expanded_height = self._current_log_panel_height()
             self.log_txt.pack_forget()
             self.log_scrollbar.pack_forget()
-            self.log_frame.configure(height=42)
             self.log_toggle_btn.configure(text="ขยาย")
+            target_h = 42
+        self._set_log_panel_height(target_h)
+
+    def _current_log_panel_height(self):
+        try:
+            total_h = self._root_paned.winfo_height()
+            pos = self._root_paned.sashpos(0)
+            return max(42, total_h - pos)
+        except Exception:
+            return 130
+
+    def _set_log_panel_height(self, height):
+        def _apply():
+            try:
+                total_h = self._root_paned.winfo_height()
+                if total_h > 10:
+                    self._root_paned.sashpos(0, max(80, total_h - height))
+            except Exception:
+                pass
+        self.after(10, _apply)
 
     # --- ฟังก์ชันช่วยเหลือเกี่ยวกับระบบ Log ---
     def write_log(self, message, log_type="info"):

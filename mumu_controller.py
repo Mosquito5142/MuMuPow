@@ -1404,7 +1404,7 @@ def ocr_find_button(screen_bytes, keywords=None, lang=None, scale=2):
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         si.wShowWindow = subprocess.SW_HIDE
         res = subprocess.run(
-            [cmd, tmp, "stdout", "-l", lang, "--psm", "11", "tsv"],
+            [cmd, *_tessdata_args(), tmp, "stdout", "-l", lang, "--psm", "11", "tsv"],
             capture_output=True, startupinfo=si, timeout=30,
         )
         tsv = res.stdout.decode("utf-8", errors="ignore")
