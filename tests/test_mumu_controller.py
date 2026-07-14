@@ -1,15 +1,19 @@
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 import cv2
 import numpy as np
 
+import mumu_controller
 from mumu_controller import (
     MuMuController,
     escape_adb_text,
     find_element_center,
     list_ui_elements,
+    ocr_find_button,
+    set_tessdata_dir,
 )
 
 
@@ -235,6 +239,50 @@ class ReadNumberInRegionTests(unittest.TestCase):
             ok, number, raw = ctrl.read_number_in_region(b"", {"x": 0, "y": 0, "w": 10, "h": 10}, d)
         self.assertFalse(ok)
         self.assertIsNone(number)
+
+
+class OcrFindButtonTessdataArgsTests(unittest.TestCase):
+    """กันบั๊กซ้ำ: ocr_find_button ต้องส่ง --tessdata-dir ไปกับคำสั่งเรียก tesseract.exe เสมอเมื่อ
+    แอปตั้งโฟลเดอร์ tessdata ของตัวเองไว้ (set_tessdata_dir) — ไม่งั้น Tesseract จะมองข้ามโฟลเดอร์
+    ที่แอปเตรียม tha.traineddata ไว้ให้ แล้วไปหาไฟล์ภาษาที่โฟลเดอร์ติดตั้งระบบแทน ซึ่งอาจไม่มี
+    ภาษาไทย (เช่น ลงผ่าน `winget install UB-Mannheim.TesseractOCR` แบบเงียบ ได้แค่ eng) ทำให้
+    Story Auto อ่านปุ่มภาษาไทยไม่ได้ทั้งที่แอปมีไฟล์ tessdata/tha.traineddata แถมมาให้แล้ว"""
+
+    def setUp(self):
+        self._orig_tessdata_dir = mumu_controller._TESSDATA_DIR
+        self._orig_langs_cache = mumu_controller._TESS_LANGS
+        self._orig_tess_cmd = mumu_controller._TESSERACT_CMD
+
+    def tearDown(self):
+        mumu_controller._TESSDATA_DIR = self._orig_tessdata_dir
+        mumu_controller._TESS_LANGS = self._orig_langs_cache
+        mumu_controller._TESSERACT_CMD = self._orig_tess_cmd
+
+    def test_ocr_find_button_passes_tessdata_dir_when_configured(self):
+        set_tessdata_dir(r"C:\fake\tessdata")
+        mumu_controller._TESSERACT_CMD = r"C:\fake\tesseract.exe"  # ข้ามการค้นหาไฟล์ tesseract.exe จริง
+
+        captured = {}
+
+        def fake_run(cmd_list, **kwargs):
+            captured["cmd"] = cmd_list
+
+            class FakeResult:
+                stdout = b""
+
+            return FakeResult()
+
+        screen = np.zeros((80, 200, 3), dtype=np.uint8)
+        ok_enc, png = cv2.imencode(".png", screen)
+        self.assertTrue(ok_enc)
+
+        with unittest.mock.patch.object(mumu_controller.subprocess, "run", side_effect=fake_run):
+            ocr_find_button(png.tobytes(), lang="tha+eng")
+
+        self.assertIn("cmd", captured, "ไม่ได้เรียก subprocess.run เลย")
+        self.assertIn("--tessdata-dir", captured["cmd"])
+        idx = captured["cmd"].index("--tessdata-dir")
+        self.assertEqual(captured["cmd"][idx + 1], r"C:\fake\tessdata")
 
 
 if __name__ == "__main__":
