@@ -1,0 +1,26 @@
+[
+  {
+    "email": "user@example.com",
+    "password": "your-password-here",
+    "checked": true,
+    "group": "ชุดที่ 1",
+    "ingamename": "MyHero",
+    "name": "ชื่อเรียกของบัญชีนี้",
+    "refresh_token": "",
+    "client_id": "",
+    "save_web_game_id": "",
+    "save_web_game_title": ""
+  },
+  {
+    "email": "another@example.com",
+    "password": "your-password-here",
+    "checked": false,
+    "group": "ชุดที่ 2",
+    "ingamename": "",
+    "name": "",
+    "refresh_token": "",
+    "client_id": "",
+    "save_web_game_id": "",
+    "save_web_game_title": ""
+  }
+]
