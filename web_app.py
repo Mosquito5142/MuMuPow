@@ -603,9 +603,15 @@ class Api:
             if q and q not in (name + " " + a.get("email", "") + " " + grp).lower():
                 continue
             tok = (a.get("refresh_token") or "")[:14]
+            # 'name'/'tok' = ค่าไว้ "โชว์" ในลิสต์เท่านั้น (name อาจมาจาก save_web_game_title,
+            # tok ถูกหั่นให้สั้น) — ห้ามเอาไปเขียนกลับลงไฟล์เด็ดขาด
+            # ฟอร์มแก้ไขต้องใช้ 'rawname'/'token'/'password' = ค่าดิบจากไฟล์ ไม่งั้นกดบันทึกแล้วข้อมูลพัง
             groups.setdefault(grp, []).append({
                 "email": a.get("email", ""), "name": name, "grp": grp,
                 "tok": (tok + "…") if tok else "—",
+                "rawname": a.get("name", ""),
+                "password": a.get("password", ""),
+                "token": a.get("refresh_token") or "",
                 "checked": a.get("checked", True), "dot": self._acct_dot(a),
             })
         group_names = sorted({(a.get("group") or "ทั่วไป").strip() for a in accts}) or ["ทั่วไป"]
@@ -684,10 +690,18 @@ class Api:
                 found = a
                 break
         target = found if found else {}
+
+        # ค่าลับ (รหัสผ่าน/โทเคน) ที่ส่งมาว่าง = "ไม่แก้" ไม่ใช่ "ล้างทิ้ง" — กันบัญชีเดิมพัง
+        # ตอนแก้แค่ชื่อ/กลุ่ม (ฝั่ง Tkinter กันด้วยการบังคับกรอกรหัสผ่านก่อนบันทึก)
+        def keep(new_val, key):
+            new_val = (new_val or "").strip()
+            return new_val if new_val else (target.get(key) or "")
+
         target.update({
             "email": email, "name": payload.get("name", ""),
-            "password": payload.get("password", ""), "group": payload.get("group") or "ทั่วไป",
-            "refresh_token": payload.get("token", ""),
+            "password": keep(payload.get("password"), "password"),
+            "group": payload.get("group") or "ทั่วไป",
+            "refresh_token": keep(payload.get("token"), "refresh_token"),
         })
         target.setdefault("checked", True)
         if not found:

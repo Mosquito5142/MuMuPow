@@ -30,6 +30,9 @@ const hasPy = () => PY !== null;
 function icons(){ if(window.lucide) lucide.createIcons(); }
 
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// ใส่ค่าลงใน onclick="fn('...')" ให้ปลอดภัย: ต้อง escape ให้ JS ก่อน (\ และ ') แล้วค่อย escape ให้ HTML
+// สลับลำดับไม่ได้ — เบราว์เซอร์ decode entity ก่อน JS parse เสมอ (&#39; จะกลายเป็น ' แล้วปิดสตริงกลางคัน)
+function jsq(s){ return esc(String(s==null?"":s).replace(/\\/g,"\\\\").replace(/\x27/g,"\\\x27")); }
 
 // ---------- nav rail ----------
 let CURRENT = "home";
@@ -222,9 +225,14 @@ const DEMO_ACC = {groupNames:["หลัก (A)","สำรอง (B)"], groups:
     {email:"d@x.com",name:"thanapon_088",grp:"สำรอง (B)",tok:"—",checked:false,dot:"#58677E"},
     {email:"e@x.com",name:"thanapon_090",grp:"สำรอง (B)",tok:"ya29.a0Af…4Rt",checked:true,dot:"#58677E"}]},
 ]};
+// เก็บข้อมูลบัญชีดิบไว้ฝั่ง JS แล้วให้ปุ่มดินสออ้างด้วยอีเมล — ไม่ยัด JSON (ที่มีรหัสผ่าน/โทเคน)
+// ลงใน onclick attribute เพราะอักขระอย่าง & หรือ ' จะทำ HTML พังแล้วฟอร์มเติมค่าเพี้ยน
+let ACCT_CACHE = {};
 async function renderAccounts(){
   const q = (document.getElementById('accSearch')||{}).value || "";
   const s = hasPy() ? await PY.get_accounts_grouped(q) : DEMO_ACC;
+  ACCT_CACHE = {};
+  (s.groups||[]).forEach(g=>(g.accounts||[]).forEach(a=>{ ACCT_CACHE[a.email] = a; }));
   const dl = document.getElementById('groupNamesList');
   if(dl) dl.innerHTML = (s.groupNames||[]).map(n=>'<option value="'+esc(n)+'">').join("");
   const box = document.getElementById('accGroups');
@@ -240,7 +248,7 @@ async function renderAccounts(){
         + '<span style="width:9px;height:9px;border-radius:50%;background:'+a.dot+';flex:none"></span>'
         + '<span onclick="toggleAccount(\''+a.email+'\')" style="width:16px;height:16px;border-radius:5px;flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;background:'+(a.checked?'#10B981':'transparent')+';border:1.5px solid '+(a.checked?'#10B981':'#2A3547')+'"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:'+(a.checked?'1':'0')+'"></i></span>'
         + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">'+esc(a.name)+'</div><div style="font-size:11px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">กลุ่ม '+esc(a.grp)+' · '+esc(a.tok)+'</div></div>'
-        + '<i data-lucide="pencil" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" onclick=\'editAccount('+JSON.stringify(a).replace(/\x27/g,"&#39;")+')\'></i>'
+        + '<i data-lucide="pencil" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" onclick="editAccount(\''+jsq(a.email)+'\')"></i>'
         + '<i data-lucide="x" width="15" height="15" stroke-width="2" style="color:#455266;cursor:pointer" onclick="deleteAccount(\''+a.email+'\')"></i>'
         + '</div>')).join("")
     + '</div>')).join("") || '<div style="font-size:12.5px;color:#5C6B82;padding:8px 2px">ไม่พบบัญชี</div>';
@@ -257,7 +265,17 @@ async function moveSelectedGroup(){
   if(!v.trim()){ notReady('พิมพ์ชื่อกลุ่มก่อน'); return; }
   if(hasPy()){ await PY.move_selected_to_group(v); document.getElementById('moveGroupInput').value=''; renderAccounts(); }
 }
-function editAccount(a){ document.getElementById('accEmail').value=a.email; document.getElementById('accName').value=a.name; document.getElementById('accGroup').value=a.grp; document.getElementById('accToken').value=(a.tok||'').replace('…',''); document.getElementById('accFormTitle').textContent='แก้ไขบัญชี'; }
+// ต้องใช้ค่าดิบ (rawname/password/token) ไม่ใช่ค่าที่ใช้โชว์ในลิสต์ (name = ชื่อที่คำนวณมาโชว์,
+// tok = โทเคนที่ถูกหั่นเหลือ 14 ตัว) ไม่งั้นกดบันทึกแล้วเขียนทับของจริงด้วยค่าที่เพี้ยน
+function editAccount(email){
+  const a = ACCT_CACHE[email]; if(!a) return;
+  document.getElementById('accEmail').value = a.email;
+  document.getElementById('accName').value = a.rawname || '';
+  document.getElementById('accGroup').value = a.grp;
+  document.getElementById('accPass').value = a.password || '';
+  document.getElementById('accToken').value = a.token || '';
+  document.getElementById('accFormTitle').textContent = 'แก้ไขบัญชี';
+}
 function resetAccForm(){ ['accEmail','accName','accToken','accPass'].forEach(i=>document.getElementById(i).value=''); document.getElementById('accGroup').value='ทั่วไป'; document.getElementById('accFormTitle').textContent='เพิ่ม / แก้ไขบัญชี'; }
 async function saveAccount(){ if(!hasPy()) return; const p={email:accEmail.value,name:accName.value,group:accGroup.value,password:accPass.value,token:accToken.value}; await PY.save_account(p); resetAccForm(); renderAccounts(); }
 
