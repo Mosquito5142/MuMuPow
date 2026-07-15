@@ -91,6 +91,10 @@
             </div>
           </div>
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+            <div id="pausedPanel" style="display:none;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;gap:8px"><i data-lucide="alert-triangle" width="15" height="15" stroke-width="2" style="color:#FBBF24"></i><span style="font-size:14px;font-weight:600;color:#FBBF24">จอที่รอแก้ไข</span><span style="font-size:11.5px;color:#90A0B7">ไม่เจอตามที่ตั้งไว้ — จอค้างรอไว้ ไม่รีเซ็ต ไปเพิ่มเงื่อนไขแล้วรันต่อได้เลย</span></div>
+              <div id="pausedList" style="display:flex;flex-direction:column;gap:8px"></div>
+            </div>
             <div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:14px;font-weight:600">ความคืบหน้าต่อจอ</span><button class="in" style="display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:8px;border:1px solid #24344B;color:#90A0B7;font-size:12px;cursor:pointer"><i data-lucide="image" width="14" height="14" stroke-width="1.75"></i>รายงานปัญหา</button></div>
             <div id="progressList" style="display:flex;flex-direction:column;gap:10px"></div>
           </div>
@@ -263,8 +267,8 @@
 </div>
 
 <!-- ?v= กันแคชเก่า (WebView2/เบราว์เซอร์แคชไฟล์ .js ข้ามเวอร์ชัน ทำปุ่มใหม่หาย) — บัมพ์เลขทุกครั้งที่แก้ JS -->
-<script src="app.js?v=20260713d"></script>
-<script src="tools.js?v=20260713d"></script>
-<script src="flow.js?v=20260713d"></script>
+<script src="app.js?v=20260715a"></script>
+<script src="tools.js?v=20260715a"></script>
+<script src="flow.js?v=20260715a"></script>
 </body>
 </html>

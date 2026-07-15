@@ -403,7 +403,7 @@ async function flowAnchorOpts(){
   if(!hasPy() || !SEL_PATH) return;
   const st = (await PY.flow_get_step(SEL_PATH)).step || {};
   const sib = await PY.list_siblings(SEL_PATH);
-  const cur = st.anchor_on_fail || 'abort';
+  const cur = st.anchor_on_fail || 'pause';
   const opt = (v, label) => '<label style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;cursor:pointer;font-size:12.5px"><input type="radio" name="aof" value="' + v + '" onchange="toggleRetryFields()"' + (cur===v?' checked':'') + '>' + label + '</label>';
   const steps = (sib && sib.ok) ? sib.steps : [];
   const targetOpts = steps.map(s =>
@@ -411,8 +411,12 @@ async function flowAnchorOpts(){
   openModal('ตั้งค่ารอภาพก่อนกด', 'settings-2',
     '<div style="display:flex;flex-direction:column;gap:10px">'
     + '<div style="font-size:12px;color:#90A0B7">ถ้ารอจนหมดเวลาแล้ว "ไม่เจอภาพ" ให้ทำยังไง:</div>'
-    + opt('abort','หยุดจอนี้ (กันกดมั่ว)') + opt('skip','ข้ามสเต็ปนี้ไป') + opt('tap','กดตามพิกัดเดิม (เสี่ยง)')
+    // 'pause' เป็นค่าเริ่มต้น/ตัวหลักแล้ว (เรียนรู้ทีละจอ) เลยเอาไว้บนสุด — ระบบไม่รีเซ็ตเกมอัตโนมัติอีกแล้ว
+    // ไม่ว่าจะเลือกอันไหนก็ตาม (retry ยังต้องตั้งเองเสมอ ไม่ใช่ค่าเริ่มต้น)
+    + opt('pause','⏸ หยุดรอผู้ใช้แก้ไข (เรียนรู้ทีละจอ) — แนะนำ')
+    + '<div style="display:' + (cur==='pause'?'block':'none') + ';font-size:11px;color:#5C6B82;margin-left:4px" id="aofPauseNote">จอจะหยุดค้างไว้ตามที่เห็น (ไม่รีเซ็ตเกม) แล้วขึ้นในแผง "จอที่รอแก้ไข" หน้าแรก — เข้าไปเพิ่มเงื่อนไข/if แล้วกด "รันต่อ" ได้เลย</div>'
     + opt('retry','🔁 วนกลับไปทำขั้นที่เลือกใหม่ (ลองซ้ำ)')
+    + opt('skip','ข้ามสเต็ปนี้ไป') + opt('tap','กดตามพิกัดเดิม (เสี่ยง)') + opt('abort','หยุดจอนี้เฉยๆ (ไม่รอ ไม่วน)')
     + '<div id="aofRetryBox" style="display:' + (cur==='retry'?'flex':'none') + ';flex-direction:column;gap:8px;padding:10px;border-radius:8px;background:#0A0F19;border:1px dashed #24344B;margin-left:4px">'
     +   '<div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">วนกลับไปทำขั้นไหน (ในลิสต์เดียวกัน)</span>'
     +   '<select id="aofTarget" class="in" style="height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 10px;font-size:12.5px;color:#C7D2E0;cursor:pointer">' + targetOpts + '</select></div>'
@@ -430,6 +434,8 @@ function toggleRetryFields(){
   const sel = document.querySelector('input[name="aof"]:checked');
   const box = document.getElementById('aofRetryBox');
   if(box) box.style.display = (sel && sel.value === 'retry') ? 'flex' : 'none';
+  const note = document.getElementById('aofPauseNote');
+  if(note) note.style.display = (sel && sel.value === 'pause') ? 'block' : 'none';
 }
 async function flowSaveAnchorOpts(){
   const sel = document.querySelector('input[name="aof"]:checked');
@@ -455,4 +461,72 @@ function flowApplyHighlight(progress){
   if(np === FLOW_HL) return;   // ไม่เปลี่ยน → ไม่ต้องวาดใหม่
   FLOW_HL = np;                // null = รันจบ → เคลียร์ไฮไลต์
   renderFlow();
+}
+
+// ================= จอที่รอแก้ไข (anchor_on_fail='pause') =================
+// เรียนรู้ทีละจอ: รันแล้วไม่เจอตามที่ตั้งไว้ -> จอหยุดค้าง (ไม่รีเซ็ต) -> ผู้ใช้เปิดที่นี่ ดูภาพที่ค้าง
+// -> ไปเพิ่มเงื่อนไข/if ในผัง -> กด "รันต่อ" ไปต่อจากจุดเดิมด้วยบัญชี/จอเดิม
+let PAUSED_ITEMS = [];
+function pathStrToArr(p){
+  return String(p||'').split('.').filter(s=>s!=='').map(s => (s==='then'||s==='else') ? s : parseInt(s,10));
+}
+async function pollPausedList(){
+  if(!hasPy()) return;
+  const r = await PY.list_paused();
+  renderPausedList((r && r.items) || []);
+}
+function renderPausedList(items){
+  PAUSED_ITEMS = items || [];
+  const panel = document.getElementById('pausedPanel');
+  const box = document.getElementById('pausedList');
+  if(!panel || !box) return;
+  if(!PAUSED_ITEMS.length){ panel.style.display = 'none'; box.innerHTML = ''; return; }
+  panel.style.display = 'flex';
+  box.innerHTML = PAUSED_ITEMS.map(it => (
+    '<div style="display:flex;gap:12px;align-items:center;border-radius:11px;background:#1A1608;border:1px solid #7A5A1E;padding:11px 13px">'
+    + (it.shot ? '<img src="data:image/png;base64,' + it.shot + '" style="width:54px;height:96px;object-fit:cover;border-radius:7px;border:1px solid #7A5A1E;flex:none;cursor:pointer" onclick="previewPausedShot(\'' + it.device + '\')">'
+               : '<div style="width:54px;height:96px;border-radius:7px;background:#0A0F19;border:1px solid #7A5A1E;flex:none"></div>')
+    + '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">'
+    +   '<div style="display:flex;align-items:center;gap:8px"><span style="font-weight:600;font-size:13px">จอ ' + esc(it.port) + '</span><span style="font-size:11px;color:#7C8CA3">' + esc(it.ts) + '</span></div>'
+    +   '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#C7D2E0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(it.name || it.email || '-') + '</div>'
+    +   '<div style="font-size:12px;color:#FBBF24;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(it.desc || 'ไม่เจอภาพตามที่ตั้งไว้') + '</div>'
+    + '</div>'
+    + '<div style="display:flex;flex-direction:column;gap:6px;flex:none">'
+    +   '<button class="in" onclick="jumpToPausedStep(\'' + it.device + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="wand-2" width="13" height="13" stroke-width="1.9"></i>แก้ไขที่นี่</button>'
+    +   '<button class="in" onclick="resumePaused(\'' + it.device + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;background:' + (it.resuming?'#1B2434':'rgba(16,185,129,.14)') + ';border:1px solid ' + (it.resuming?'#24344B':'rgba(16,185,129,.3)') + ';color:' + (it.resuming?'#7C8CA3':'#6EE7B7') + ';font-size:12px;cursor:pointer" ' + (it.resuming?'disabled':'') + '><i data-lucide="' + (it.resuming?'loader':'play') + '" width="13" height="13" stroke-width="2" ' + (it.resuming?'style="animation:spin 1.4s linear infinite"':'') + '></i>' + (it.resuming?'กำลังรันต่อ…':'รันต่อ') + '</button>'
+    + '</div>'
+    + '<i data-lucide="x" width="15" height="15" stroke-width="2" style="color:#7A5A1E;cursor:pointer;flex:none" title="ยกเลิกจุดนี้" onclick="dismissPaused(\'' + it.device + '\')"></i>'
+    + '</div>'
+  )).join('');
+  icons();
+}
+function previewPausedShot(device){
+  const it = PAUSED_ITEMS.find(x => x.device === device);
+  if(!it || !it.shot) return;
+  openModal('จอ ' + it.port + ' — ภาพ ณ ตอนติด', 'image',
+    '<img src="data:image/png;base64,' + it.shot + '" style="width:100%;border-radius:10px;border:1px solid #24344B">');
+}
+async function jumpToPausedStep(device){
+  const it = PAUSED_ITEMS.find(x => x.device === device);
+  if(!it) return;
+  switchPage('script');
+  setScriptView('flow');
+  await flowSelect(pathStrToArr(it.step_path));
+  setTimeout(() => {
+    const el = document.querySelector('[data-fpath="' + it.step_path + '"]');
+    if(el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
+  }, 150);
+}
+async function resumePaused(device){
+  if(!hasPy()) return;
+  const r = await PY.resume_paused(device);
+  if(r && r.ok){
+    if(!RUN_POLL && typeof startRunPoll === 'function') startRunPoll();
+    await pollPausedList();
+  }
+}
+async function dismissPaused(device){
+  if(!hasPy()) return;
+  await PY.dismiss_paused(device);
+  await pollPausedList();
 }

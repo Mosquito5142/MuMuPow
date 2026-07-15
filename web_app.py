@@ -52,6 +52,10 @@ class Api:
         self._batch_devices = []
         self._batch_pending = []
         self._runner = None
+        # จอที่หยุดรอผู้ใช้แก้ไข (anchor_on_fail='pause') — device -> {account, step_path, shot_b64, ts, desc}
+        self._paused = {}
+        # จอที่กำลัง 'รันต่อ' อยู่ (resume_paused) — device -> {"running": bool} (ให้ stop() สั่งหยุดได้)
+        self._active_resumes = {}
         self._load_profiles()
 
     # หา window object โดยไม่เก็บ ref ไว้บน self (กัน circular ref api<->window ที่ทำ pywebview
@@ -208,6 +212,7 @@ class Api:
         "done":    ("เสร็จแล้ว", "#34D399", "#34D399"),
         "stuck":   ("ติด · บันทึกแล้ว", "#F87171", "#F87171"),
         "stopped": ("หยุดแล้ว", "#7C8CA3", "#58677E"),
+        "paused":  ("⏸ รอแก้ไข", "#FBBF24", "#FBBF24"),
     }
 
     def _load_reset_cfg(self):
@@ -325,7 +330,10 @@ class Api:
                     self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
                     self._persist_run_results(runner.account_results, self._run_log_cb)
                     if self._running:
-                        self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
+                        if self._paused:
+                            self._run_log_cb(f"หยุดรอผู้ใช้แก้ไข {len(self._paused)} จอ — ดูแผง 'จอที่รอแก้ไข' ด้านบน", "warn")
+                        else:
+                            self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
                 except Exception as e:
                     self._run_log_cb(f"ระบบรันขัดข้อง: {e}", "err")
                 finally:
@@ -343,7 +351,20 @@ class Api:
         self._log = self._log[-600:]
 
     def _run_progress_cb(self, device, **st):
+        # _pause_shot/_pause_account มาจาก MacroRunner._pause_checkpoint เท่านั้น (ตอน anchor_on_fail
+        # ='pause') — pop ออกก่อนเก็บลง _run_state กัน state ที่ถูก poll ทุก 1 วิ อุ้ยภาพ/รหัสผ่านค้างไปด้วย
+        pause_shot = st.pop("_pause_shot", None)
+        pause_account = st.pop("_pause_account", None)
         self._run_state.setdefault(device, {}).update(st)
+        if st.get("status") == "paused":
+            self._paused[device] = {
+                "account": pause_account, "step_path": st.get("step_path", ""),
+                "shot_b64": pause_shot, "ts": datetime.datetime.now().strftime("%H:%M:%S"),
+                "desc": st.get("step_desc", ""),
+            }
+        elif st.get("status") in ("done", "stopped", "running"):
+            # กลับมาทำงานตามปกติ (เช่น resume แล้วเดินหน้าต่อผ่านจุดเดิมได้แล้ว) -> เคลียร์ค้างเก่าออก
+            self._paused.pop(device, None)
 
     def _run_next_batch(self):
         """รัน 1 ชุด (โหมด 'หยุดรอตรวจทานทีละชุด') แล้วหยุดรอผู้ใช้ตรวจจอ+กด 'รันชุดถัดไป'
@@ -356,15 +377,19 @@ class Api:
             self._runner.run_batch_once(devices, batch)
             if not self._running:
                 return  # ผู้ใช้กดหยุดกลางชุด — ไม่ต้องถามชุดถัดไป
+            paused_note = f" (มี {len(self._paused)} จอรอแก้ไข — ดูแผง 'จอที่รอแก้ไข')" if self._paused else ""
             if self._batch_pending:
                 self._awaiting_next_batch = True
                 self._running = False  # ไม่ใช่ "กำลังรัน" แล้ว แต่ยังไม่ปิดจริง — รอกด "รันชุดถัดไป"
-                self._run_log_cb(f"⏸️ ชุดนี้เสร็จแล้ว (เหลืออีก {len(self._batch_pending)} ไอดี) "
+                self._run_log_cb(f"⏸️ ชุดนี้เสร็จแล้ว (เหลืออีก {len(self._batch_pending)} ไอดี){paused_note} "
                                  f"กรุณาตรวจสอบหน้าจอ Emulator แล้วกด 'รันชุดถัดไป'", "warn")
             else:
                 self._persist_diamonds(self._runner.diamond_rows, self._run_log_cb)
                 self._persist_run_results(self._runner.account_results, self._run_log_cb)
-                self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
+                if self._paused:
+                    self._run_log_cb(f"หยุดรอผู้ใช้แก้ไข {len(self._paused)} จอ — ดูแผง 'จอที่รอแก้ไข' ด้านบน", "warn")
+                else:
+                    self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
                 self._running = False
         except Exception as e:
             self._run_log_cb(f"ระบบรันขัดข้อง: {e}", "err")
@@ -387,6 +412,10 @@ class Api:
             self._awaiting_next_batch = False
             self._batch_pending = []
             self._push_log("สั่งหยุด — กำลังยุติการทำงาน…", "warn")
+        if self._active_resumes:
+            for flag in self._active_resumes.values():
+                flag["running"] = False
+            self._push_log("สั่งหยุดจอที่กำลัง 'รันต่อ' (resume) ด้วย", "warn")
         return {"ok": True}
 
     def start_story(self, interval=2.5):
@@ -451,7 +480,74 @@ class Api:
             })
         return {"running": self._running, "progress": prog, "log": self._run_log[-30:],
                 "awaitingNextBatch": self._awaiting_next_batch,
-                "remainingBatch": len(self._batch_pending)}
+                "remainingBatch": len(self._batch_pending),
+                "pausedCount": len(self._paused),
+                "activeResumes": len(self._active_resumes)}
+
+    def list_paused(self):
+        """แผง 'จอที่รอแก้ไข' โพลอันนี้คู่กับ get_run_state ทุก ~1 วิ — คืนจอที่ anchor_on_fail='pause'
+        ทำให้ค้าง พร้อมภาพหน้าจอ ณ ตอนติด (base64) ให้กดดูแล้วไปสร้างเงื่อนไข/if ใหม่ได้ทันที"""
+        items = []
+        for dev, info in self._paused.items():
+            acct = info.get("account") or {}
+            items.append({
+                "device": dev, "port": dev.split(":")[-1],
+                "email": acct.get("email", ""), "name": account_display_name(acct) if acct else "-",
+                "step_path": info.get("step_path", ""), "desc": info.get("desc", ""),
+                "ts": info.get("ts", ""), "shot": info.get("shot_b64") or "",
+                "resuming": dev in self._active_resumes,
+            })
+        items.sort(key=lambda x: x["port"])
+        return {"ok": True, "items": items}
+
+    def resume_paused(self, device):
+        """ปุ่ม 'รันต่อจากขั้นนี้' — รันสคริปต์ (เวอร์ชันล่าสุดที่แก้ไขแล้ว) ต่อจากบล็อกระดับเส้นหลักที่
+        ครอบจุดที่ค้างไว้ ด้วยบัญชีเดิมบนจอเดิม โดยไม่แตะ self._running กลาง (จอ/บัญชีอื่นที่กำลังรัน
+        คู่ขนานอยู่ไม่โดนกระทบ) — ประเมิน if_image ที่บล็อกนั้นใหม่ตั้งแต่ต้น ซึ่งถูกต้องแล้วเพราะผู้ใช้
+        เพิ่งแก้/เพิ่มเงื่อนไขเพื่อให้รอบนี้ผ่านไปได้"""
+        info = self._paused.get(device)
+        if not info:
+            self._push_log(f"[{device}] ไม่มีจุดค้างให้รันต่อ", "warn"); return {"ok": False}
+        if device in self._active_resumes:
+            self._push_log(f"[{device}] กำลังรันต่ออยู่แล้ว", "warn"); return {"ok": False}
+        try:
+            root_idx = max(0, int(str(info.get("step_path", "0")).split(".")[0]))
+        except Exception:
+            root_idx = 0
+        steps = self.macro_steps[root_idx:]
+        if not steps:
+            self._push_log(f"[{device}] ไม่มีขั้นตอนให้รันต่อจากจุดนี้แล้ว", "warn"); return {"ok": False}
+        account = info.get("account")
+
+        flag = {"running": True}
+        self._active_resumes[device] = flag
+        self._paused.pop(device, None)
+
+        runner = MacroRunner(self.controller, steps, log_cb=self._run_log_cb,
+                             progress_cb=self._run_progress_cb, running_check=lambda: flag["running"],
+                             anchor_poll=self._anchor_poll, reset_cfg=self._load_reset_cfg(),
+                             diamond_cfg=self._load_diamond_cfg())
+        runner.profile_name = self.current_profile or ""
+        runner.total_accounts = 1   # รันต่อแค่บัญชีเดียว (ของเดิมที่ค้างไว้) กันการ์ดโชว์ "X / 0" ที่หน้าเว็บ
+
+        def worker():
+            try:
+                self._run_log_cb(f"[{device}] ▶ รันต่อจากขั้น {root_idx + 1} (แก้ไขสคริปต์แล้ว)", "ok")
+                runner._one_and_close(device, account)
+                self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
+                self._persist_run_results(runner.account_results, self._run_log_cb)
+            except Exception as e:
+                self._run_log_cb(f"[{device}] รันต่อขัดข้อง: {e}", "err")
+            finally:
+                self._active_resumes.pop(device, None)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"ok": True}
+
+    def dismiss_paused(self, device):
+        """ยกเลิกจุดค้าง โดยไม่รันต่อ (เช่น เปลี่ยนใจ ไม่ต้องแก้จุดนี้แล้ว)"""
+        self._paused.pop(device, None)
+        return {"ok": True}
 
     # ================= หน้าบัญชี =================
     def get_accounts_grouped(self, search=""):
@@ -1060,7 +1156,7 @@ class Api:
             if mode == "anchor":
                 s.setdefault("anchor_timeout", 8.0)
                 s.setdefault("anchor_threshold", 0.8)
-                s.setdefault("anchor_on_fail", "abort")
+                s.setdefault("anchor_on_fail", "pause")  # ค่าเริ่มต้นใหม่: เรียนรู้ทีละจอ แทน abort เดิม
             self._push_log("บันทึกภาพจากการลากกรอบแล้ว", "ok")
         except Exception as e:
             self._push_log(f"ตั้งภาพไม่ได้: {e}", "warn")
@@ -1091,12 +1187,14 @@ class Api:
 
     def flow_set_anchor_opts(self, path, on_fail=None, timeout=None, anchor_tap=None,
                              retry_target=None, retry_limit=None):
-        """ตั้งค่า anchor gate: ไม่เจอทำอะไร (abort/skip/tap/retry) / รอสูงสุด / กดตรงที่เจอภาพ
-        retry = วนกลับไปทำขั้นที่ retry_target ใหม่ (ในลิสต์เดียวกัน) สูงสุด retry_limit รอบ ก่อน fallback ไปหยุดจอ"""
+        """ตั้งค่า anchor gate: ไม่เจอทำอะไร (pause/skip/tap/retry/abort) / รอสูงสุด / กดตรงที่เจอภาพ
+        pause (ค่าเริ่มต้น) = หยุดจอนี้รอผู้ใช้แก้ไข เก็บจอไว้ตามที่ค้าง — ดูแผง 'จอที่รอแก้ไข'
+        retry = วนกลับไปทำขั้นที่ retry_target ใหม่ (ในลิสต์เดียวกัน) สูงสุด retry_limit รอบ ก่อน fallback ไปหยุดจอ (ต้องตั้งเอง ไม่ใช่ค่าเริ่มต้น)
+        abort = หยุดจอนี้เฉยๆ ไม่รอ/ไม่วน — ตั้งแต่นี้ไม่มีนโยบายไหนรีเซ็ตเกมอัตโนมัติอีกแล้ว (เดิม abort เคยรีเซ็ตเกม)"""
         try:
             lst, i = self._locate(path)
             s = lst[i]
-            if on_fail in ("abort", "skip", "tap", "retry"):
+            if on_fail in ("abort", "skip", "tap", "retry", "pause"):
                 s["anchor_on_fail"] = on_fail
             if timeout is not None:
                 s["anchor_timeout"] = float(timeout)

@@ -329,22 +329,30 @@ class MacroRunner:
             q.put(a)
 
         def worker(dev):
+            paused = False
             while self.running():
                 try:
                     acc = q.get_nowait()
                 except queue.Empty:
                     break
                 self.log(f"[{dev}] เริ่มบัญชี: {account_display_name(acc)}", "info")
-                self.execute_one(dev, acc)
+                status = self.execute_one(dev, acc)
+                if status == "paused":
+                    # จอนี้ค้างรอผู้ใช้แก้ไข — เลิกหยิบคิวต่อ (บัญชีนี้ยังไม่เสร็จ รอกด 'รันต่อ' เอง)
+                    # จออื่นใน ex.map ไม่โดนกระทบ ยังทำงานต่อตามปกติ
+                    paused = True
+                    break
                 q.task_done()
-            self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
+            if not paused:
+                self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
 
         with ThreadPoolExecutor(max_workers=len(devices)) as ex:
             list(ex.map(worker, devices))
 
     def _one_and_close(self, dev, acc):
-        self.execute_one(dev, acc)
-        self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
+        status = self.execute_one(dev, acc)
+        if status != "paused":
+            self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
 
     def run_batch_once(self, devices, accounts):
         """รัน 1 ชุด (จับคู่จอ↔บัญชีตามลำดับ) แบบขนานแล้วคืนทันทีที่ชุดนี้เสร็จ — ไม่หยิบคิวต่อเอง
@@ -373,6 +381,11 @@ class MacroRunner:
         prog(step_idx=0, step_total=total, step_desc="กำลังเริ่ม…")
         status = self._run_steps(device, account, self.steps, prog, path="", depth=0, disp="")
 
+        if status == "paused":
+            # รอผู้ใช้แก้ไข+กด 'รันต่อ' เอง — ยังไม่ถือว่าจบ ไม่บันทึกผลบัญชี/ไม่รีเซ็ตจอ/ไม่นับว่าเสร็จ
+            # (progress+ภาพหน้าจอค้าง ถูกส่งออกไปแล้วจาก _pause_checkpoint ก่อนคืนสถานะนี้)
+            return "paused"
+
         # เก็บผลรายบัญชี (ให้ Api เขียน last_status ลง accounts.json ตอนจบรัน — เหมือนแอปเดิม)
         if account:
             with self._dlock:
@@ -391,12 +404,15 @@ class MacroRunner:
             self.log(f"[{device}] {who} เสร็จ ({self._done[device]}/{self.total_accounts})", "ok")
             prog(status="running", step_idx=total, step_total=total, step_desc="เสร็จ")
         else:
-            # ติดปัญหา → รีเซ็ตเกมให้จอกลับมาสะอาด กันโดมิโน่บัญชีถัดไป
+            # ติดปัญหาแบบไม่ใช่ pause (เช่น เลือก 'หยุดจอนี้' ตรงๆ, วนครบรอบแล้วยังไม่เจอ, หรือคำสั่งพัง)
+            # เดิมจุดนี้จะรีเซ็ตเกม (ออกแล้วเข้าใหม่) ให้จอสะอาดก่อนไปบัญชีถัดไปเสมอ — เอาออกแล้ว เพราะ
+            # เปลี่ยนไปใช้ระบบ 'เรียนรู้ทีละจอ' (anchor_on_fail='pause', เป็นค่าเริ่มต้นใหม่แทน 'abort') เป็นหลัก
+            # ตั้งแต่นี้ไม่มีขั้นไหนรีเซ็ตเกมอัตโนมัติอีกแล้ว (รวม 'abort' ด้วย) — ปล่อยจอไว้ตามสภาพ ให้ผู้ใช้
+            # ไปดูรายงานปัญหา/แก้สคริปต์เอง
             self.progress(device, status="stuck", account_name=who,
                           done_count=self._done[device], total_accounts=self.total_accounts,
-                          step_desc="ติดปัญหา · รีเซ็ตเกม")
-            self.log(f"[{device}] {who} ล็อกอิน/ทำงานไม่ผ่าน — รีเซ็ตเกมไปบัญชีถัดไป", "err")
-            self._reset_device(device)
+                          step_desc="ติดปัญหา · บันทึกแล้ว")
+            self.log(f"[{device}] {who} ล็อกอิน/ทำงานไม่ผ่าน — ไปบัญชีถัดไป (ไม่รีเซ็ตเกมอัตโนมัติแล้ว)", "err")
         return status
 
     def _run_steps(self, device, account, steps, prog, path="", depth=0, disp=""):
@@ -473,7 +489,9 @@ class MacroRunner:
                 if gate == "found" and ax is not None:
                     anchor_hit = (ax, ay)
                 if gate == "missing":
-                    pol = step.get("anchor_on_fail", "abort")
+                    # ค่าเริ่มต้นเป็น 'pause' (เรียนรู้ทีละจอ) แทน 'abort' เดิม — วนกลับ (retry) ยังคง
+                    # เป็นเครื่องมือที่ต้องตั้งเองเท่านั้น ไม่ใช่ค่าเริ่มต้น ตรงตามที่ผู้ใช้ต้องการ
+                    pol = step.get("anchor_on_fail", "pause")
                     if pol == "retry":
                         target = step.get("anchor_retry_target")
                         limit = int(step.get("anchor_retry_limit", 3) or 3)
@@ -492,6 +510,10 @@ class MacroRunner:
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} → ข้ามสเต็ปนี้ไป", "warn")
                         idx += 1
                         continue
+                    elif pol == "pause":
+                        self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → หยุดรอแก้ไข (ไม่รีเซ็ตเกม เก็บจอไว้ตามที่ค้าง)", "warn")
+                        self._pause_checkpoint(device, account, here, step, prog)
+                        return "paused"
                     elif pol == "tap":
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} → กดตามพิกัดเดิม (เสี่ยง)", "warn")
                     else:
@@ -580,6 +602,22 @@ class MacroRunner:
             self.log(f"[{device}] บันทึกจุดที่ติด: ขั้น {step_path} '{step.get('desc', '')}' ({reason})", "warn")
         except Exception as e:
             self.log(f"[{device}] บันทึกรายงานปัญหาไม่สำเร็จ: {e}", "warn")
+
+    def _pause_checkpoint(self, device, account, step_path, step, prog):
+        """anchor_on_fail='pause': ต่างจาก _save_failure_report ตรงที่นี่ไม่ใช่ 'ความล้มเหลว' แต่เป็น
+        จุดที่ 'รอผู้ใช้มาสอนเพิ่ม' — ไม่บันทึกลงไฟล์ log ถาวร แต่ส่งภาพหน้าจอ ณ ตอนค้าง + บัญชีที่ค้างไว้
+        ผ่าน progress callback (คีย์ขึ้นต้น _ กันชื่อชนกับฟิลด์แสดงผลปกติ) ให้ฝั่งเว็บเก็บไว้แสดงในแผง
+        'จอที่รอแก้ไข' และใช้ตอนกด 'รันต่อจากขั้นนี้' — จอไม่ถูกแตะต้องต่อ (ไม่รีเซ็ต ไม่กดต่อ) กันข้อมูล
+        ที่ผู้ใช้ต้องดูเพื่อสร้างเงื่อนไขใหม่หายไปก่อน"""
+        shot_b64 = None
+        try:
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok and data:
+                shot_b64 = base64.b64encode(data).decode("ascii")
+        except Exception:
+            pass
+        prog(status="paused", step_desc=f"⏸ รอแก้ไข: {step.get('desc') or step_path}", step_path=step_path,
+             _pause_shot=shot_b64, _pause_account=account)
 
     @staticmethod
     def _as_int(v):
