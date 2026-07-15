@@ -1,0 +1,42 @@
+# ===== ความลับ — ห้ามขึ้น git เด็ดขาด =====
+# accounts.json มีรหัสผ่าน/refresh_token ของบัญชีจริง, gemini_config.json มี API key
+# ดูโครงสร้างไฟล์ได้ที่ accounts.example.json
+accounts.json
+gemini_config.json
+
+# ===== ผลลัพธ์จากการ build (PyInstaller) =====
+# .exe แจกผ่าน GitHub Release อยู่แล้ว (publish.py / release.bat) ไม่ต้องเก็บใน repo
+# ไบนารีทำ delta ไม่ได้ commit ทีนึงโต 60 MB
+build/
+dist/
+*.exe
+*.spec.bak
+
+# ===== ไฟล์ที่โปรแกรมสร้างตอนรัน =====
+error_reports/
+guild_members/
+diamond_export.json
+diamonds_export.json
+temp_screen.png
+match_result.png
+best_match_crop.png
+orange_cross_on_screen.png
+templates/diamond_region_preview.png
+
+# ===== ที่ทดลองเล่น (CLAUDE.md: throwaway dev scripts) =====
+scratch/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ===== เครื่องมือ/OS =====
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
