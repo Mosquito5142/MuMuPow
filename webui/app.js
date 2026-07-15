@@ -175,8 +175,14 @@ function startRunPoll(){
     renderProgressList(rs.progress);
     if(rs.log && rs.log.length){ onLog(rs.log[rs.log.length-1]); }
     if(typeof flowApplyHighlight==='function') flowApplyHighlight(rs.progress); // ไฮไลต์บล็อกสดบนผัง
+    if(typeof pollPausedList==='function') pollPausedList(); // แผง 'จอที่รอแก้ไข' (anchor_on_fail='pause')
+    // มีจอรอแก้ไข/กำลังรันต่อ (resume) อยู่ -> ต้อง poll ต่อแม้ rs.running จะเป็น false แล้ว
+    // (จอที่เหลือรันจบ/ค้างหมดแล้ว แต่ยังมีจอรอผู้ใช้อยู่ ไม่งั้นแผงจะหยุดอัปเดตทันทีที่จอสุดท้ายค้าง)
+    const stillActive = (rs.pausedCount||0) > 0 || (rs.activeResumes||0) > 0;
     if(rs.running){
       setRunBtn('running');
+    } else if(stillActive){
+      setRunBtn('idle');
     } else {
       clearInterval(RUN_POLL); RUN_POLL=null;
       if(typeof flowApplyHighlight==='function') flowApplyHighlight([]);

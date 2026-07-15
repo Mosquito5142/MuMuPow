@@ -235,13 +235,17 @@ DEFAULT_STEP_DELAYS = {
 }
 
 
-# ป้ายไทยของนโยบาย 'ถ้าไม่เจอภาพ anchor' — โชว์ให้ผู้ใช้อ่านเข้าใจ แต่ยังเก็บค่าเดิม (abort/skip/tap)
+# ป้ายไทยของนโยบาย 'ถ้าไม่เจอภาพ anchor' — โชว์ให้ผู้ใช้อ่านเข้าใจ แต่ยังเก็บค่าเดิม (pause/abort/skip/tap/retry)
 # ในไฟล์สคริปต์ เพื่อไม่ให้ตัวรัน (gui + macro_runner + เว็บ) หรือสคริปต์เก่าพัง
+# 'pause' เป็นค่าเริ่มต้น/ตัวหลักแล้ว (เรียนรู้ทีละจอ) เลยไว้บนสุด — ตรงกับ webui ไม่มีนโยบายไหนรีเซ็ต
+# เกมอัตโนมัติอีกแล้ว (รวม abort ด้วย); Tkinter ไม่มีแผงโต้ตอบแบบ webui ให้แก้ไข/รันต่อสด แค่หยุดจอ
+# สะอาดๆ ไว้ ต้องไปแก้สคริปต์ที่ webui แล้วรันใหม่เอง
 ANCHOR_ONFAIL_LABELS = [
-    ("abort", "หยุดจอนี้ (กันกดมั่ว)"),
+    ("pause", "⏸ หยุดรอผู้ใช้แก้ไข (เรียนรู้ทีละจอ) — แนะนำ"),
+    ("retry", "วนกลับไปทำขั้นที่เลือกใหม่ (ลองซ้ำ)"),
     ("skip", "ข้ามสเต็ปนี้ไป"),
     ("tap", "กดตามพิกัดเดิม (เสี่ยง)"),
-    ("retry", "วนกลับไปทำขั้นที่เลือกใหม่ (ลองซ้ำ)"),
+    ("abort", "หยุดจอนี้เฉยๆ (ไม่รอ ไม่วน)"),
 ]
 ANCHOR_ONFAIL_TO_LABEL = {v: l for v, l in ANCHOR_ONFAIL_LABELS}
 ANCHOR_ONFAIL_FROM_LABEL = {l: v for v, l in ANCHOR_ONFAIL_LABELS}
@@ -6016,11 +6020,16 @@ class MuMuGUI(tk.Tk):
                     down(prev_bottom, cy - 34, "เจอ→ทำ")
                     shape(CX, cy, "diamond", ORANGE, label, i, 100, 34)
                     prev_bottom = cy + 34
-                    onf = step.get("anchor_on_fail", "abort")
-                    if onf == "abort":
+                    onf = step.get("anchor_on_fail", "pause")
+                    if onf == "pause":
+                        cv.create_line(CX + 100, cy, 445, cy, fill=GOLD, width=2, arrow=tk.LAST)
+                        cv.create_rectangle(445, cy - 20, 650, cy + 20, fill=GOLD, outline=GOLD)
+                        cv.create_text(547, cy, text="⏸ หยุดรอเรียนรู้ (แก้ที่ web)", fill="#1A1206", font=("Segoe UI", 9))
+                        cv.create_text(420, cy - 11, text="No", fill=GRAY, font=("Segoe UI", 8))
+                    elif onf == "abort":
                         cv.create_line(CX + 100, cy, 445, cy, fill=RED, width=2, arrow=tk.LAST)
                         cv.create_rectangle(445, cy - 20, 650, cy + 20, fill=RED, outline=RED)
-                        cv.create_text(547, cy, text="หยุดจอ + รีเซ็ตเกม", fill="#fff", font=("Segoe UI", 9))
+                        cv.create_text(547, cy, text="หยุดจอเฉยๆ (ไม่รอ ไม่วน)", fill="#fff", font=("Segoe UI", 9))
                         cv.create_text(420, cy - 11, text="No", fill=GRAY, font=("Segoe UI", 8))
                     elif onf == "skip":
                         nx = cys[i + 1] if i + 1 < n else ye
@@ -6230,7 +6239,7 @@ class MuMuGUI(tk.Tk):
                 step["anchor_timeout"] = max(0.0, float(timeout_var.get()))
             except (TypeError, ValueError):
                 step["anchor_timeout"] = 8.0
-            step["anchor_on_fail"] = ANCHOR_ONFAIL_FROM_LABEL.get(onfail_var.get(), "abort")
+            step["anchor_on_fail"] = ANCHOR_ONFAIL_FROM_LABEL.get(onfail_var.get(), "pause")
             if step["anchor_on_fail"] == "retry":
                 sel_label = retry_target_var.get()
                 if sel_label in target_labels:
@@ -6251,7 +6260,7 @@ class MuMuGUI(tk.Tk):
         # ตั้งค่า anchor: ไม่เจอภาพแล้วทำยังไง + รอสูงสุดกี่วิ — ใช้ทำ 'if แบบลูกโซ่ skip' หรือ 'วนกลับลองใหม่'
         cfgf = tk.Frame(right, bg=BG_DARK); cfgf.pack(fill="x", pady=(10, 0))
         tk.Label(cfgf, text="ถ้าไม่เจอภาพ:", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
-        onfail_var = tk.StringVar(value=ANCHOR_ONFAIL_TO_LABEL.get(step.get("anchor_on_fail", "abort"), ANCHOR_ONFAIL_LABELS[0][1]))
+        onfail_var = tk.StringVar(value=ANCHOR_ONFAIL_TO_LABEL.get(step.get("anchor_on_fail", "pause"), ANCHOR_ONFAIL_LABELS[0][1]))
         ttk.Combobox(cfgf, textvariable=onfail_var, state="readonly", width=22,
                      values=[l for _v, l in ANCHOR_ONFAIL_LABELS]).grid(row=0, column=1, sticky="w", padx=6)
         tk.Label(cfgf, text="รอสูงสุด(วิ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0))
@@ -6337,7 +6346,7 @@ class MuMuGUI(tk.Tk):
             step["anchor_img"] = base64.b64encode(enc).decode("ascii")
             step.setdefault("anchor_timeout", 8.0)
             step.setdefault("anchor_threshold", 0.8)
-            step.setdefault("anchor_on_fail", "abort")
+            step.setdefault("anchor_on_fail", "pause")  # ค่าเริ่มต้นใหม่: เรียนรู้ทีละจอ แทน abort เดิม
         except Exception as e:
             messagebox.showerror("ครอปภาพล้มเหลว", str(e))
             return
@@ -7297,14 +7306,16 @@ class MuMuGUI(tk.Tk):
             result["duration"] = round(time.time() - run_start, 1)
             if result["errors"] and result["status"] == "completed":
                 result["status"] = "device_error"
-            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> บันทึกจุดที่ติด (ภาพ+ข้อมูล) ก่อน แล้วรีเซ็ตเกม
-            # กันโดมิโน่: ถ้าไม่รีเซ็ต บัญชีถัดไปในคิวจอนี้จะเริ่มจากจอค้าง แล้วพังต่อกันหมด
+            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> บันทึกจุดที่ติด (ภาพ+ข้อมูล) ไว้ดูย้อนหลัง
+            # เดิมจุดนี้จะรีเซ็ตเกม (ออกแล้วเข้าใหม่) ให้จอสะอาดก่อนไปบัญชีถัดไปเสมอ — เอาออกแล้ว ตรงกับที่
+            # ฝั่ง webui เปลี่ยนไปใช้ระบบ 'เรียนรู้ทีละจอ' (anchor_on_fail='pause', ค่าเริ่มต้นใหม่) เป็นหลัก
+            # แทน — Tkinter ไม่มีแผงโต้ตอบแบบ webui (แก้ไข/รันต่อสด) แต่ก็ไม่รีเซ็ตเกมอัตโนมัติอีกต่อไปเช่นกัน
+            # เพื่อให้สคริปต์ที่ 'สอน' ไว้จาก webui ทำงานสอดคล้องกันไม่ว่าจะรันผ่านแอปไหน
             if result["status"] in ("device_error", "macro_error"):
                 if not result.get("_reported") and progress["step"] is not None:
                     self._save_failure_report(device, account, progress["num"], progress["total"],
                                               progress["step"], result.get("error") or "error")
                 self._device_run_state.setdefault(device, {})["status"] = "stuck"
-                self._reset_device_to_login(device)
             return result
 
         # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี — ไล่เข้ากิ่ง then/else ของ if_image ด้วย
@@ -7487,7 +7498,8 @@ class MuMuGUI(tk.Tk):
                     result["status"] = "stopped"
                     return "stopped"
                 if gate == "missing":
-                    policy = step.get("anchor_on_fail", "abort")
+                    # ค่าเริ่มต้นเป็น 'pause' แทน 'abort' เดิม — ตรงกับ webui (ใช้การเรียนรู้เป็นหลัก)
+                    policy = step.get("anchor_on_fail", "pause")
                     if policy == "retry":
                         target = step.get("anchor_retry_target")
                         limit = int(step.get("anchor_retry_limit", 3) or 3)
@@ -7511,9 +7523,17 @@ class MuMuGUI(tk.Tk):
                         continue
                     elif policy == "tap":
                         self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {num} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
-                    else:  # abort — หยุดจอนี้ (กันรันมั่ว) จออื่นเดินต่อ + รายงานให้ตามเก็บ
+                    elif policy == "pause":
+                        # Tkinter ไม่มีแผง 'จอที่รอแก้ไข' แบบ webui (แก้ไข/รันต่อสด) — แค่หยุดจอนี้สะอาดๆ
+                        # ไม่รีเซ็ต ไม่กดต่อ บันทึกภาพไว้ดู แล้วให้ผู้ใช้ไปเพิ่มเงื่อนไข/if ที่ webui เอง
+                        self.write_log(f"   ⏸ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> หยุดจอนี้รอ (ไปแก้สคริปต์ที่ webui แล้วรันใหม่)", "error")
+                        self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (pause)")
+                        result["_reported"] = True
+                        result["status"] = "device_error"
+                        result["error"] = f"anchor_fail_pause: ขั้น {num} {desc}"
+                        return "device_error"
+                    else:  # abort — หยุดจอนี้เฉยๆ (ไม่รอ ไม่วน) จออื่นเดินต่อ + รายงานให้ตามเก็บ — ไม่รีเซ็ตเกมแล้ว
                         self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> หยุดจอนี้ กันรันมั่ว", "error")
-                        # บันทึกภาพหน้าจอ ณ จุดที่ติด ก่อนรีเซ็ต (ให้ย้อนดูได้ว่าจอตอนนั้นเป็นยังไง)
                         self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (abort)")
                         result["_reported"] = True
                         result["status"] = "device_error"
