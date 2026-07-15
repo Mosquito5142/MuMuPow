@@ -955,8 +955,8 @@ class MuMuGUI(tk.Tk):
         anchor_frame.pack(fill="x", pady=2)
         tk.Label(anchor_frame, text="🖼️ ความถี่เช็ค Anchor (วิ):", bg=BG_PANEL, fg=FG_WHITE,
                  font=("Segoe UI", 10)).pack(side="left")
-        self._anchor_poll_interval = 0.5
-        self._anchor_poll_var = tk.StringVar(value="0.5")
+        self._anchor_poll_interval = 2.0
+        self._anchor_poll_var = tk.StringVar(value="2.0")
         self._anchor_poll_var.trace_add("write", lambda *a: self._update_anchor_poll())
         ModernEntry(anchor_frame, textvariable=self._anchor_poll_var, width=8).pack(side="left", padx=10)
         tk.Label(anchor_frame, text="มาก = กิน CPU น้อยลง แนะนำ 1-2 ถ้ารันหลายจอ",
@@ -7596,7 +7596,7 @@ class MuMuGUI(tk.Tk):
                 if m:
                     best = max(best, float(m.group(1)))
             # รอช่วง poll ที่ตั้งได้จาก UI (คุม CPU) — แต่ยังเช็คปุ่มหยุดถี่ๆ ให้ยกเลิกได้ทันที
-            poll = getattr(self, "_anchor_poll_interval", 0.5)
+            poll = getattr(self, "_anchor_poll_interval", 2.0)
             waited = 0.0
             while waited < poll:
                 if not self.macro_running:

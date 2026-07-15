@@ -251,13 +251,16 @@ class MacroRunner:
     _UNSUPPORTED = {"story_auto"}
 
     def __init__(self, controller, steps, log_cb=None, progress_cb=None,
-                 running_check=None, anchor_poll=0.5, reset_cfg=None, diamond_cfg=None):
+                 running_check=None, anchor_poll=2.0, reset_cfg=None, diamond_cfg=None):
         self.controller = controller
         self.log = log_cb or (lambda t, k="info": None)
         self.steps = self._expand_sets(steps or [])
         self.progress = progress_cb or (lambda dev, **kw: None)
         self.running = running_check or (lambda: True)
-        self.anchor_poll = float(anchor_poll or 0.5)
+        # จำกัดช่วง 0.1–10 วิ เหมือนฝั่ง Tkinter (gui._update_anchor_poll) — สำคัญเรื่องความปลอดภัย:
+        # ค่าติดลบทำให้ลูปหน่วงใน _wait_anchor ไม่ทำงานเลย กลายเป็น busy loop แคปจอรัวไม่หยุด
+        # (วัดได้ ~6 ล้านครั้ง/วิ) กิน CPU + ADB จนจอค้างทั้งเครื่อง; ค่ามากเกินก็ทำให้เช็คแทบไม่ทัน timeout
+        self.anchor_poll = min(10.0, max(0.1, float(anchor_poll or 2.0)))
         self.reset_cfg = reset_cfg or {}
         self.diamond_cfg = diamond_cfg or {}
         self.diamond_rows = []          # ผลอ่านเพชร (Api เอาไปเขียนไฟล์/บัญชีตอนจบรัน)

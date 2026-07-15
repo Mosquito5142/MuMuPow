@@ -46,7 +46,7 @@ class Api:
         self._run_state = {}       # device -> dict (status/account/step/done ...)
         self._run_log = []         # log ระหว่างรัน (ts/text/kind)
         self._run_thread = None
-        self._anchor_poll = 0.5
+        self._anchor_poll = 2.0
         # โหมด 'หยุดรอตรวจทานทีละชุด' (pause_between_batches)
         self._awaiting_next_batch = False
         self._batch_devices = []
@@ -338,9 +338,9 @@ class Api:
         accounts = [a for a in self._accounts() if a.get("checked", True)]
 
         try:
-            poll = float(anchor_poll) if anchor_poll not in (None, "") else 0.5
+            poll = float(anchor_poll) if anchor_poll not in (None, "") else 2.0
         except (TypeError, ValueError):
-            poll = 0.5
+            poll = 2.0
         self._anchor_poll = poll
 
         self._running = True
