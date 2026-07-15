@@ -1,6 +1,7 @@
 import unittest
 
 from quick_builder import (
+    DEFAULT_ACTION_DELAY,
     DEFAULT_COORDINATE_PRESETS,
     build_key_step,
     build_sleep_step,
@@ -35,7 +36,7 @@ class QuickBuilderTests(unittest.TestCase):
         self.assertEqual(step["type"], "tap")
         self.assertEqual(step["x"], "451")
         self.assertEqual(step["y"], "293")
-        self.assertEqual(step["delay"], 0.5)
+        self.assertEqual(step["delay"], DEFAULT_ACTION_DELAY)
         self.assertEqual(step["desc"], "คลิก ปุ่ม Login")
 
     def test_quick_builder_creates_text_sleep_key_and_swipe_steps(self):
@@ -51,7 +52,7 @@ class QuickBuilderTests(unittest.TestCase):
                 "x2": "450",
                 "y2": "160",
                 "duration": 800,
-                "delay": 0.5,
+                "delay": DEFAULT_ACTION_DELAY,
                 "desc": "เลื่อนขึ้น",
             },
         )

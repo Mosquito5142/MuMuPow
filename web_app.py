@@ -228,14 +228,21 @@ class Api:
             return {}
 
     def _persist_diamonds(self, rows, log_cb):
-        """เขียนผลอ่านเพชรตอนจบรัน: ไฟล์ diamonds_export.json + อัปเดตจำนวนล่าสุดลง accounts.json"""
+        """เขียนผลอ่านเพชรตอนจบรัน: ไฟล์ export + อัปเดตจำนวนล่าสุดลง accounts.json
+        + ส่งเข้าเว็บ Save Web Game อัตโนมัติ (พอร์ตจาก gui._write_and_push_diamonds ให้ทำงานตรงกัน)
+
+        ชื่อไฟล์ export อ่านจาก diamond_ocr.json ('export_path') เหมือนฝั่ง Tkinter เป๊ะ ดีฟอลต์
+        'diamond_export.json' — เดิมฝั่งนี้ hardcode 'diamonds_export.json' (มี s เกิน) ทำให้สลับแอป
+        แล้วเห็นคนละไฟล์"""
         if not rows:
             return
+        cfg = self._load_diamond_cfg()
+        export_name = (cfg.get("export_path") or "diamond_export.json").strip()
         try:
-            with open(os.path.join(base_dir(), "diamonds_export.json"), "w", encoding="utf-8") as f:
+            with open(os.path.join(base_dir(), export_name), "w", encoding="utf-8") as f:
                 json.dump(rows, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            log_cb(f"เขียน diamonds_export.json ไม่ได้: {e}", "warn")
+            log_cb(f"เขียน {export_name} ไม่ได้: {e}", "warn")
         try:
             by_email = {r["email"]: r for r in rows if r.get("email")}
             accts = self._accounts()
@@ -247,7 +254,39 @@ class Api:
             self._save_accounts(accts)
         except Exception as e:
             log_cb(f"อัปเดตเพชรลงบัญชีไม่ได้: {e}", "warn")
-        log_cb(f"บันทึกเพชร {len(rows)} รายการ → diamonds_export.json", "ok")
+        log_cb(f"บันทึกเพชร {len(rows)} รายการ → {export_name}", "ok")
+        self._auto_push_diamonds(rows, cfg, log_cb)
+
+    def _auto_push_diamonds(self, rows, cfg, log_cb):
+        """ส่งเพชรที่เพิ่งอ่านได้เข้าเว็บ Save Web Game อัตโนมัติตอนจบรัน (ถ้าเปิด auto_push + ตั้ง URL ไว้)
+        จับคู่ด้วย save_web_game_id ที่ติดมากับ row (มาจากบัญชีตอนอ่าน) — เหมือน Tkinter ทุกประการ
+        ต่างจากปุ่ม push_diamonds_web ที่ส่ง 'ทุกบัญชีที่มีเพชร' — อันนี้ส่งเฉพาะที่เพิ่งอ่านรอบนี้"""
+        from save_web_game_import import push_diamonds_to_web
+        url = (cfg.get("web_base_url") or "").strip()
+        if not cfg.get("auto_push", True):
+            return
+        if not url:
+            log_cb("ยังไม่ได้ตั้ง URL เว็บ — ข้ามการส่งเพชรเข้าเว็บ (ตั้งได้ที่การ์ดระบบเพชร)", "info")
+            return
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        updates = [
+            {"id": r["save_web_game_id"], "diamonds": r["diamonds"], "lastFarmDate": today}
+            for r in rows
+            if (r.get("save_web_game_id") or "").strip() and r.get("diamonds") is not None
+        ]
+        if not updates:
+            log_cb("ไม่มีบัญชีที่มี id เว็บ (save_web_game_id) ให้ส่ง — ข้ามการส่งเข้าเว็บ", "warn")
+            return
+        log_cb(f"กำลังส่งเพชรเข้าเว็บ {len(updates)} บัญชี → {url}", "info")
+        try:
+            results, stats = push_diamonds_to_web(url, updates)
+            log_cb(f"ส่งเข้าเว็บ: สำเร็จ {stats['sent']} · พลาด {stats['failed']}",
+                   "ok" if not stats["failed"] else "warn")
+            for acc_id, (ok, msg) in results.items():
+                if not ok:
+                    log_cb(f"[web {acc_id}] {msg}", "err")
+        except Exception as e:
+            log_cb(f"ส่งเพชรเข้าเว็บล้มเหลว: {e}", "err")
 
     def _persist_run_results(self, results, log_cb):
         """เขียนผลรายบัญชีลง accounts.json (last_status/last_error/last_device/last_run)
@@ -820,9 +859,9 @@ class Api:
     }
     # ค่าเริ่มต้นเมื่อสร้างขั้นใหม่/เปลี่ยนชนิด
     STEP_DEFAULTS = {
-        "tap": {"x": "0", "y": "0", "delay": 0.5},
-        "swipe": {"x": "0", "y": "0", "x2": "0", "y2": "0", "duration": 300, "delay": 0.5},
-        "text": {"text": "", "delay": 0.5},
+        "tap": {"x": "0", "y": "0", "delay": 1.0},
+        "swipe": {"x": "0", "y": "0", "x2": "0", "y2": "0", "duration": 300, "delay": 1.0},
+        "text": {"text": "", "delay": 1.0},
         "keyevent": {"code": "4", "delay": 0.3},
         "sleep": {"seconds": 1.0},
         "start_app": {"text": "", "delay": 1.0},
