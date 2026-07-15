@@ -156,7 +156,7 @@ let AWAITING_BATCH = false;   // โหมด "หยุดรอตรวจท
 function onRunBtnClick(){ AWAITING_BATCH ? continueBatch() : runMacro(); }
 async function runMacro(){
   if(!hasPy()){ notReady('รัน (ต้องเปิดผ่าน .exe)'); return; }
-  const poll = (document.getElementById('anchorPoll')||{}).value || '0.5';
+  const poll = (document.getElementById('anchorPoll')||{}).value || '2.0';
   const pauseBatch = !!(document.getElementById('pauseBatch')||{}).checked;
   const r = await PY.run(poll, pauseBatch);
   if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }

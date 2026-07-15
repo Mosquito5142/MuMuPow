@@ -63,7 +63,7 @@ def test_anchor_poll_blank_falls_back_to_default():
     api, tmp = _api_with_temp_accounts(2)
     try:
         api.run(anchor_poll="", pause_between_batches=False)
-        assert api._anchor_poll == 0.5
+        assert api._anchor_poll == 2.0
         api._run_thread.join(timeout=5)
     finally:
         shutil.rmtree(tmp)
