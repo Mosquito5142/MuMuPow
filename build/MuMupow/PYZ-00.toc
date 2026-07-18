@@ -1,4 +1,4 @@
-('C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\build\\MuMupow\\PYZ-00.pyz',
+('C:\\Users\\PC\\Desktop\\CODE\\mumu2\\MuMuPow\\build\\MuMupow\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\PC\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python312\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),
@@ -765,7 +765,7 @@
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\glob.py',
    'PYMODULE'),
-  ('gui', 'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\gui.py', 'PYMODULE'),
+  ('gui', 'C:\\Users\\PC\\Desktop\\CODE\\mumu2\\MuMuPow\\gui.py', 'PYMODULE'),
   ('gzip',
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\gzip.py',
@@ -1057,7 +1057,7 @@
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\multiprocessing\\util.py',
    'PYMODULE'),
   ('mumu_controller',
-   'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\mumu_controller.py',
+   'C:\\Users\\PC\\Desktop\\CODE\\mumu2\\MuMuPow\\mumu_controller.py',
    'PYMODULE'),
   ('netrc',
    'C:\\Program '
@@ -1652,7 +1652,7 @@
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\queue.py',
    'PYMODULE'),
   ('quick_builder',
-   'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\quick_builder.py',
+   'C:\\Users\\PC\\Desktop\\CODE\\mumu2\\MuMuPow\\quick_builder.py',
    'PYMODULE'),
   ('quopri',
    'C:\\Program '
@@ -1671,10 +1671,10 @@
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\\Lib\\runpy.py',
    'PYMODULE'),
   ('save_web_game_import',
-   'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\save_web_game_import.py',
+   'C:\\Users\\PC\\Desktop\\CODE\\mumu2\\MuMuPow\\save_web_game_import.py',
    'PYMODULE'),
   ('script_sets',
-   'C:\\Users\\PC\\Desktop\\CODE\\MuMupow\\script_sets.py',
+   'C:\\Users\\PC\\Desktop\\CODE\\mumu2\\MuMuPow\\script_sets.py',
    'PYMODULE'),
   ('secrets',
    'C:\\Program '

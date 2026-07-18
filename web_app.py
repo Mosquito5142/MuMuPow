@@ -865,7 +865,7 @@ class Api:
         "clear_ads_loop": ["text", "delay"],
         "fetch_otp": ["text", "delay"],
         "read_diamond": ["delay"],
-        "run_set": ["set"],
+        "run_set": ["set", "block_on_fail", "block_home", "block_retries"],
         "keyboard": ["key", "action", "delay"],
         "screenshot": ["text", "delay"],
         "find_yellow_stage": ["delay"],
@@ -1019,6 +1019,45 @@ class Api:
             self._push_log(f"อัปเดตขั้น {i+1} ({t})", "info")
         except Exception as e:
             self._push_log(f"อัปเดตขั้นล้มเหลว: {e}", "warn")
+        return self.get_steps()
+
+    def extract_range_to_block(self, start, end, set_name, home="", retries="", make_block=True):
+        """ตัดช่วงขั้น [start..end] (เลข 1-based, รวมปลายทั้งสอง) ออกไปเก็บเป็นชุดคำสั่งใหม่ชื่อ set_name
+        แล้วแทนที่ช่วงนั้นในสคริปต์ปัจจุบันด้วย run_set 1 ขั้น (ติ๊ก 'บล็อกกันพัง' ถ้า make_block=True)
+        — ให้ผู้ใช้แบ่งสคริปต์ยาว ๆ ที่ทำไว้แล้วเป็นบล็อกทีหลังได้ โดยไม่ต้องสร้างใหม่
+        (แก้ในหน่วยความจำ ผู้ใช้กด 'บันทึกสคริปต์' เพื่อเซฟลงไฟล์ตามปกติ)"""
+        try:
+            s = int(start); e = int(end)
+        except (TypeError, ValueError):
+            self._push_log("ช่วงขั้นไม่ถูกต้อง (ต้องเป็นตัวเลข)", "warn"); return self.get_steps()
+        name = (set_name or "").strip()
+        if not name:
+            self._push_log("ต้องตั้งชื่อชุดใหม่ก่อน", "warn"); return self.get_steps()
+        n = len(self.macro_steps)
+        if s > e:
+            s, e = e, s
+        i0 = max(0, s - 1)     # 1-based -> 0-based
+        i1 = min(n, e)         # e รวมปลาย -> ใช้เป็น slice end ตรง ๆ
+        if i0 >= i1:
+            self._push_log(f"ช่วง {s}–{e} ไม่ถูกต้อง (สคริปต์มี {n} ขั้น)", "warn"); return self.get_steps()
+        chunk = self.macro_steps[i0:i1]
+        from script_sets import save_script_set, safe_set_slug
+        path = os.path.join(base_dir(), "script_sets", f"{safe_set_slug(name)}.json")
+        try:
+            save_script_set(path, name, chunk)
+        except Exception as ex:
+            self._push_log(f"บันทึกชุดคำสั่งล้มเหลว: {ex}", "err"); return self.get_steps()
+        block = {"type": "run_set", "set": name, "desc": f"บล็อก: {name}"}
+        if make_block:
+            block["block_on_fail"] = "home_retry"
+            h = (home or "").strip()
+            if h:
+                block["block_home"] = h
+            r = str(retries or "").strip()
+            if r:
+                block["block_retries"] = r
+        self.macro_steps[i0:i1] = [block]
+        self._push_log(f"ตัดขั้น {s}–{e} ({len(chunk)} ขั้น) เป็นบล็อก '{name}' แล้ว — อย่าลืมกด 'บันทึกสคริปต์'", "ok")
         return self.get_steps()
 
     def add_step(self, after_idx, step_type="tap"):
@@ -1427,6 +1466,24 @@ class Api:
     def _selected_list(self):
         return [d for d in self.devices if d in self.selected] or list(self.selected)
 
+    def _pair_devices_with_accounts(self, devs):
+        """จับคู่จอ↔บัญชี สำหรับงานที่ต้องรู้ว่าจอไหนคือบัญชีไหน (เช่น แคปเพชรแมนนวล) — พอร์ตให้ตรง
+        กับ Tkinter (capture_and_read_diamonds): ใช้บัญชีที่ 'รันล่าสุดบนจอนั้น' (accounts.last_device)
+        ก่อน ถ้าไม่มีค่อย fallback เป็นบัญชีที่ติ๊กไว้ตามลำดับจอ — กันกรณีไม่เคยรันผ่านแอปนี้
+        คืน list ของ (device, account|None)"""
+        accts = self._accounts()
+        by_device = {}
+        for a in accts:
+            ld = (a.get("last_device") or "").strip()
+            if ld:
+                by_device[ld] = a  # บัญชีล่าสุดที่รันบนจอนี้ (มี save_web_game_id ให้ push เข้าเว็บ)
+        checked = [a for a in accts if a.get("checked", True)]
+        pairs = []
+        for i, dev in enumerate(devs):
+            acc = by_device.get(dev) or (checked[i] if i < len(checked) else None)
+            pairs.append((dev, acc))
+        return pairs
+
     def manual_click(self, x, y):
         devs = self._selected_list()
         if not devs:
@@ -1494,15 +1551,18 @@ class Api:
 
     # ================= เครื่องมือช่าง (อื่นๆ) =================
     def read_diamond_manual(self):
-        """อ่านเพชรบนจอที่เลือกทันที (ไม่ต้องรันสคริปต์) → เขียน diamonds_export.json"""
+        """อ่านเพชรบนจอที่เลือกทันที (ไม่ต้องรันสคริปต์) → เขียน export + ส่งเข้าเว็บอัตโนมัติ
+
+        ต้องจับคู่จอ↔บัญชีก่อนอ่าน (เดิมส่ง account=None → row ไม่มี save_web_game_id → _auto_push
+        กรองทิ้งหมด → 'ไม่ส่งเข้าเว็บ' ต่างจาก Tkinter ที่จับคู่บัญชีแล้วส่งทันที)"""
         devs = self._selected_list()
         if not devs:
             self._push_log("ยังไม่ได้เลือกจอ", "warn"); return {"ok": False, "rows": []}
         from macro_runner import MacroRunner
         runner = MacroRunner(self.controller, [], log_cb=self._push_log,
                              diamond_cfg=self._load_diamond_cfg())
-        for dev in devs:
-            runner._read_diamond(dev, None)
+        for dev, acc in self._pair_devices_with_accounts(devs):
+            runner._read_diamond(dev, acc)
         self._persist_diamonds(runner.diamond_rows, self._push_log)
         return {"ok": True, "rows": runner.diamond_rows}
 
@@ -1836,29 +1896,22 @@ class Api:
         cfg = self._load_diamond_cfg()
         return {
             "region": cfg.get("region") or {"x": 0, "y": 0, "w": 0, "h": 0},
-            "name_region": cfg.get("name_region") or {"x": 90, "y": 18, "w": 140, "h": 26},
-            "verify_name": bool(cfg.get("verify_name", True)),
             "web_base_url": cfg.get("web_base_url", ""),
             "auto_push": bool(cfg.get("auto_push", True)),
         }
 
-    def save_diamond_region(self, x, y, w, h, which="region"):
-        """which='region' = พื้นที่ตัวเลขเพชร, 'name_region' = พื้นที่ชื่อในเกม (ยืนยันตัวตน)"""
-        key = "name_region" if which == "name_region" else "region"
+    def save_diamond_region(self, x, y, w, h):
         cfg = self._load_diamond_cfg()
-        cfg[key] = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+        cfg["region"] = {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
         try:
             self._save_diamond_cfg(cfg)
-            label = "พื้นที่ตัวเลขเพชร" if key == "region" else "พื้นที่ชื่อในเกม"
-            self._push_log(f"บันทึก{label} {int(w)}x{int(h)} แล้ว", "ok")
+            self._push_log(f"บันทึกพื้นที่ตัวเลขเพชร {int(w)}x{int(h)} แล้ว", "ok")
         except Exception as e:
             self._push_log(f"บันทึกพื้นที่ไม่ได้: {e}", "err")
         return self.get_diamond_settings()
 
-    def save_diamond_opts(self, verify_name=None, web_base_url=None, auto_push=None):
+    def save_diamond_opts(self, web_base_url=None, auto_push=None):
         cfg = self._load_diamond_cfg()
-        if verify_name is not None:
-            cfg["verify_name"] = bool(verify_name)
         if web_base_url is not None:
             cfg["web_base_url"] = str(web_base_url).strip()
         if auto_push is not None:

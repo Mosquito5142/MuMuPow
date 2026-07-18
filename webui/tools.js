@@ -31,7 +31,7 @@ async function readDiamond(){
   const r = await PY.read_diamond_manual();
   const rows = (r && r.rows) || [];
   const body = rows.length
-    ? '<div style="font-size:12px;color:#7C8CA3;margin-bottom:10px">อ่านได้ ' + rows.length + ' รายการ (บันทึกลง diamonds_export.json แล้ว)</div>'
+    ? '<div style="font-size:12px;color:#7C8CA3;margin-bottom:10px">อ่านได้ ' + rows.length + ' รายการ — บันทึกไฟล์ + ส่งเข้าเว็บให้แล้ว (ดูผลส่งที่ล็อก)</div>'
       + '<div style="display:flex;flex-direction:column;gap:6px">'
       + rows.map(x => '<div style="display:flex;gap:10px;align-items:center;padding:8px 11px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434"><i data-lucide="gem" width="14" height="14" style="color:#7DD3FC"></i><span style="flex:1;font-size:12.5px">' + esc(x.name || x.device || '-') + '</span><span style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:#6EE7B7">' + esc(String(x.diamonds)) + '</span></div>').join('')
       + '</div>'
@@ -161,7 +161,14 @@ function renderManageSets(sets){
     '<div style="font-size:12px;color:#7C8CA3;margin-bottom:8px">ชุดคำสั่งย่อยใช้ผ่าน step “ใช้ชุดคำสั่ง (run_set)”</div>'
     + '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">' + list + '</div>'
     + '<div style="border-top:1px solid #1B2434;padding-top:14px"><div style="font-size:12px;color:#90A0B7;margin-bottom:7px">บันทึกขั้นตอนในสคริปต์ปัจจุบันเป็นชุดใหม่:</div>'
-    + '<div style="display:flex;gap:8px"><input id="newSetName" class="in" placeholder="ชื่อชุดคำสั่ง…" style="flex:1;height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-size:12.5px;color:#C7D2E0"><button class="in" onclick="saveCurrentSet()" style="display:flex;align-items:center;gap:6px;padding:0 14px;height:38px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="save" width="14" height="14" stroke-width="2"></i>บันทึกเป็นชุด</button></div></div>');
+    + '<div style="display:flex;gap:8px"><input id="newSetName" class="in" placeholder="ชื่อชุดคำสั่ง…" style="flex:1;height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-size:12.5px;color:#C7D2E0"><button class="in" onclick="saveCurrentSet()" style="display:flex;align-items:center;gap:6px;padding:0 14px;height:38px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="save" width="14" height="14" stroke-width="2"></i>บันทึกเป็นชุด</button></div></div>'
+    + '<div style="border-top:1px solid #1B2434;padding-top:14px;margin-top:14px">'
+    +   '<div style="font-size:12px;color:#90A0B7;margin-bottom:7px">✂️ ตัดช่วงขั้นในสคริปต์นี้ออกไปทำเป็น “บล็อกกันพัง” (แบ่งสคริปต์ยาว ๆ ทีหลังได้):</div>'
+    +   '<div style="display:flex;gap:8px;margin-bottom:8px"><input id="exFrom" class="in" placeholder="ขั้นเริ่ม" style="width:90px;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 10px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"><span style="align-self:center;color:#5C6B82">ถึง</span><input id="exTo" class="in" placeholder="ขั้นจบ" style="width:90px;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 10px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"><input id="exName" class="in" placeholder="ชื่อบล็อกใหม่…" style="flex:1;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-size:12.5px;color:#C7D2E0"></div>'
+    +   '<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:#C7D2E0;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="exBlock" checked onchange="document.getElementById(\'exBlockOpts\').style.display=this.checked?\'flex\':\'none\'">ทำเป็นบล็อกกันพัง (ถ้าพัง กลับหน้าแรกแล้วลองใหม่)</label>'
+    +   '<div id="exBlockOpts" style="display:flex;gap:8px;margin-bottom:8px"><input id="exHome" class="in" placeholder="ชุดกลับหน้าแรก (เช่น กลับหน้าแรก)" value="กลับหน้าแรก" style="flex:1;height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 11px;font-size:12.5px;color:#C7D2E0"><input id="exRetries" class="in" placeholder="รอบ (3)" style="width:80px;height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 11px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
+    +   '<button class="in" onclick="extractRangeToBlock()" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:38px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="scissors" width="14" height="14" stroke-width="2"></i>ตัดช่วงนี้เป็นบล็อก</button>'
+    + '</div>');
 }
 async function saveCurrentSet(){
   const v = (document.getElementById('newSetName') || {}).value || '';
@@ -169,6 +176,17 @@ async function saveCurrentSet(){
   if(hasPy()){ const r = await PY.save_current_as_set(v); renderManageSets(r.sets || []); }
 }
 async function delSet(name){ if(hasPy()){ const r = await PY.delete_script_set(name); renderManageSets(r.sets || []); } }
+async function extractRangeToBlock(){
+  const g=id=>(document.getElementById(id)||{}).value;
+  const from=g('exFrom'), to=g('exTo'), name=(g('exName')||'').trim();
+  if(!from||!to){ notReady('ใส่ช่วงขั้น เริ่ม–จบ ก่อน'); return; }
+  if(!name){ notReady('ตั้งชื่อบล็อกใหม่ก่อน'); return; }
+  const block=(document.getElementById('exBlock')||{}).checked;
+  if(hasPy()){
+    await PY.extract_range_to_block(from, to, name, block?g('exHome'):'', block?g('exRetries'):'', block);
+    closeModal(); renderSteps();
+  }
+}
 
 // ---- สร้างเร็ว (พรีเซ็ตพิกัด → เพิ่มเป็น step แตะ) ----
 async function openQuickBuilder(){
@@ -229,29 +247,24 @@ async function prSave(){
 async function openDiamondTools(){
   if(!needPy('ระบบเพชร')) return;
   const s = await PY.get_diamond_settings();
-  const reg = s.region||{}, nreg = s.name_region||{};
+  const reg = s.region||{};
   openModal('ตั้งค่าระบบอ่านเพชร','gem',
     '<div style="display:flex;flex-direction:column;gap:12px">'
     + '<div style="display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:9px;background:#0A0F19;border:1px solid #1B2434">'
     +   '<span style="flex:1;font-size:12.5px">พื้นที่ตัวเลขเพชร: <span style="font-family:\'IBM Plex Mono\',monospace;color:#7DD3FC">'+(reg.w?('x='+reg.x+' y='+reg.y+' '+reg.w+'×'+reg.h):'ยังไม่ตั้ง ⚠')+'</span></span>'
-    +   '<button class="in" onclick="pickDiamondRegion(\'region\')" style="padding:7px 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer">ลากกรอบใหม่</button></div>'
-    + '<div style="display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:9px;background:#0A0F19;border:1px solid #1B2434">'
-    +   '<span style="flex:1;font-size:12.5px">พื้นที่ชื่อในเกม (ยืนยันตัวตน): <span style="font-family:\'IBM Plex Mono\',monospace;color:#7DD3FC">'+(nreg.w?('x='+nreg.x+' y='+nreg.y+' '+nreg.w+'×'+nreg.h):'ยังไม่ตั้ง')+'</span></span>'
-    +   '<button class="in" onclick="pickDiamondRegion(\'name_region\')" style="padding:7px 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer">ลากกรอบใหม่</button></div>'
-    + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer"><input type="checkbox" id="dmVerify"'+(s.verify_name?' checked':'')+' onchange="PY.save_diamond_opts(this.checked,null,null)">ยืนยันชื่อในเกมก่อนบันทึกเพชร (กันเขียนผิดบัญชี)</label>'
+    +   '<button class="in" onclick="pickDiamondRegion()" style="padding:7px 12px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer">ลากกรอบใหม่</button></div>'
     + '<div style="border-top:1px solid #1B2434;padding-top:12px;display:flex;flex-direction:column;gap:9px">'
     +   '<div style="font-size:12px;color:#90A0B7">เว็บ Save Web Game (ส่งเพชรขึ้นเว็บอัตโนมัติหลังรัน):</div>'
     +   '<div style="display:flex;gap:8px"><input id="dmWebUrl" class="in" value="'+esc(s.web_base_url||'')+'" placeholder="https://your-app.vercel.app" style="flex:1;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 11px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#C7D2E0">'
-    +   '<button class="in" onclick="PY.save_diamond_opts(null,document.getElementById(\'dmWebUrl\').value,null)" style="padding:0 13px;height:36px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer">บันทึก URL</button></div>'
+    +   '<button class="in" onclick="PY.save_diamond_opts(document.getElementById(\'dmWebUrl\').value,null)" style="padding:0 13px;height:36px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer">บันทึก URL</button></div>'
     +   '<div style="display:flex;gap:8px">'
     +   '<button class="in" onclick="matchWebNow()" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><i data-lucide="link" width="13" height="13"></i>จับคู่ชื่อกับเว็บ</button>'
     +   '<button class="in" onclick="pushWebNow()" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:38px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="upload-cloud" width="13" height="13"></i>ส่งเพชรขึ้นเว็บตอนนี้</button></div>'
     + '</div></div>');
 }
-async function pickDiamondRegion(which){
-  const label = which==='region' ? 'พื้นที่ตัวเลขเพชร' : 'พื้นที่ชื่อในเกม';
-  await pickRegionGeneric('ตั้ง'+label, 'ลากกรอบคลุมเฉพาะ'+(which==='region'?'ตัวเลขจำนวนเพชร':'ชื่อตัวละครมุมซ้ายบน'),
-    async g => { await PY.save_diamond_region(g.x, g.y, g.w, g.h, which); openDiamondTools(); });
+async function pickDiamondRegion(){
+  await pickRegionGeneric('ตั้งพื้นที่ตัวเลขเพชร', 'ลากกรอบคลุมเฉพาะตัวเลขจำนวนเพชร',
+    async g => { await PY.save_diamond_region(g.x, g.y, g.w, g.h); openDiamondTools(); });
 }
 async function matchWebNow(){ const r = await PY.match_web_accounts(); if(r) notReady2('จับคู่ได้ '+(r.matched||0)+' รหัส'); }
 async function pushWebNow(){ const r = await PY.push_diamonds_web(); if(r&&r.ok) notReady2('ส่งสำเร็จ '+r.sent+' · พลาด '+r.failed); }

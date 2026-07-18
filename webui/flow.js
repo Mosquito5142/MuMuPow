@@ -29,6 +29,10 @@ function setScriptView(v){
   document.getElementById('stepList').style.display = v==='list' ? 'flex' : 'none';
   document.getElementById('listBtnRow').style.display = v==='list' ? 'flex' : 'none';
   document.getElementById('flowCanvas').style.display = v==='flow' ? 'block' : 'none';
+  // การเลือกช่วง (คลิกคลุม) ใช้ได้เฉพาะโหมดลิสต์ — ซ่อนตัวช่วย+ยกเลิกช่วงที่ค้างเมื่อสลับไปโฟลว์
+  const rh=document.getElementById('rangeHint'), rb=document.getElementById('rangeBar');
+  if(rh) rh.style.display = v==='list' ? 'block' : 'none';
+  if(v!=='list' && rb){ rb.style.display='none'; if(typeof RANGE!=='undefined') RANGE=null; }
   if(v==='flow') renderFlow();
 }
 
@@ -221,6 +225,7 @@ async function flowSelect(path){
     fillStepForm({ type:s.type||'tap', desc:s.desc||'', x:s.x||'', y:s.y||'', x2:s.x2||'', y2:s.y2||'',
       duration:s.duration||'', text:s.text||'', code:s.code||'', key:s.key||'', action:s.action||'',
       seconds:s.seconds||'', timeout:s.timeout||'', set:s.set||'', threshold:s.threshold||'',
+      block_on_fail:s.block_on_fail||'', block_home:s.block_home||'', block_retries:(s.block_retries!=null?s.block_retries:''),
       delay:(s.delay!=null?s.delay:'') });
     renderFlowActions(s, path);
   }
@@ -414,7 +419,7 @@ async function flowAnchorOpts(){
     // 'pause' เป็นค่าเริ่มต้น/ตัวหลักแล้ว (เรียนรู้ทีละจอ) เลยเอาไว้บนสุด — ระบบไม่รีเซ็ตเกมอัตโนมัติอีกแล้ว
     // ไม่ว่าจะเลือกอันไหนก็ตาม (retry ยังต้องตั้งเองเสมอ ไม่ใช่ค่าเริ่มต้น)
     + opt('pause','⏸ หยุดรอผู้ใช้แก้ไข (เรียนรู้ทีละจอ) — แนะนำ')
-    + '<div style="display:' + (cur==='pause'?'block':'none') + ';font-size:11px;color:#5C6B82;margin-left:4px" id="aofPauseNote">จอจะหยุดค้างไว้ตามที่เห็น (ไม่รีเซ็ตเกม) แล้วขึ้นในแผง "จอที่รอแก้ไข" หน้าแรก — เข้าไปเพิ่มเงื่อนไข/if แล้วกด "รันต่อ" ได้เลย</div>'
+    + '<div style="display:' + (cur==='pause'?'block':'none') + ';font-size:11px;color:#5C6B82;margin-left:4px" id="aofPauseNote">ถ้าไม่เจอ จะลองย้อนไปกดขั้นก่อนหน้าซ้ำ 1 ครั้งแล้วเช็คใหม่ก่อน (เผื่อจอ/เครื่องค้างตอนกดรอบแรก) — ถ้ายังไม่เจอจริง ๆ จอจะหยุดค้างไว้ตามที่เห็น (ไม่รีเซ็ตเกม) แล้วขึ้นในแผง "จอที่รอแก้ไข" หน้าแรก — เข้าไปเพิ่มเงื่อนไข/if แล้วกด "รันต่อ" ได้เลย</div>'
     + opt('retry','🔁 วนกลับไปทำขั้นที่เลือกใหม่ (ลองซ้ำ)')
     + opt('skip','ข้ามสเต็ปนี้ไป') + opt('tap','กดตามพิกัดเดิม (เสี่ยง)') + opt('abort','หยุดจอนี้เฉยๆ (ไม่รอ ไม่วน)')
     + '<div id="aofRetryBox" style="display:' + (cur==='retry'?'flex':'none') + ';flex-direction:column;gap:8px;padding:10px;border-radius:8px;background:#0A0F19;border:1px dashed #24344B;margin-left:4px">'
@@ -425,7 +430,7 @@ async function flowAnchorOpts(){
     +   '<div style="font-size:11px;color:#5C6B82">ครบรอบแล้วยังไม่เจอ จะ fallback ไปหยุดจอนี้เอง กันวนไม่รู้จบ</div>'
     + '</div>'
     + '<div style="display:flex;gap:10px;align-items:center"><span style="font-size:12px;color:#90A0B7">รอสูงสุด (วิ):</span>'
-    + '<input id="aofTimeout" class="in" value="' + (st.anchor_timeout!=null?st.anchor_timeout:8) + '" style="width:70px;height:34px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 10px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
+    + '<input id="aofTimeout" class="in" value="' + (st.anchor_timeout!=null?st.anchor_timeout:30) + '" style="width:70px;height:34px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 10px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
     + '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer"><input type="checkbox" id="aofTap"' + (st.anchor_tap?' checked':'') + '>🎯 กดตรงที่เจอภาพ (ปุ่มขยับก็กดโดน)</label>'
     + '<button class="in" onclick="flowSaveAnchorOpts()" style="display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="check" width="15" height="15" stroke-width="2.25"></i>บันทึก</button>'
     + '</div>');

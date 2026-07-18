@@ -8,13 +8,5 @@
   "threshold": 0.6,
   "export_path": "diamond_export.json",
   "web_base_url": "https://save-web-game.vercel.app/",
-  "auto_push": true,
-  "verify_name": true,
-  "name_region": {
-    "x": 90,
-    "y": 18,
-    "w": 140,
-    "h": 26
-  },
-  "name_match_ratio": 0.72
+  "auto_push": true
 }

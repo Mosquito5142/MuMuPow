@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import copy
 import time
 import base64
 import queue
@@ -15,7 +16,7 @@ import threading
 import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from mumu_controller import (find_tesseract, names_match,
+from mumu_controller import (find_tesseract,
                              available_tesseract_langs, ocr_text_tesseract,
                              find_highlighted_stage, find_swipe_glow, in_match_autoplay,
                              ocr_find_button, png_similarity, gemini_tap_suggestion,
@@ -281,9 +282,19 @@ class MacroRunner:
                     return True
         return False
 
+    @staticmethod
+    def _is_block(step):
+        """run_set ที่ตั้งเป็น 'บล็อกกันพัง' = ถ้าพังให้กลับหน้าแรกแล้วรัน set นั้นใหม่
+        (มาร์กด้วย block_on_fail=='home_retry') — ต่างจาก run_set ธรรมดาที่ถูกคลี่แบนทิ้ง"""
+        return step.get("type") == "run_set" and step.get("block_on_fail") == "home_retry"
+
     def _expand_sets(self, steps):
         """ขยายขั้น run_set ให้กลายเป็นขั้นย่อยจริง (โหลดชุดจาก script_sets/*.json)
         recurse เข้ากิ่ง then/else ของ if_image ด้วย — cycle detection อยู่ใน expand_steps_with_sets
+
+        ยกเว้น run_set ที่เป็น 'บล็อกกันพัง' (block_on_fail=='home_retry') — จะไม่คลี่แบน แต่เก็บไว้
+        เป็นบล็อกตอนรัน โดย pre-resolve ขั้นย่อยของ set (_block_steps) และ set กลับหน้าแรก (_home_steps)
+        ติดไว้กับ step เลย เพื่อให้ตอนรัน 'ถ้าพัง → เล่น _home_steps → เริ่ม _block_steps ใหม่' ได้
         ถ้าพัง คืน steps เดิมพร้อม log เตือน"""
         if not self._tree_has_run_set(steps):
             return steps
@@ -299,16 +310,46 @@ class MacroRunner:
                     pass
             resolver = lambda name: sets.get(name)
 
-            def expand_tree(lst):
+            def flatten(lst):
+                """คลี่ run_set ธรรมดาทั้งหมดให้เป็นขั้นย่อยจริง (recurse เข้ากิ่ง if_image ด้วย)"""
                 flat = expand_steps_with_sets(lst, resolver)
                 for s in flat:
                     if s.get("type") == "if_image":
                         for k in ("then", "else"):
                             if s.get(k):
-                                s[k] = expand_tree(s[k])
+                                s[k] = flatten(s[k])
                 return flat
 
-            return expand_tree(steps)
+            def build(lst):
+                """เก็บ run_set แบบบล็อกไว้ (pre-resolve ขั้นย่อย+set กลับหน้าแรก) ที่เหลือคลี่แบนตามเดิม"""
+                out = []
+                for step in lst:
+                    if self._is_block(step):
+                        blk = copy.deepcopy(step)
+                        set_name = str(step.get("set") or step.get("text") or "").strip()
+                        sub = sets.get(set_name)
+                        if sub is None:
+                            self.log(f"ไม่พบชุดคำสั่ง '{set_name}' (บล็อกกันพัง) → ข้ามบล็อกนี้", "warn")
+                            continue
+                        blk["_block_steps"] = flatten(sub)
+                        home_name = str(step.get("block_home") or "").strip()
+                        if home_name:
+                            if sets.get(home_name) is not None:
+                                blk["_home_steps"] = flatten(sets[home_name])
+                            else:
+                                self.log(f"ไม่พบชุด 'กลับหน้าแรก' ชื่อ '{home_name}' → บล็อกจะลองใหม่โดยไม่กลับหน้าแรก", "warn")
+                        out.append(blk)
+                    elif step.get("type") == "if_image":
+                        s2 = copy.deepcopy(step)
+                        for k in ("then", "else"):
+                            if s2.get(k):
+                                s2[k] = build(s2[k])
+                        out.append(s2)
+                    else:
+                        out.extend(flatten([step]))
+                return out
+
+            return build(steps)
         except Exception as e:
             self.log(f"ขยายชุดคำสั่ง (run_set) ไม่สำเร็จ: {e} → ใช้สคริปต์เดิม", "warn")
             return steps
@@ -418,11 +459,13 @@ class MacroRunner:
             self.log(f"[{device}] {who} ล็อกอิน/ทำงานไม่ผ่าน — ไปบัญชีถัดไป (ไม่รีเซ็ตเกมอัตโนมัติแล้ว)", "err")
         return status
 
-    def _run_steps(self, device, account, steps, prog, path="", depth=0, disp=""):
+    def _run_steps(self, device, account, steps, prog, path="", depth=0, disp="", block_mode=False):
         """รันลิสต์ขั้นตอน — เรียกซ้ำตัวเองเข้าไปในกิ่ง then/else ของ if_image ได้
         path = ตำแหน่งกิ่ง เช่น "" (เส้นหลัก), "2.then" — ใช้รายงานว่ารันถึงไหน
         disp = เลขขั้นแบบอ่านง่ายสำหรับ log เช่น "" หรือ "4.เจอ." (1-based)
-        คืน "completed" | "stopped" | "device_error"
+        block_mode = True เมื่อกำลังรันขั้นย่อยที่อยู่ใน 'บล็อกกันพัง' — ถ้าเจอ anchor ไม่เจอ ให้ถือว่า
+          'บล็อกนี้พัง' (คืน device_error ทันที) แทนการหยุดรอ/วนเอง เพราะบล็อกจัดการกลับหน้าแรก+ลองใหม่เอง
+        คืน "completed" | "stopped" | "device_error" | "paused"
 
         ใช้ while + ตัวชี้ idx เดินเอง (ไม่ใช่ for) เพราะ anchor_on_fail="retry" ต้อง
         กระโดดตัวชี้ถอยหลังไปขั้นก่อนหน้าในลิสต์เดียวกันได้ (วนทำซ้ำ ไม่ใช่แค่ไล่หน้าเดียว)
@@ -433,6 +476,7 @@ class MacroRunner:
         total = len(self.steps)  # ตัวเลข x/y บนการ์ดอิงเส้นหลักเสมอ (กิ่งใช้ desc นำหน้า ↳ บอกแทน)
         in_branch = bool(path)
         retry_counts = {}  # idx ของขั้นนี้ -> จำนวนรอบที่วนไปแล้ว (รีเซ็ตใหม่ทุกครั้งที่เรียกฟังก์ชันนี้)
+        pause_self_healed = set()  # idx ที่เคยลองย้อนไปกดขั้นก่อนหน้าซ้ำแล้ว (นโยบาย pause) — กันวนซ้ำไม่รู้จบ
 
         idx = 0
         while idx < len(steps):
@@ -460,6 +504,14 @@ class MacroRunner:
             self.log(f"[{device}] 👉 ขั้น {num}"
                      f"{f'/{total}' if not in_branch else ''}: {desc} [{t}]{detail}", "info")
 
+            # ---- บล็อกกันพัง: รัน set นี้จนจบ ถ้าพัง → กลับหน้าแรก → เริ่ม set นี้ใหม่ (จำกัดรอบ) ----
+            if self._is_block(step):
+                r = self._run_block(device, account, step, prog, here, num, depth)
+                if r != "completed":
+                    return r
+                idx += 1
+                continue
+
             # ---- บล็อกทางเลือก: เจอภาพ → กิ่ง then จนจบ แล้วกลับมาต่อเส้นนี้ / ไม่เจอ → กิ่ง else ----
             if t == "if_image":
                 branch = self._eval_if_image(device, step)
@@ -471,7 +523,7 @@ class MacroRunner:
                     self.log(f"[{device}] 🔀 ขั้น {num}: เข้ากิ่ง '{bname}' ({len(sub)} ขั้น)", "info")
                     r = self._run_steps(device, account, sub, prog,
                                         path=f"{here}.{branch}", depth=depth + 1,
-                                        disp=f"{num}.{bname}.")
+                                        disp=f"{num}.{bname}.", block_mode=block_mode)
                     if r != "completed":
                         return r
                     self.log(f"[{device}] ↩ ขั้น {num}: จบกิ่ง '{bname}' → กลับเส้นหลัก", "info")
@@ -492,6 +544,11 @@ class MacroRunner:
                 if gate == "found" and ax is not None:
                     anchor_hit = (ax, ay)
                 if gate == "missing":
+                    # อยู่ในบล็อกกันพัง: ไม่เจอภาพ = ถือว่า 'set นี้พัง' ทันที คืน device_error ให้ตัวจัดการบล็อก
+                    # ไปกลับหน้าแรก+เริ่ม set ใหม่เอง (ไม่หยุดรอ/ไม่วนเองในนี้ เพราะบล็อกคุมการลองใหม่แล้ว)
+                    if block_mode:
+                        self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → ถือว่าชุดคำสั่งนี้พัง (จะกลับหน้าแรกแล้วลองใหม่)", "warn")
+                        return "device_error"
                     # ค่าเริ่มต้นเป็น 'pause' (เรียนรู้ทีละจอ) แทน 'abort' เดิม — วนกลับ (retry) ยังคง
                     # เป็นเครื่องมือที่ต้องตั้งเองเท่านั้น ไม่ใช่ค่าเริ่มต้น ตรงตามที่ผู้ใช้ต้องการ
                     pol = step.get("anchor_on_fail", "pause")
@@ -514,6 +571,14 @@ class MacroRunner:
                         idx += 1
                         continue
                     elif pol == "pause":
+                        # ก่อนหยุดรอจริง ลองย้อนไปทำขั้นก่อนหน้าซ้ำอีก 1 ที (เผื่อกดตอนนั้นแล้วจอ/เครื่องค้าง
+                        # เลยไม่ขยับมาจอนี้จริง ๆ) แล้วเช็ค anchor ใหม่ — ถ้าลองแล้วยังไม่เจอจริง ๆ ค่อยหยุดรอ
+                        if idx > 0 and idx not in pause_self_healed:
+                            pause_self_healed.add(idx)
+                            self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → ลองย้อนไปทำขั้นก่อนหน้าซ้ำ "
+                                     f"(เผื่อจอค้าง) แล้วเช็คใหม่", "warn")
+                            idx -= 1
+                            continue
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → หยุดรอแก้ไข (ไม่รีเซ็ตเกม เก็บจอไว้ตามที่ค้าง)", "warn")
                         self._pause_checkpoint(device, account, here, step, prog)
                         return "paused"
@@ -534,6 +599,49 @@ class MacroRunner:
             idx += 1
 
         return "completed"
+
+    def _run_block(self, device, account, step, prog, here, num, depth):
+        """รัน 'บล็อกกันพัง' 1 บล็อก: รันขั้นย่อยของ set (block_mode=True) จนจบ
+        ถ้าพัง (device_error) → เล่นชุด 'กลับหน้าแรก' → เริ่ม set นี้ใหม่ทั้งชุด จำกัดจำนวนรอบ (block_retries)
+        คืน 'completed' | 'stopped' | 'device_error'
+          - completed = set ทำจนจบสำเร็จ (ในรอบใดรอบหนึ่ง)
+          - stopped   = ผู้ใช้กดหยุด
+          - device_error = ลองครบทุกรอบแล้วยังพัง (บันทึกจุดที่ติดไว้แล้ว)"""
+        set_name = str(step.get("set") or step.get("text") or "").strip() or "ชุดคำสั่ง"
+        sub_steps = step.get("_block_steps") or []
+        home_steps = step.get("_home_steps") or []
+        try:
+            retries = max(0, int(step.get("block_retries", 3) or 0))
+        except (TypeError, ValueError):
+            retries = 3
+        total_rounds = retries + 1  # ครั้งแรก + ลองซ้ำอีก retries รอบ
+
+        for attempt in range(1, total_rounds + 1):
+            if not self.running():
+                return "stopped"
+            self.log(f"[{device}] ▶ เริ่มชุด '{set_name}' (รอบ {attempt}/{total_rounds})", "info")
+            r = self._run_steps(device, account, sub_steps, prog,
+                                path=f"{here}.set", depth=depth + 1, disp=f"{num}.", block_mode=True)
+            if r == "stopped":
+                return "stopped"
+            if r == "completed":
+                self.log(f"[{device}] ✔ ชุด '{set_name}' สำเร็จ", "ok")
+                return "completed"
+            # r == device_error/paused → ชุดนี้พังในรอบนี้
+            if attempt >= total_rounds:
+                self.log(f"[{device}] ⛔ ชุด '{set_name}' พังครบ {total_rounds} รอบแล้ว → หยุด (บันทึกจุดที่ติดไว้)", "err")
+                self._save_failure_report(device, account, here, step, f"block_failed:{set_name}")
+                return "device_error"
+            # ยังมีรอบเหลือ → กลับหน้าแรกก่อนเริ่มใหม่
+            if home_steps:
+                self.log(f"[{device}] ↺ ชุด '{set_name}' พัง → กลับหน้าแรกแล้วเริ่มใหม่ (รอบถัดไป {attempt + 1}/{total_rounds})", "warn")
+                hr = self._run_steps(device, account, home_steps, prog,
+                                     path=f"{here}.home", depth=depth + 1, disp=f"{num}.กลับ.", block_mode=False)
+                if hr == "stopped":
+                    return "stopped"
+            else:
+                self.log(f"[{device}] ↺ ชุด '{set_name}' พัง → เริ่มใหม่ (ไม่ได้ตั้งชุดกลับหน้าแรก) รอบถัดไป {attempt + 1}/{total_rounds}", "warn")
+        return "device_error"
 
     def _eval_if_image(self, device, step):
         """ประเมินเงื่อนไข if_image: เจอภาพภายใน timeout → 'then' ไม่เจอ → 'else'
@@ -916,8 +1024,11 @@ class MacroRunner:
             self.log(f"[{device}] ส่งปุ่มคีย์บอร์ดล้มเหลว: {e}", "err")
         self._sleep_delay(step)
 
-    # ---------- อ่านเพชร (พอร์ตจาก _step_read_diamond + _verify_diamond_identity) ----------
+    # ---------- อ่านเพชร (พอร์ตจาก _step_read_diamond) ----------
     def _read_diamond(self, device, account):
+        # ไม่มีการยืนยันชื่อในเกมอีกต่อไป — ขั้นนี้มาถึงได้ก็ต่อเมื่อ anchor ของสคริปต์ยืนยันจอ/บัญชี
+        # ที่ถูกต้องแล้วเท่านั้น (ผู้ใช้ยืนยันแล้วว่าลำดับ anchor รับประกันสิ่งนี้อยู่แล้ว การ OCR ชื่อซ้ำ
+        # ซ้อนเข้าไปมีแต่ทำให้หลุดจาก false positive ตอน OCR อ่านเลขพลาดตัวเดียว)
         account = account or {}
         who = account_display_name(account)
         region = (self.diamond_cfg or {}).get("region") or {}
@@ -930,10 +1041,6 @@ class MacroRunner:
         ok, data = self.controller.capture_screenshot_bytes(device)
         if not ok:
             self.log(f"[{device}] {who}: อ่านเพชรไม่ได้ (แคปจอพลาด) → ข้าม", "warn")
-            return
-        # ยาม Layer A: ยืนยันชื่อในเกมตรงบัญชีก่อนเขียน (กันเขียนผิดบัญชี)
-        vok, data = self._verify_identity(device, account, who, data)
-        if not vok:
             return
         rok, number, _raw = self.controller.read_number_tesseract(data, region)
         if not rok or number is None:
@@ -949,34 +1056,6 @@ class MacroRunner:
             self.diamond_rows.append(row)
         self.log(f"[{device}] {who}: 💎 {number} เพชร", "ok")
 
-    def _verify_identity(self, device, account, who, data):
-        cfg = self.diamond_cfg or {}
-        if not cfg.get("verify_name", True):
-            return True, data
-        expected = (account.get("ingamename") or account.get("name") or "").strip()
-        if not expected:
-            self.log(f"[{device}] {who}: บัญชีไม่มี ingamename → ข้ามการยืนยัน (best-effort)", "warn")
-            return True, data
-        name_region = cfg.get("name_region") or {"x": 90, "y": 18, "w": 140, "h": 26}
-        min_ratio = float(cfg.get("name_match_ratio", 0.72) or 0.72)
-        lang = "tha+eng" if "tha" in available_tesseract_langs() else "eng"
-        last_seen = ""
-        for attempt in range(3):
-            ok, txt, _ = ocr_text_tesseract(data, region=name_region, lang=lang, psm=7, scale=3)
-            seen = (txt or "").strip().replace("\n", " ")
-            if seen:
-                last_seen = seen
-            if ok and seen and names_match(expected, seen, min_ratio=min_ratio):
-                return True, data
-            if attempt < 2:
-                time.sleep(1.5)
-                cok, cdata = self.controller.capture_screenshot_bytes(device)
-                if cok:
-                    data = cdata
-        self.log(f"[{device}] {who}: ชื่อในเกมไม่ตรง (คาด '{expected}' เห็น '{last_seen or '—'}') "
-                 f"→ ไม่เขียนเพชร กันข้อมูลเพี้ยน", "err")
-        return False, data
-
     # ---------- anchor gate (พอร์ตจาก _wait_for_step_anchor) ----------
     def _wait_anchor(self, device, step):
         b64 = step.get("anchor_img") or ""
@@ -986,7 +1065,7 @@ class MacroRunner:
             return "found", None, None
         if not tmpl:
             return "found", None, None
-        timeout = float(step.get("anchor_timeout", 8.0) or 8.0)
+        timeout = float(step.get("anchor_timeout", 30.0) or 30.0)
         threshold = float(step.get("anchor_threshold", 0.8) or 0.8)
         deadline = time.time() + timeout
         while time.time() < deadline:
