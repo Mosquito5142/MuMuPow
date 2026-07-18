@@ -58,8 +58,9 @@ def test_pause_stops_device_without_resetting_game():
     status = r.execute_one(":7555", {"email": "a@b.c"})
 
     assert status == "paused"
-    # ขั้น 1 ทำไปแล้ว แต่ขั้น 3 (หลังจุดค้าง) ต้องไม่ถูกทำ
-    assert c.calls.count(("tap", 1, 1)) == 1
+    # ขั้น 1 ถูกทำ 2 ครั้ง: ครั้งแรก + self-heal ลองย้อนไปทำซ้ำ 1 ครั้งก่อนยอมหยุดรอจริง
+    # (เผื่อกดตอนนั้นแล้วจอ/เครื่องค้าง เลยไม่ขยับมาจอนี้จริง ๆ) แต่ขั้น 3 (หลังจุดค้าง) ต้องไม่ถูกทำ
+    assert c.calls.count(("tap", 1, 1)) == 2
     assert ("tap", 3, 3) not in c.calls
     # ต้องไม่รีเซ็ตเกม (ต่างจาก abort เดิม)
     assert ("stop_app", "com.test.app") not in c.calls

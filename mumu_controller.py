@@ -396,47 +396,6 @@ def in_match_autoplay(screen_bytes):
     return False
 
 
-def normalize_ingame_name(value):
-    """ทำชื่อในเกมให้เป็นรูปมาตรฐานเพื่อเทียบ: NFKC, ตัวพิมพ์เล็ก, ตัดช่องว่าง/สัญลักษณ์ที่ OCR
-    มักเพี้ยน (เช่น ) ] | . _ -) ออก — ใช้เทียบ ingamename ที่บันทึกไว้ vs ที่ OCR อ่านจากจอ"""
-    v = unicodedata.normalize("NFKC", str(value or "")).lower()
-    # เก็บเฉพาะตัวอักษร/ตัวเลข (รองรับ unicode/ไทย) ตัดช่องว่าง+สัญลักษณ์ที่ OCR มักเพี้ยนออกทั้งหมด
-    v = re.sub(r"[^\w]|_", "", v, flags=re.UNICODE)
-    return v.strip()
-
-
-# OCR มักสับสนตัวอักษร↔ตัวเลขที่รูปคล้ายกัน (ใช้เฉพาะตอนเทียบชื่อที่เป็น 'ตัวเลขล้วน')
-_OCR_LETTER_TO_DIGIT = str.maketrans({
-    "o": "0", "q": "0", "i": "1", "l": "1", "z": "2", "s": "5",
-    "b": "8", "g": "9", "t": "7",
-})
-
-
-def names_match(expected, actual, min_ratio=0.72):
-    """ชื่อในเกม 'ตรงกัน' ไหม (ทน OCR เพี้ยนเล็กน้อย แต่ยังกันสลับบัญชีได้)
-    - ตรงเป๊ะ / ฝั่งหนึ่งเป็นสับเซ็ตของอีกฝั่ง (OCR มีขยะปน) -> ตรง
-    - ชื่อเป็น 'ตัวเลขล้วน' (เช่น player ID) -> แก้ OCR สับสน (O→0 ฯลฯ) แล้วเทียบเป๊ะ
-      (ไม่ใช้ fuzzy เพราะ ID ที่ต่างกันแค่หลักเดียวจะ ratio สูงจนหลุด = เขียนผิดบัญชี)
-    - ชื่อตัวอักษร -> วัดความคล้าย (difflib ratio) >= min_ratio
-    คืน True/False. ถ้าฝั่งใดว่างหลัง normalize -> False (เทียบไม่ได้ = ถือว่าไม่ตรง)"""
-    import difflib
-    e = normalize_ingame_name(expected)
-    a = normalize_ingame_name(actual)
-    if not e or not a:
-        return False
-    if e == a:
-        return True
-    if e.isdigit():
-        # แก้ตัวอักษรที่ OCR สับสน -> ตัวเลข แล้วเอาเฉพาะตัวเลข เทียบเป๊ะ
-        a_digits = re.sub(r"\D", "", a.translate(_OCR_LETTER_TO_DIGIT))
-        return a_digits == e
-    # ชื่อตัวอักษร: สับเซ็ต (ฝั่งสั้นต้องยาวพอ >=4 กันชื่อสั้นไปตรงกับขยะยาว) หรือ fuzzy
-    shorter = e if len(e) <= len(a) else a
-    if len(shorter) >= 4 and (e in a or a in e):
-        return True
-    return difflib.SequenceMatcher(None, e, a).ratio() >= min_ratio
-
-
 _TESS_LANGS = None
 _TESSDATA_DIR = None
 

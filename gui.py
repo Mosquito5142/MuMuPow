@@ -13,7 +13,7 @@ from mumu_controller import (
     MuMuController, find_element_center, list_ui_elements, find_tesseract,
     get_host_specs, estimate_mumu_capacity, DEFAULT_MUMU_PROFILE,
     stitch_png_vertically, png_similarity,
-    ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs, names_match,
+    ocr_text_tesseract, extract_guild_member_names, available_tesseract_langs,
     set_tessdata_dir, guild_ocr_langs,
     find_yellow_frame, find_highlighted_stage, find_swipe_glow, in_match_autoplay,
     ocr_find_button, gemini_tap_suggestion,
@@ -3186,11 +3186,6 @@ class MuMuGUI(tk.Tk):
             "export_path": "diamond_export.json",
             "web_base_url": "",
             "auto_push": True,
-            # ยืนยันตัวตนก่อนเขียนเพชร (กันอ่านผิดจอ/เขียนผิดบัญชี):
-            # OCR ชื่อในเกมมุมซ้ายบน เทียบกับ ingamename ของบัญชี ถ้าไม่ตรง -> ไม่เขียน
-            "verify_name": True,
-            "name_region": {"x": 90, "y": 18, "w": 140, "h": 26},
-            "name_match_ratio": 0.72,
         }
         try:
             if os.path.exists(self.diamond_config_file):
@@ -6238,7 +6233,7 @@ class MuMuGUI(tk.Tk):
             try:
                 step["anchor_timeout"] = max(0.0, float(timeout_var.get()))
             except (TypeError, ValueError):
-                step["anchor_timeout"] = 8.0
+                step["anchor_timeout"] = 30.0
             step["anchor_on_fail"] = ANCHOR_ONFAIL_FROM_LABEL.get(onfail_var.get(), "pause")
             if step["anchor_on_fail"] == "retry":
                 sel_label = retry_target_var.get()
@@ -6264,7 +6259,7 @@ class MuMuGUI(tk.Tk):
         ttk.Combobox(cfgf, textvariable=onfail_var, state="readonly", width=22,
                      values=[l for _v, l in ANCHOR_ONFAIL_LABELS]).grid(row=0, column=1, sticky="w", padx=6)
         tk.Label(cfgf, text="รอสูงสุด(วิ):", bg=BG_DARK, fg=FG_WHITE, font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0))
-        timeout_var = tk.StringVar(value=str(step.get("anchor_timeout", 8.0)))
+        timeout_var = tk.StringVar(value=str(step.get("anchor_timeout", 30.0)))
         tk.Entry(cfgf, textvariable=timeout_var, width=8, bg=BG_INPUT, fg=FG_WHITE,
                  insertbackground=FG_WHITE, relief="flat").grid(row=1, column=1, sticky="w", padx=6, pady=(5, 0))
 
@@ -6344,7 +6339,7 @@ class MuMuGUI(tk.Tk):
             crop = img[y1:y1 + box_h, x1:x1 + box_w]
             enc = cv2.imencode(".png", crop)[1].tobytes()
             step["anchor_img"] = base64.b64encode(enc).decode("ascii")
-            step.setdefault("anchor_timeout", 8.0)
+            step.setdefault("anchor_timeout", 30.0)
             step.setdefault("anchor_threshold", 0.8)
             step.setdefault("anchor_on_fail", "pause")  # ค่าเริ่มต้นใหม่: เรียนรู้ทีละจอ แทน abort เดิม
         except Exception as e:
@@ -7352,18 +7347,60 @@ class MuMuGUI(tk.Tk):
                     return True
         return False
 
+    @staticmethod
+    def _is_block(step):
+        """run_set ที่ตั้งเป็น 'บล็อกกันพัง' (block_on_fail=='home_retry') — พอร์ตจาก macro_runner.py
+        ถ้า set พังให้กลับหน้าแรกแล้วรัน set นั้นใหม่ ต่างจาก run_set ธรรมดาที่ถูกคลี่แบนทิ้ง"""
+        return step.get("type") == "run_set" and step.get("block_on_fail") == "home_retry"
+
     def _expand_steps_with_sets_recursive(self, steps, resolver):
         """ขยาย run_set ให้กลายเป็นขั้นย่อยจริง รวมถึง run_set ที่ซ่อนอยู่ในกิ่ง then/else
-        (expand_steps_with_sets เดิมรู้จักแค่ลิสต์แบน ไม่รู้จักโครงสร้างกิ่ง) — พอร์ตจาก macro_runner.py"""
+        (expand_steps_with_sets เดิมรู้จักแค่ลิสต์แบน ไม่รู้จักโครงสร้างกิ่ง) — พอร์ตจาก macro_runner.py
+
+        ยกเว้น run_set ที่เป็น 'บล็อกกันพัง' — ไม่คลี่แบน แต่เก็บไว้เป็นบล็อกตอนรัน โดย pre-resolve
+        ขั้นย่อยของ set (_block_steps) และ set กลับหน้าแรก (_home_steps) ติดไว้กับ step เลย"""
+        import copy as _copy
         if not self._tree_has_run_set(steps):
             return steps
-        flat = expand_steps_with_sets(steps, resolver)
-        for s in flat:
-            if s.get("type") == "if_image":
-                for k in ("then", "else"):
-                    if s.get(k):
-                        s[k] = self._expand_steps_with_sets_recursive(s[k], resolver)
-        return flat
+
+        def flatten(lst):
+            flat = expand_steps_with_sets(lst, resolver)
+            for s in flat:
+                if s.get("type") == "if_image":
+                    for k in ("then", "else"):
+                        if s.get(k):
+                            s[k] = flatten(s[k])
+            return flat
+
+        def build(lst):
+            out = []
+            for step in lst:
+                if self._is_block(step):
+                    blk = _copy.deepcopy(step)
+                    set_name = str(step.get("set") or step.get("text") or "").strip()
+                    sub = resolver(set_name)
+                    if sub is None:
+                        self.write_log(f"   ⚠️ ไม่พบชุดคำสั่ง '{set_name}' (บล็อกกันพัง) -> ข้ามบล็อกนี้", "warning")
+                        continue
+                    blk["_block_steps"] = flatten(sub)
+                    home_name = str(step.get("block_home") or "").strip()
+                    if home_name:
+                        if resolver(home_name) is not None:
+                            blk["_home_steps"] = flatten(resolver(home_name))
+                        else:
+                            self.write_log(f"   ⚠️ ไม่พบชุด 'กลับหน้าแรก' ชื่อ '{home_name}' -> บล็อกจะลองใหม่โดยไม่กลับหน้าแรก", "warning")
+                    out.append(blk)
+                elif step.get("type") == "if_image":
+                    s2 = _copy.deepcopy(step)
+                    for k in ("then", "else"):
+                        if s2.get(k):
+                            s2[k] = build(s2[k])
+                    out.append(s2)
+                else:
+                    out.extend(flatten([step]))
+            return out
+
+        return build(steps)
 
     def _eval_if_image_gui(self, device, step):
         """ประเมินเงื่อนไข if_image: เจอภาพภายใน timeout -> 'then' ไม่เจอ -> 'else'
@@ -7413,10 +7450,13 @@ class MuMuGUI(tk.Tk):
                 waited += 0.1
 
     def _run_macro_steps(self, device, account, steps, ctx, handlers, result, progress, st,
-                         highlight, path="", depth=0, disp=""):
+                         highlight, path="", depth=0, disp="", block_mode=False):
         """รันลิสต์ขั้นตอน — เรียกซ้ำตัวเองเข้าไปในกิ่ง then/else ของ if_image ได้ (พอร์ตจาก macro_runner.py
         MacroRunner._run_steps ให้ตัวรันทั้งสองแอปมีตรรกะเดียวกันเป๊ะ) mutate result[]/progress[] ให้ตรง
         ก่อน return เสมอ (ยกเว้น "completed") คืน "completed" | "stopped" | "device_error"
+
+        block_mode = True เมื่อรันขั้นย่อยใน 'บล็อกกันพัง' — anchor ไม่เจอ ให้คืน device_error ทันที
+        (ถือว่า set พัง) ให้ตัวจัดการบล็อกไปกลับหน้าแรก+เริ่ม set ใหม่เอง แทนหยุดรอ/วนเอง
 
         ใช้ while + ตัวชี้ idx เดินเอง (ไม่ใช่ for) เพราะ anchor_on_fail="retry" ต้องกระโดด
         ตัวชี้ถอยหลังไปทำขั้นก่อนหน้าใหม่ในลิสต์เดียวกันได้ (วนทำซ้ำ ไม่ใช่แค่ไล่หน้าเดียว)
@@ -7428,6 +7468,7 @@ class MuMuGUI(tk.Tk):
         total = len(steps)
         in_branch = bool(path)
         retry_counts = {}  # idx ของขั้นนี้ -> จำนวนรอบที่วนไปแล้ว (รีเซ็ตใหม่ทุกครั้งที่เรียกฟังก์ชันนี้)
+        pause_self_healed = set()  # idx ที่เคยลองย้อนไปกดขั้นก่อนหน้าซ้ำแล้ว (นโยบาย pause) — กันวนซ้ำไม่รู้จบ
         idx = 0
         while idx < total:
             if not self.macro_running:
@@ -7464,6 +7505,17 @@ class MuMuGUI(tk.Tk):
             if step_delay > 0:
                 step_delay = step_delay * random.uniform(0.8, 1.4)
 
+            # ---- บล็อกกันพัง: รัน set นี้จนจบ ถ้าพัง -> กลับหน้าแรก -> เริ่ม set นี้ใหม่ (จำกัดรอบ) ----
+            if self._is_block(step):
+                r = self._run_block_gui(device, account, step, ctx, handlers, result, progress, st,
+                                        highlight, here, num, depth)
+                if r != "completed":
+                    return r
+                if step_delay > 0:
+                    time.sleep(step_delay)
+                idx += 1
+                continue
+
             # ---- บล็อกทางเลือก: เจอภาพ -> กิ่ง then จนจบ แล้วกลับมาต่อเส้นนี้ / ไม่เจอ -> กิ่ง else ----
             if t == "if_image":
                 branch = self._eval_if_image_gui(device, step)
@@ -7476,7 +7528,7 @@ class MuMuGUI(tk.Tk):
                     self.write_log(f"   🔀 [{device}] ขั้น {num}: เข้ากิ่ง '{bname}' ({len(sub)} ขั้น)", "info")
                     r = self._run_macro_steps(device, account, sub, ctx, handlers, result, progress, st,
                                               highlight, path=f"{here}.{branch}", depth=depth + 1,
-                                              disp=f"{num}.{bname}.")
+                                              disp=f"{num}.{bname}.", block_mode=block_mode)
                     if r != "completed":
                         return r
                     self.write_log(f"   ↩️ [{device}] ขั้น {num}: จบกิ่ง '{bname}' -> กลับเส้นหลัก", "info")
@@ -7498,6 +7550,12 @@ class MuMuGUI(tk.Tk):
                     result["status"] = "stopped"
                     return "stopped"
                 if gate == "missing":
+                    # อยู่ในบล็อกกันพัง: ไม่เจอภาพ = ถือว่า 'set นี้พัง' ทันที คืน device_error ให้ตัวจัดการบล็อก
+                    # ไปกลับหน้าแรก+เริ่ม set ใหม่เอง (ไม่หยุดรอ/ไม่วนเองในนี้ เพราะบล็อกคุมการลองใหม่แล้ว)
+                    if block_mode:
+                        self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> ถือว่าชุดคำสั่งนี้พัง (จะกลับหน้าแรกแล้วลองใหม่)", "warning")
+                        result["status"] = "device_error"
+                        return "device_error"
                     # ค่าเริ่มต้นเป็น 'pause' แทน 'abort' เดิม — ตรงกับ webui (ใช้การเรียนรู้เป็นหลัก)
                     policy = step.get("anchor_on_fail", "pause")
                     if policy == "retry":
@@ -7524,6 +7582,14 @@ class MuMuGUI(tk.Tk):
                     elif policy == "tap":
                         self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {num} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
                     elif policy == "pause":
+                        # ก่อนหยุดรอจริง ลองย้อนไปทำขั้นก่อนหน้าซ้ำอีก 1 ที (เผื่อกดตอนนั้นแล้วจอ/เครื่องค้าง
+                        # เลยไม่ขยับมาจอนี้จริง ๆ) แล้วเช็ค anchor ใหม่ — ถ้าลองแล้วยังไม่เจอจริง ๆ ค่อยหยุดรอ
+                        if idx > 0 and idx not in pause_self_healed:
+                            pause_self_healed.add(idx)
+                            self.write_log(f"   🔁 [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> ลองย้อนไปทำขั้นก่อนหน้าซ้ำ "
+                                          f"(เผื่อจอค้าง) แล้วเช็คใหม่", "warning")
+                            idx -= 1
+                            continue
                         # Tkinter ไม่มีแผง 'จอที่รอแก้ไข' แบบ webui (แก้ไข/รันต่อสด) — แค่หยุดจอนี้สะอาดๆ
                         # ไม่รีเซ็ต ไม่กดต่อ บันทึกภาพไว้ดู แล้วให้ผู้ใช้ไปเพิ่มเงื่อนไข/if ที่ webui เอง
                         self.write_log(f"   ⏸ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> หยุดจอนี้รอ (ไปแก้สคริปต์ที่ webui แล้วรันใหม่)", "error")
@@ -7556,6 +7622,59 @@ class MuMuGUI(tk.Tk):
 
         return "completed"
 
+    def _run_block_gui(self, device, account, step, ctx, handlers, result, progress, st,
+                       highlight, here, num, depth):
+        """รัน 'บล็อกกันพัง' 1 บล็อก (พอร์ตจาก macro_runner._run_block): รันขั้นย่อยของ set (block_mode=True)
+        ถ้าพัง → เล่นชุด 'กลับหน้าแรก' → เริ่ม set นี้ใหม่ จำกัดรอบ (block_retries)
+        คืน 'completed' | 'stopped' | 'device_error'"""
+        set_name = str(step.get("set") or step.get("text") or "").strip() or "ชุดคำสั่ง"
+        sub_steps = step.get("_block_steps") or []
+        home_steps = step.get("_home_steps") or []
+        try:
+            retries = max(0, int(step.get("block_retries", 3) or 0))
+        except (TypeError, ValueError):
+            retries = 3
+        total_rounds = retries + 1
+        total = progress.get("total") or 0
+
+        for attempt in range(1, total_rounds + 1):
+            if not self.macro_running:
+                result["status"] = "stopped"
+                return "stopped"
+            # เคลียร์สถานะพังของรอบก่อนหน้า ก่อนลองรอบใหม่ (ไม่งั้น finish() เห็น device_error ค้างจากรอบที่พัง)
+            result["status"] = "completed"
+            result["error"] = ""
+            result["_reported"] = False
+            self.write_log(f"   ▶️ [{device}] เริ่มชุด '{set_name}' (รอบ {attempt}/{total_rounds})", "info")
+            r = self._run_macro_steps(device, account, sub_steps, ctx, handlers, result, progress, st,
+                                      highlight, path=f"{here}.set", depth=depth + 1,
+                                      disp=f"{num}.", block_mode=True)
+            if r == "stopped":
+                return "stopped"
+            if r == "completed":
+                self.write_log(f"   ✅ [{device}] ชุด '{set_name}' สำเร็จ", "success")
+                return "completed"
+            # r == device_error → ชุดนี้พังในรอบนี้
+            if attempt >= total_rounds:
+                self.write_log(f"   ⛔ [{device}] ชุด '{set_name}' พังครบ {total_rounds} รอบแล้ว -> หยุด (บันทึกจุดที่ติดไว้)", "error")
+                self._save_failure_report(device, account, num, total, step, f"block_failed:{set_name}")
+                result["_reported"] = True
+                result["status"] = "device_error"
+                result["error"] = f"block_failed: ชุด '{set_name}' ({total_rounds} รอบ)"
+                return "device_error"
+            # ยังมีรอบเหลือ → กลับหน้าแรกก่อนเริ่มใหม่
+            if home_steps:
+                self.write_log(f"   ↺ [{device}] ชุด '{set_name}' พัง -> กลับหน้าแรกแล้วเริ่มใหม่ (รอบถัดไป {attempt + 1}/{total_rounds})", "warning")
+                hr = self._run_macro_steps(device, account, home_steps, ctx, handlers, result, progress, st,
+                                           highlight, path=f"{here}.home", depth=depth + 1,
+                                           disp=f"{num}.กลับ.", block_mode=False)
+                if hr == "stopped":
+                    return "stopped"
+            else:
+                self.write_log(f"   ↺ [{device}] ชุด '{set_name}' พัง -> เริ่มใหม่ (ไม่ได้ตั้งชุดกลับหน้าแรก) รอบถัดไป {attempt + 1}/{total_rounds}", "warning")
+        result["status"] = "device_error"
+        return "device_error"
+
     def _update_anchor_poll(self):
         """อัปเดตค่าความถี่วนเช็ค anchor (เก็บเป็น float แยก) จากช่อง UI — ทำบนเธรดหลัก
         เพื่อให้ worker thread อ่าน self._anchor_poll_interval ได้โดยไม่แตะ Tk var (ไม่ปลอดภัยข้ามเธรด)"""
@@ -7579,7 +7698,7 @@ class MuMuGUI(tk.Tk):
             return "found", None, None  # anchor เสีย -> ไม่กั้น (ทำต่อ)
         if not tmpl_bytes:
             return "found", None, None
-        timeout = float(step.get("anchor_timeout", 8.0) or 8.0)
+        timeout = float(step.get("anchor_timeout", 30.0) or 30.0)
         threshold = float(step.get("anchor_threshold", 0.8) or 0.8)
         deadline = time.time() + timeout
         best = 0.0
@@ -8323,47 +8442,6 @@ class MuMuGUI(tk.Tk):
         if ctx.step_delay > 0:
             time.sleep(ctx.step_delay)
 
-    def _verify_diamond_identity(self, device, account, who, data):
-        """ยืนยันว่า 'จอนี้คือบัญชีที่ถูกต้อง และอยู่หน้า Home จริง' ก่อนเขียนเพชร
-        OCR ชื่อในเกมมุมซ้ายบน เทียบกับ ingamename ของบัญชี — ลองซ้ำได้ (จออาจยังโหลด/ยังไม่นิ่ง)
-
-        คืน (ok, data_ล่าสุด) — ok=False = ไม่ควรเขียนเพชร (log เหตุผลไว้แล้ว)
-        ปิดการตรวจได้ด้วย diamond_config['verify_name']=False (หรือบัญชีไม่มี ingamename = เตือนแล้วปล่อยผ่าน)
-        """
-        cfg = self.diamond_config or {}
-        if not cfg.get("verify_name", True):
-            return True, data  # ปิดการตรวจ -> เขียนเลย (พฤติกรรมเดิม)
-
-        expected = (account.get("ingamename") or account.get("name") or "").strip()
-        if not expected:
-            self.write_log(f"   ⚠️ [{device}] {who}: บัญชีไม่มี ingamename เทียบ -> ข้ามการยืนยัน (เขียนแบบ best-effort)", "warning")
-            return True, data
-
-        name_region = cfg.get("name_region") or {"x": 90, "y": 18, "w": 140, "h": 26}
-        min_ratio = float(cfg.get("name_match_ratio", 0.72) or 0.72)
-        langs = available_tesseract_langs()
-        lang = "tha+eng" if "tha" in langs else "eng"
-
-        last_seen = ""
-        for attempt in range(3):
-            ok, txt, _ = ocr_text_tesseract(data, region=name_region, lang=lang, psm=7, scale=3)
-            seen = (txt or "").strip().replace("\n", " ")
-            if seen:
-                last_seen = seen
-            if ok and seen and names_match(expected, seen, min_ratio=min_ratio):
-                return True, data
-            # ยังไม่ตรง -> รอจอนิ่งแล้วแคปใหม่ (สูงสุด 3 ครั้ง)
-            if attempt < 2:
-                time.sleep(1.5)
-                cok, cdata = self.controller.capture_screenshot_bytes(device)
-                if cok:
-                    data = cdata
-
-        self.write_log(
-            f"   ⛔ [{device}] {who}: ชื่อในเกมไม่ตรงกับบัญชี (คาด '{expected}' เห็น '{last_seen or '—'}') "
-            f"-> ไม่เขียนเพชร (กันข้อมูลเพี้ยน/ผิดบัญชี)", "error")
-        return False, data
-
     def _step_read_diamond(self, ctx, step):
         """อ่านจำนวนเพชรของแอคเคานต์รอบนี้ แล้วเก็บไว้ (จะ export/push เข้าเว็บตอนจบรัน)
 
@@ -8389,12 +8467,9 @@ class MuMuGUI(tk.Tk):
             self.write_log(f"   ⏭️ [{device}] {who}: อ่านเพชรไม่ได้ (แคปจอไม่สำเร็จ) -> ข้าม", "warning")
             return
 
-        # ===== ยาม: ยืนยันตัวตนก่อนเขียนเพชร (กันอ่านผิดจอ/เขียนผิดบัญชี) =====
-        # OCR ชื่อในเกมมุมซ้ายบน เทียบกับ ingamename ของบัญชีที่ควรอยู่จอนี้ — ลองซ้ำได้ (จออาจยังโหลด)
-        verify_ok, data = self._verify_diamond_identity(device, account, who, data)
-        if not verify_ok:
-            return  # log อธิบายเหตุผลไว้ในเมธอดแล้ว (ไม่เขียนเพชร)
-
+        # ไม่มีการยืนยันชื่อในเกมอีกต่อไป — ขั้นนี้มาถึงได้ก็ต่อเมื่อ anchor ของสคริปต์ยืนยันจอ/บัญชี
+        # ที่ถูกต้องแล้วเท่านั้น (ผู้ใช้ยืนยันแล้วว่าลำดับ anchor รับประกันสิ่งนี้อยู่แล้ว การ OCR ชื่อซ้ำ
+        # ซ้อนเข้าไปมีแต่ทำให้หลุดจาก false positive ตอน OCR อ่านเลขพลาดตัวเดียว)
         rok, number, _raw = self.controller.read_number_tesseract(data, region)
         if not rok or number is None:
             self.write_log(f"   ⏭️ [{device}] {who}: OCR อ่านจำนวนเพชรไม่ได้ -> ข้าม", "warning")

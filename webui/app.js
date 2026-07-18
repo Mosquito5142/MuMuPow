@@ -314,7 +314,10 @@ async function renderSteps(){
   document.getElementById('stepCount').textContent = "ขั้นตอน ("+s.count+")";
   document.getElementById('stepList').innerHTML = s.steps.map((st,i)=>{
     const active = SEL_STEP===i;
-    return '<div onclick="selectStep('+i+')" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:8px;cursor:pointer;background:'+(active?'rgba(16,185,129,.10)':'transparent')+';border:1px solid '+(active?'rgba(16,185,129,.35)':'transparent')+'">'
+    const inRange = RANGE && i>=RANGE[0] && i<=RANGE[1];
+    const bg = inRange ? 'rgba(125,211,252,.14)' : (active?'rgba(16,185,129,.10)':'transparent');
+    const bd = inRange ? 'rgba(125,211,252,.45)' : (active?'rgba(16,185,129,.35)':'transparent');
+    return '<div onclick="onStepClick(event,'+i+')" style="display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:8px;cursor:pointer;background:'+bg+';border:1px solid '+bd+'">'
     + '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:11.5px;color:#5C6B82;width:20px">'+st.no+'</span>'
     + '<i data-lucide="'+st.icon+'" width="15" height="15" stroke-width="1.9" style="color:'+(st.icon==='image'?'#FBBF24':'#7DD3FC')+';flex:none"></i>'
     + '<span style="font-size:12.5px;font-weight:500;min-width:80px">'+esc(st.type)+'</span>'
@@ -331,7 +334,7 @@ const STEP_FIELD_MAP = {
   stop_app:['Text','Delay'], detect_image:['Text','Delay'],
   wait_for_image:['Text','Timeout','Delay'], tap_text:['Text','Delay'],
   wait_for_text:['Text','Timeout','Delay'], clear_ads_loop:['Text','Delay'],
-  fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set'],
+  fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set','Block'],
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
   if_image:['Text','Threshold','Timeout','Delay'],
 };
@@ -348,7 +351,8 @@ const STEP_TEXT_LABEL = {
   screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
   if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Code','Key','Action','Seconds','Timeout','Threshold','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Threshold','Delay'];
+function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
   ALL_FLD.forEach(f=>{
@@ -366,7 +370,11 @@ function fillStepForm(st){
   g('sfY').value = st.y===''||st.y==='-'?'':st.y;
   g('sfX2').value = st.x2||''; g('sfY2').value = st.y2||'';
   g('sfDuration').value = st.duration||''; g('sfText').value = st.text||'';
-  g('sfSet').value = st.set||''; g('sfCode').value = st.code||'';
+  g('sfSet').value = st.set||'';
+  g('sfBlockOn').checked = (st.block_on_fail === 'home_retry');
+  g('sfBlockHome').value = st.block_home||''; g('sfBlockRetries').value = (st.block_retries!=null?st.block_retries:'');
+  toggleBlockFields();
+  g('sfCode').value = st.code||'';
   g('sfKey').value = st.key||''; if(st.action) g('sfAction').value = st.action;
   g('sfSeconds').value = st.seconds||''; g('sfTimeout').value = st.timeout||'';
   g('sfThreshold').value = st.threshold||'';
@@ -385,6 +393,12 @@ function collectStepPatch(){
   if(show.includes('Duration')) p.duration=g('sfDuration');
   if(show.includes('Text')) p.text=g('sfText');
   if(show.includes('Set')) p.set=g('sfSet');
+  if(show.includes('Block')){
+    // ติ๊ก = บล็อกกันพัง (block_on_fail='home_retry'); ไม่ติ๊ก = ส่งค่าว่างให้ backend ลบทิ้ง (กลับเป็น run_set ธรรมดา)
+    if((document.getElementById('sfBlockOn')||{}).checked){
+      p.block_on_fail='home_retry'; p.block_home=g('sfBlockHome'); p.block_retries=g('sfBlockRetries');
+    } else { p.block_on_fail=''; p.block_home=''; p.block_retries=''; }
+  }
   if(show.includes('Code')) p.code=g('sfCode');
   if(show.includes('Key')) p.key=(g('sfKey')||'').toLowerCase();
   if(show.includes('Action')) p.action=g('sfAction');
@@ -393,6 +407,46 @@ function collectStepPatch(){
   if(show.includes('Threshold')) p.threshold=g('sfThreshold');
   if(show.includes('Delay')) p.delay=g('sfDelay');
   return p;
+}
+let RANGE=null;  // [start,end] (0-based, รวมปลาย) ของช่วงที่คลิกคลุมไว้ — ใช้ทำเป็นบล็อก
+function onStepClick(ev, i){
+  // Shift+คลิก = เลือกช่วงจากขั้นที่เลือกไว้ก่อนหน้าถึงขั้นนี้ (คลิกคลุม) ; คลิกธรรมดา = เลือกแก้ขั้นเดียว
+  if(ev && ev.shiftKey && SEL_STEP!=null){
+    RANGE=[Math.min(SEL_STEP,i), Math.max(SEL_STEP,i)];
+    const n=RANGE[1]-RANGE[0]+1;
+    const bar=document.getElementById('rangeBar'), txt=document.getElementById('rangeBarText');
+    if(txt) txt.textContent='เลือก '+n+' ขั้น (ขั้น '+(RANGE[0]+1)+'–'+(RANGE[1]+1)+')';
+    if(bar) bar.style.display='flex';
+    renderSteps();
+    return;
+  }
+  if(RANGE){ RANGE=null; const bar=document.getElementById('rangeBar'); if(bar) bar.style.display='none'; }
+  selectStep(i);
+}
+function clearRange(){ RANGE=null; const bar=document.getElementById('rangeBar'); if(bar) bar.style.display='none'; renderSteps(); }
+function openBlockFromRange(){
+  if(!RANGE){ notReady('เลือกช่วงก่อน (Shift+คลิก)'); return; }
+  const n=RANGE[1]-RANGE[0]+1, from=RANGE[0]+1, to=RANGE[1]+1;
+  openModal('ทำ '+n+' ขั้นนี้เป็นบล็อก','scissors',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:12px">ขั้น '+from+'–'+to+' จะถูกย้ายไปเก็บเป็นชุดใหม่ แล้วแทนที่ด้วยบล็อก 1 ก้อน</div>'
+    +'<div style="display:flex;flex-direction:column;gap:10px">'
+    +'<div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ชื่อบล็อก</span><input id="brName" class="in" placeholder="เช่น เก็บของ" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-size:12.5px;color:#C7D2E0"></div>'
+    +'<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;color:#C7D2E0;cursor:pointer"><input type="checkbox" id="brBlock" checked onchange="document.getElementById(\'brOpts\').style.display=this.checked?\'flex\':\'none\'">ถ้าพัง: กลับหน้าแรกแล้วลองใหม่ทั้งบล็อก</label>'
+    +'<div id="brOpts" style="display:flex;gap:8px"><input id="brHome" class="in" value="กลับหน้าแรก" placeholder="ชุดกลับหน้าแรก" style="flex:1;height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 11px;font-size:12.5px;color:#C7D2E0"><input id="brRetries" class="in" placeholder="รอบ (3)" style="width:80px;height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 11px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
+    +'<button class="in" onclick="confirmBlockFromRange()" style="display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer;margin-top:4px"><i data-lucide="scissors" width="15" height="15" stroke-width="2"></i>ตัดเป็นบล็อก</button>'
+    +'</div>');
+  icons();
+}
+async function confirmBlockFromRange(){
+  if(!RANGE) return;
+  const g=id=>(document.getElementById(id)||{}).value;
+  const name=(g('brName')||'').trim();
+  if(!name){ notReady('ตั้งชื่อบล็อกก่อน'); return; }
+  const block=(document.getElementById('brBlock')||{}).checked;
+  if(hasPy()){
+    await PY.extract_range_to_block(RANGE[0]+1, RANGE[1]+1, name, block?g('brHome'):'', block?g('brRetries'):'', block);
+  }
+  RANGE=null; closeModal(); renderSteps();
 }
 function selectStep(i){ SEL_STEP=i; const st=(window._steps||[])[i]; if(st){ fillStepForm(st.raw||st); } renderSteps(); }
 async function saveProfile(){ if(hasPy()){ await PY.save_profile(document.getElementById('scriptName').value); renderSteps(); refresh(); } }
