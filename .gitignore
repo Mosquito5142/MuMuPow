@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.rar
+*.zip
+*.7z
+.pytest_cache/
+.claude/

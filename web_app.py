@@ -539,6 +539,52 @@ class Api:
         items.sort(key=lambda x: x["port"])
         return {"ok": True, "items": items}
 
+    def _continue_queue_execution(self, device, flag):
+        import queue
+        main_runner = self._runner
+        if not main_runner or not hasattr(main_runner, "queue") or not main_runner.queue:
+            return
+        
+        while flag["running"]:
+            if self._runner != main_runner:
+                # มีการเริ่มรันรอบใหม่แล้ว -> ให้หยุดการดึงคิวของรอบเก่าทันที
+                self._run_log_cb(f"[{device}] หยุดดึงคิวรอบเก่าเนื่องจากมีการเริ่มรันรอบใหม่", "warn")
+                break
+                
+            try:
+                account = main_runner.queue.get_nowait()
+            except queue.Empty:
+                break
+            
+            self._run_log_cb(f"[{device}] เริ่มบัญชีถัดมาจากคิวหลัก: {account_display_name(account)}", "info")
+            
+            # ใช้ latest macro_steps เสมอ
+            runner = MacroRunner(self.controller, self.macro_steps, log_cb=self._run_log_cb,
+                                 progress_cb=self._run_progress_cb, running_check=lambda: flag["running"],
+                                 anchor_poll=self._anchor_poll, reset_cfg=self._load_reset_cfg(),
+                                 diamond_cfg=self._load_diamond_cfg())
+            runner.profile_name = self.current_profile or ""
+            runner.total_accounts = main_runner.total_accounts
+            
+            # ดึงจำนวนที่รันสำเร็จของจอนี้มาจาก main_runner เพื่อให้แสดงผล x/y ถูกต้อง
+            runner._done[device] = main_runner._done.get(device, 0)
+            
+            status = runner.execute_one(device, account)
+            self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
+            self._persist_run_results(runner.account_results, self._run_log_cb)
+            
+            # เขียนจำนวนกลับคืน main_runner
+            main_runner._done[device] = runner._done.get(device, 0)
+            main_runner.queue.task_done()
+            
+            if status == "paused":
+                break
+                
+        if not flag["running"]:
+            self._run_progress_cb(device, status="stopped", step_desc="")
+        elif not self._paused.get(device):
+            self._run_progress_cb(device, status="done", step_desc="")
+
     def resume_paused(self, device):
         """ปุ่ม 'รันต่อจากขั้นนี้' — รันสคริปต์ (เวอร์ชันล่าสุดที่แก้ไขแล้ว) ต่อจากบล็อกระดับเส้นหลักที่
         ครอบจุดที่ค้างไว้ ด้วยบัญชีเดิมบนจอเดิม โดยไม่แตะ self._running กลาง (จอ/บัญชีอื่นที่กำลังรัน
@@ -572,9 +618,27 @@ class Api:
         def worker():
             try:
                 self._run_log_cb(f"[{device}] ▶ รันต่อจากขั้น {root_idx + 1} (แก้ไขสคริปต์แล้ว)", "ok")
-                runner._one_and_close(device, account)
+                status = runner.execute_one(device, account)
                 self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
                 self._persist_run_results(runner.account_results, self._run_log_cb)
+                
+                # หากยังเป็น paused หรือ user สั่ง stop -> จบการรันต่อ
+                if status == "paused" or not flag["running"]:
+                    return
+                
+                # หากทำบัญชีที่ค้างเสร็จเรียบร้อยและไม่โดนหยุด -> เช็คคิวที่เหลือ
+                main_runner = self._runner
+                if main_runner and hasattr(main_runner, "queue") and main_runner.queue:
+                    self._continue_queue_execution(device, flag)
+                else:
+                    self._run_progress_cb(device, status="done", step_desc="")
+                    
+                # เช็คการสิ้นสุดคิวเพื่อแสดงความยินดี
+                is_empty = True
+                if main_runner and hasattr(main_runner, "queue") and main_runner.queue:
+                    is_empty = main_runner.queue.empty()
+                if is_empty and not self._paused and len(self._active_resumes) <= 1:
+                    self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
             except Exception as e:
                 self._run_log_cb(f"[{device}] รันต่อขัดข้อง: {e}", "err")
             finally:
