@@ -176,3 +176,48 @@ def test_stop_cancels_active_resume():
         assert api._active_resumes[":7555"]["running"] is False
     finally:
         shutil.rmtree(tmp)
+
+
+def test_resume_paused_continues_with_remaining_queue():
+    # 3 บัญชี บน 1 จอ
+    api, tmp = _api_with_temp_accounts(3)
+    try:
+        r = api.run(anchor_poll="0.01", pause_between_batches=False)
+        assert r["ok"] is True
+        api._run_thread.join(timeout=5)
+        
+        # จอต้องติด pause ที่รหัสแรก (a0@x.com)
+        st = api.get_run_state()
+        assert st["pausedCount"] == 1
+        
+        # คิวหลักของ runner ดั้งเดิมต้องยังมีบัญชีเหลือ 2 ตัว (a1@x.com, a2@x.com)
+        assert api._runner is not None
+        assert api._runner.queue.qsize() == 2
+        
+        # แก้ไขจำลองว่าหาเจอแล้ว เพื่อให้รันผ่าน
+        api.controller.found = True
+        
+        # กดรันต่อ
+        r = api.resume_paused(":7555")
+        assert r["ok"] is True
+        
+        # รอจนกว่าเธรดรันต่อทั้งหมดจะเสร็จ
+        import time
+        for _ in range(50):
+            if not api._active_resumes:
+                break
+            time.sleep(0.1)
+            
+        assert api._active_resumes == {}
+        assert api.get_run_state()["pausedCount"] == 0
+        
+        # เช็คผลลัพธ์รายบัญชี
+        accts = api._accounts()
+        # ทุกบัญชีต้องรันสำเร็จ (completed)
+        completed_emails = [a.get("email") for a in accts if a.get("last_status") == "completed"]
+        assert len(completed_emails) == 3
+        assert "a0@x.com" in completed_emails
+        assert "a1@x.com" in completed_emails
+        assert "a2@x.com" in completed_emails
+    finally:
+        shutil.rmtree(tmp)

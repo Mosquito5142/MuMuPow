@@ -270,6 +270,8 @@ class MacroRunner:
         self._dlock = threading.Lock()
         self.total_accounts = 0
         self._done = {}
+        self.queue = None
+
 
     @staticmethod
     def _tree_has_run_set(steps):
@@ -368,15 +370,15 @@ class MacroRunner:
                 list(ex.map(lambda d: self._one_and_close(d, None), devices))
             return
 
-        q = queue.Queue()
+        self.queue = queue.Queue()
         for a in accounts:
-            q.put(a)
+            self.queue.put(a)
 
         def worker(dev):
             paused = False
             while self.running():
                 try:
-                    acc = q.get_nowait()
+                    acc = self.queue.get_nowait()
                 except queue.Empty:
                     break
                 self.log(f"[{dev}] เริ่มบัญชี: {account_display_name(acc)}", "info")
@@ -386,7 +388,7 @@ class MacroRunner:
                     # จออื่นใน ex.map ไม่โดนกระทบ ยังทำงานต่อตามปกติ
                     paused = True
                     break
-                q.task_done()
+                self.queue.task_done()
             if not paused:
                 self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
 
