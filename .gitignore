@@ -5,3 +5,5 @@ __pycache__/
 *.7z
 .pytest_cache/
 .claude/
+scratch/
+
