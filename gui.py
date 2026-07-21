@@ -144,6 +144,29 @@ def account_display_name(account):
             or "-")
 
 
+def _get_effective_status(acc):
+    st = (acc.get("last_status") or "").lower()
+    last_run_str = acc.get("last_run")
+    if not last_run_str:
+        return ""
+    try:
+        import datetime as dt
+        last_run_dt = dt.datetime.strptime(last_run_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return st
+    
+    now = dt.datetime.now()
+    if now.hour >= 5:
+        farming_start = now.replace(hour=5, minute=0, second=0, microsecond=0)
+    else:
+        yesterday = now - dt.timedelta(days=1)
+        farming_start = yesterday.replace(hour=5, minute=0, second=0, microsecond=0)
+        
+    if last_run_dt < farming_start:
+        return ""
+    return st
+
+
 def build_account_summary(account):
     name = account_display_name(account)
     email = account.get("email") or "-"
@@ -4145,7 +4168,7 @@ class MuMuGUI(tk.Tk):
         fail = {"device_error", "macro_error", "error"}
         n = 0
         for a in self.accounts:
-            st = (a.get("last_status") or "").lower()
+            st = _get_effective_status(a)
             want = (st in fail) if kind == "failed" else (st != "completed")
             a["checked"] = want
             if want:
@@ -4348,7 +4371,7 @@ class MuMuGUI(tk.Tk):
                 if self.macro_running and email and email.strip().lower() in getattr(self, "_active_account_emails", set()):
                     _dot = "🔵"
                 else:
-                    _st = (acc.get("last_status") or "").lower()
+                    _st = _get_effective_status(acc)
                     _dot = ("🟢" if _st == "completed" else
                             "🔴" if _st in ("device_error", "macro_error", "error") else "⚪")
                 tk.Label(frame, text=_dot, bg=BG_SURFACE, font=("Segoe UI", 9)).pack(side="left", padx=(0, 2), pady=5)
