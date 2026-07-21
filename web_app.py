@@ -32,6 +32,28 @@ def resource_dir():
     return getattr(sys, "_MEIPASS", None) or base_dir()
 
 
+def _get_effective_status(acc):
+    st = (acc.get("last_status") or "").lower()
+    last_run_str = acc.get("last_run")
+    if not last_run_str:
+        return ""
+    try:
+        last_run_dt = datetime.datetime.strptime(last_run_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return st
+    
+    now = datetime.datetime.now()
+    if now.hour >= 5:
+        farming_start = now.replace(hour=5, minute=0, second=0, microsecond=0)
+    else:
+        yesterday = now - datetime.timedelta(days=1)
+        farming_start = yesterday.replace(hour=5, minute=0, second=0, microsecond=0)
+        
+    if last_run_dt < farming_start:
+        return ""
+    return st
+
+
 class Api:
     def __init__(self):
         self.controller = MuMuController()
@@ -116,7 +138,7 @@ class Api:
 
     @staticmethod
     def _acct_dot(acc):
-        st = (acc.get("last_status") or "").lower()
+        st = _get_effective_status(acc)
         if st == "completed":
             return "#38BDF8"
         if st in ("device_error", "macro_error", "error"):
@@ -737,7 +759,7 @@ class Api:
         fail = {"device_error", "macro_error", "error"}
         accts = self._accounts()
         for a in accts:
-            st = (a.get("last_status") or "").lower()
+            st = _get_effective_status(a)
             a["checked"] = (st in fail) if kind == "failed" else (st != "completed")
         self._save_accounts(accts)
         return self.get_accounts_grouped()
