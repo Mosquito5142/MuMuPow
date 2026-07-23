@@ -701,10 +701,13 @@ class Api:
                 "checked": a.get("checked", True), "dot": self._acct_dot(a),
             })
         group_names = sorted({(a.get("group") or "ทั่วไป").strip() for a in accts}) or ["ทั่วไป"]
+        accounts_checked = sum(1 for a in accts if a.get("checked", True))
         return {"groups": [{"name": g, "count": len(items), "accounts": items,
                             "allChecked": all(it["checked"] for it in items)}
                            for g, items in groups.items()],
-                "groupNames": group_names}
+                "groupNames": group_names,
+                "accountsTotal": len(accts),
+                "accountsChecked": accounts_checked}
 
     def toggle_group(self, group, checked):
         accts = self._accounts()
