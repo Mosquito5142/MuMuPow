@@ -252,6 +252,15 @@ async function renderAccounts(){
         + '<i data-lucide="x" width="15" height="15" stroke-width="2" style="color:#455266;cursor:pointer" onclick="deleteAccount(\''+a.email+'\')"></i>'
         + '</div>')).join("")
     + '</div>')).join("") || '<div style="font-size:12.5px;color:#5C6B82;padding:8px 2px">ไม่พบบัญชี</div>';
+
+  let checkedCount = 0;
+  if(typeof s.accountsChecked === 'number'){
+    checkedCount = s.accountsChecked;
+  } else if(s.groups){
+    s.groups.forEach(g=>(g.accounts||[]).forEach(a=>{ if(a.checked) checkedCount++; }));
+  }
+  setPf('pfAccounts', checkedCount > 0, "บัญชีที่จะทำ", checkedCount + " รหัส");
+
   icons();
 }
 async function toggleAccount(e){ if(hasPy()){ await PY.toggle_account(e); renderAccounts(); } }
