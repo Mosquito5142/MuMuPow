@@ -144,6 +144,12 @@
         </div>
         <div style="display:flex;gap:20px;align-items:flex-start;flex:1">
           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px">
+            <div id="setEditBanner" style="display:none;align-items:center;gap:10px;padding:10px 14px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72">
+              <i data-lucide="layers" width="16" height="16" style="color:#7DD3FC;flex:none"></i>
+              <span style="flex:1;font-size:12.5px;color:#7DD3FC">กำลังแก้ไขชุดคำสั่งย่อย: <b id="setEditBannerName" style="color:#FFF"></b></span>
+              <button class="in" onclick="saveCurrentEditingSet()" style="display:flex;align-items:center;gap:6px;padding:0 12px;height:32px;border-radius:7px;background:#10B981;color:#04120C;font-size:12px;font-weight:600;cursor:pointer"><i data-lucide="save" width="13" height="13"></i>บันทึกทับชุดคำสั่งย่อย</button>
+              <button class="in" onclick="exitSetEditMode()" style="padding:0 10px;height:32px;border-radius:7px;background:#121A28;border:1px solid #24344B;color:#90A0B7;font-size:12px;cursor:pointer">ออกจากโหมดแก้ชุด</button>
+            </div>
             <div style="display:flex;gap:10px;align-items:flex-end"><div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ชื่อโปรไฟล์สคริปต์</span><input id="scriptName" class="in" style="height:40px;border-radius:9px;background:#0A0F19;border:1px solid #24344B;padding:0 13px;font-size:13.5px;font-weight:500;color:#E7EDF6"></div><button class="in" onclick="saveProfile()" style="display:flex;align-items:center;gap:7px;padding:0 14px;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer"><i data-lucide="save" width="15" height="15" stroke-width="2"></i>บันทึก</button></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="in" onclick="deleteProfile()" style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;font-size:12px;cursor:pointer"><i data-lucide="trash-2" width="13" height="13" stroke-width="1.75"></i>ลบ</button>

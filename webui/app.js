@@ -533,6 +533,35 @@ async function saveAdb(){ if(hasPy()) await PY.save_adb(document.getElementById(
 async function saveGemini(){ if(hasPy()){ await PY.save_gemini(document.getElementById('setGemini').value); document.getElementById('setGemini').value=''; } }
 async function checkCap(){ if(hasPy()){ const r=await PY.check_capacity(); document.getElementById('setCap').textContent=r.cap; } }
 
+// ---------- script set editing mode ----------
+window.CURRENT_SET_EDITING = null;
+function updateSetEditBanner(){
+  const banner = document.getElementById('setEditBanner');
+  const nameEl = document.getElementById('setEditBannerName');
+  if(!banner || !nameEl) return;
+  if(window.CURRENT_SET_EDITING){
+    nameEl.textContent = window.CURRENT_SET_EDITING;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+function exitSetEditMode(){
+  window.CURRENT_SET_EDITING = null;
+  updateSetEditBanner();
+  renderSteps();
+}
+async function saveCurrentEditingSet(){
+  if(!window.CURRENT_SET_EDITING) return;
+  const name = window.CURRENT_SET_EDITING;
+  if(hasPy()){
+    const r = await PY.save_script_set_steps(name);
+    if(r && r.ok){
+      if(typeof onLog === 'function') onLog({ts: new Date().toLocaleTimeString('th-TH'), text: "บันทึกทับชุดคำสั่งย่อย '" + name + "' สำเร็จ", kind: "ok"});
+    }
+  }
+}
+
 // ---------- boot ----------
 // สแกนหา Emulator ทันทีที่เปิดแอป (แอปเดิม Tkinter ทำแบบนี้ตั้งแต่ __init__ — เว็บเคยลืมทำจุดนี้
 // ต้องกดปุ่มสแกนเองก่อนถึงจะเห็นจอ) ใน DEMO mode (ไม่มี Python) scanPorts() แค่ log เฉยๆ ไม่พัง

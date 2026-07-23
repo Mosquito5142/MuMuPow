@@ -59,3 +59,20 @@ def test_extract_rejects_bad_input_without_changing_steps(api):
     assert api.macro_steps == before
     api.extract_range_to_block("x", "y", "ชื่อ", "", "", True)  # ช่วงไม่ใช่ตัวเลข
     assert api.macro_steps == before
+
+
+def test_get_load_save_script_set_api(api):
+    # ทดสอบ save_script_set_steps -> get_script_set -> load_set_to_editor
+    new_steps = [{"type": "tap", "x": "100", "y": "200", "desc": "สุ่มวงล้อ"}]
+    res_save = api.save_script_set_steps("สุ่มวงล้อ", new_steps)
+    assert res_save["ok"] is True
+
+    res_get = api.get_script_set("สุ่มวงล้อ")
+    assert res_get["ok"] is True
+    assert res_get["name"] == "สุ่มวงล้อ"
+    assert res_get["steps"] == new_steps
+
+    res_load = api.load_set_to_editor("สุ่มวงล้อ")
+    assert res_load["ok"] is True
+    assert api.macro_steps == new_steps
+
