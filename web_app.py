@@ -1959,6 +1959,44 @@ class Api:
                 self._push_log(f"ลบชุดคำสั่งล้มเหลว: {e}", "err")
         return self.list_script_sets()
 
+    def get_script_set(self, name):
+        from script_sets import load_script_set, safe_set_slug
+        path = os.path.join(base_dir(), "script_sets", f"{safe_set_slug(name)}.json")
+        if not os.path.exists(path):
+            self._push_log(f"ไม่พบชุดคำสั่ง '{name}'", "warn")
+            return {"ok": False, "name": name, "steps": []}
+        try:
+            d = load_script_set(path)
+            return {"ok": True, "name": d["name"], "steps": d["steps"]}
+        except Exception as e:
+            self._push_log(f"อ่านชุดคำสั่ง '{name}' ไม่ได้: {e}", "err")
+            return {"ok": False, "name": name, "steps": []}
+
+    def load_set_to_editor(self, name):
+        res = self.get_script_set(name)
+        if not res["ok"]:
+            return res
+        self.macro_steps = res["steps"]
+        self._push_log(f"โหลดชุดคำสั่ง '{name}' ({len(self.macro_steps)} ขั้น) เข้าสู่ Editor", "ok")
+        return {"ok": True, "name": name, "steps": self.macro_steps, "state": self.get_state()}
+
+    def save_script_set_steps(self, name, steps=None):
+        name = (name or "").strip()
+        if not name:
+            self._push_log("ต้องระบุชื่อชุดคำสั่ง", "warn"); return {"ok": False}
+        target_steps = steps if isinstance(steps, list) else self.macro_steps
+        if not target_steps:
+            self._push_log("ไม่มีขั้นตอนให้บันทึก", "warn"); return {"ok": False}
+        from script_sets import save_script_set, safe_set_slug
+        path = os.path.join(base_dir(), "script_sets", f"{safe_set_slug(name)}.json")
+        try:
+            save_script_set(path, name, target_steps)
+            self._push_log(f"บันทึกชุดคำสั่ง '{name}' ({len(target_steps)} ขั้น) สำเร็จ", "ok")
+            return {"ok": True, "name": name, "count": len(target_steps), "sets": self.list_script_sets()["sets"]}
+        except Exception as e:
+            self._push_log(f"บันทึกชุดคำสั่ง '{name}' ล้มเหลว: {e}", "err")
+            return {"ok": False}
+
     # ---------- พรีเซ็ตพิกัด / สร้างเร็ว ----------
     def get_presets(self):
         try:

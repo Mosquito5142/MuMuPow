@@ -153,12 +153,14 @@ function renderManageSets(sets){
   const list = sets.length ? sets.map(s => (
     '<div style="display:flex;gap:10px;align-items:center;padding:9px 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434">'
     + '<i data-lucide="layers" width="15" height="15" style="color:#7DD3FC;flex:none"></i>'
-    + '<span style="flex:1;font-size:12.5px">' + esc(s.name) + '</span>'
+    + '<span style="flex:1;font-size:12.5px;font-weight:500">' + esc(s.name) + '</span>'
     + '<span style="font-size:11px;color:#5C6B82">' + s.count + ' ขั้น</span>'
-    + '<button class="in" onclick="delSet(\'' + esc(s.name).replace(/'/g, "\\'") + '\')" style="width:28px;height:28px;border-radius:7px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;cursor:pointer;display:flex;align-items:center;justify-content:center"><i data-lucide="trash-2" width="13" height="13"></i></button></div>'
+    + '<button class="in" onclick="editSetInEditor(\'' + esc(s.name).replace(/'/g, "\\'") + '\')" style="display:flex;align-items:center;gap:5px;padding:0 10px;height:28px;border-radius:6px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:11.5px;font-weight:600;cursor:pointer"><i data-lucide="edit-3" width="12" height="12"></i>แก้ไขสเต็ป</button>'
+    + '<button class="in" onclick="viewSetDetail(\'' + esc(s.name).replace(/'/g, "\\'") + '\')" style="display:flex;align-items:center;gap:5px;padding:0 9px;height:28px;border-radius:6px;background:#121A28;border:1px solid #24344B;color:#90A0B7;font-size:11.5px;cursor:pointer"><i data-lucide="eye" width="12" height="12"></i>พรีวิว</button>'
+    + '<button class="in" onclick="delSet(\'' + esc(s.name).replace(/'/g, "\\'") + '\')" style="width:28px;height:28px;border-radius:6px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;cursor:pointer;display:flex;align-items:center;justify-content:center"><i data-lucide="trash-2" width="13" height="13"></i></button></div>'
   )).join('') : '<div style="font-size:12px;color:#5C6B82">ยังไม่มีชุดคำสั่งย่อย</div>';
   openModal('จัดการชุดคำสั่งย่อย (Script Sets)', 'layers',
-    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:8px">ชุดคำสั่งย่อยใช้ผ่าน step “ใช้ชุดคำสั่ง (run_set)”</div>'
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:8px">ชุดคำสั่งย่อยใช้ผ่าน step “ใช้ชุดคำสั่ง (run_set)” · คลิก “แก้ไขสเต็ป” เพื่อโหลดเข้า Editor</div>'
     + '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">' + list + '</div>'
     + '<div style="border-top:1px solid #1B2434;padding-top:14px"><div style="font-size:12px;color:#90A0B7;margin-bottom:7px">บันทึกขั้นตอนในสคริปต์ปัจจุบันเป็นชุดใหม่:</div>'
     + '<div style="display:flex;gap:8px"><input id="newSetName" class="in" placeholder="ชื่อชุดคำสั่ง…" style="flex:1;height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-size:12.5px;color:#C7D2E0"><button class="in" onclick="saveCurrentSet()" style="display:flex;align-items:center;gap:6px;padding:0 14px;height:38px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="save" width="14" height="14" stroke-width="2"></i>บันทึกเป็นชุด</button></div></div>'
@@ -169,6 +171,34 @@ function renderManageSets(sets){
     +   '<div id="exBlockOpts" style="display:flex;gap:8px;margin-bottom:8px"><input id="exHome" class="in" placeholder="ชุดกลับหน้าแรก (เช่น กลับหน้าแรก)" value="กลับหน้าแรก" style="flex:1;height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 11px;font-size:12.5px;color:#C7D2E0"><input id="exRetries" class="in" placeholder="รอบ (3)" style="width:80px;height:36px;border-radius:8px;background:#0E1420;border:1px solid #24344B;padding:0 11px;font-family:\'IBM Plex Mono\',monospace;font-size:12.5px;color:#C7D2E0"></div>'
     +   '<button class="in" onclick="extractRangeToBlock()" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:38px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="scissors" width="14" height="14" stroke-width="2"></i>ตัดช่วงนี้เป็นบล็อก</button>'
     + '</div>');
+}
+async function editSetInEditor(name){
+  if(!hasPy()) return;
+  const res = await PY.load_set_to_editor(name);
+  if(res && res.ok){
+    window.CURRENT_SET_EDITING = name;
+    closeModal();
+    if(typeof showPage === 'function') showPage('script');
+    if(typeof updateSetEditBanner === 'function') updateSetEditBanner();
+    if(typeof renderSteps === 'function') renderSteps();
+  }
+}
+async function viewSetDetail(name){
+  if(!hasPy()) return;
+  const res = await PY.get_script_set(name);
+  if(!res || !res.ok) return;
+  const steps = res.steps || [];
+  const rows = steps.length ? steps.map((s,i)=>(
+    '<div style="display:flex;gap:10px;align-items:center;padding:7px 10px;border-radius:6px;background:#0A0F19;border:1px solid #1B2434;font-size:12px">'
+    + '<span style="font-family:\'IBM Plex Mono\',monospace;color:#5C6B82;width:18px">'+(i+1)+'</span>'
+    + '<span style="color:#7DD3FC;font-weight:500;min-width:70px">'+esc(s.type||'tap')+'</span>'
+    + '<span style="color:#C7D2E0;flex:1">'+esc(s.desc||s.text||(s.x!=null?`(${s.x},${s.y})`:''))+'</span>'
+    + '</div>'
+  )).join('') : '<div style="font-size:12px;color:#5C6B82">ไม่มีขั้นตอน</div>';
+  openModal('ชุดคำสั่งย่อย: ' + esc(name), 'layers',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:10px">ขั้นตอนทั้งหมดในชุดนี้ ('+steps.length+' ขั้น):</div>'
+    + '<div class="sc" style="display:flex;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto;margin-bottom:14px">' + rows + '</div>'
+    + '<button class="in" onclick="editSetInEditor(\'' + esc(name).replace(/'/g, "\\'") + '\')" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:38px;border-radius:8px;background:#10B981;color:#04120C;font-size:12.5px;font-weight:600;cursor:pointer"><i data-lucide="edit-3" width="14" height="14" stroke-width="2"></i>ดึงเข้า Editor เพื่อแก้ไข</button>');
 }
 async function saveCurrentSet(){
   const v = (document.getElementById('newSetName') || {}).value || '';
