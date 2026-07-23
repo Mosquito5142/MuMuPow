@@ -556,8 +556,8 @@
     "name": "10325519954",
     "last_status": "completed",
     "last_error": "",
-    "last_device": "127.0.0.1:16416",
-    "last_run": "2026-07-23 14:42:42",
+    "last_device": "127.0.0.1:16384",
+    "last_run": "2026-07-23 17:22:50",
     "save_web_game_id": "7qwllo5zy",
     "save_web_game_title": "อาคาชิ68 มอส1 10325519954",
     "ownerName": "มอส",
@@ -572,8 +572,8 @@
     ],
     "card_count": 1,
     "source": "Save_Web_Game",
-    "diamonds": 12000,
-    "diamond_time": "2026-07-22 14:02:23"
+    "diamonds": 12160,
+    "diamond_time": "2026-07-23 17:22:30"
   },
   {
     "email": "beckettcarsonfreh@hotmail.com",
@@ -583,8 +583,8 @@
     "name": "Daikisan",
     "last_status": "completed",
     "last_error": "",
-    "last_device": "127.0.0.1:16384",
-    "last_run": "2026-07-23 14:44:36",
+    "last_device": "127.0.0.1:16416",
+    "last_run": "2026-07-23 17:28:27",
     "save_web_game_id": "09mjs48rf",
     "save_web_game_title": "อาโอ1 (Daikisan) beckettcarsonfreh มอส",
     "ownerName": "มอส",
@@ -605,8 +605,8 @@
     ],
     "card_count": 14,
     "source": "Save_Web_Game",
-    "diamonds": 10140,
-    "diamond_time": "2026-07-22 14:05:44"
+    "diamonds": 10300,
+    "diamond_time": "2026-07-23 17:28:03"
   },
   {
     "email": "carrascocalonso7@outlook.com",
@@ -615,8 +615,8 @@
     "group": "มอส",
     "last_status": "completed",
     "last_error": "",
-    "last_device": "127.0.0.1:16416",
-    "last_run": "2026-07-23 14:45:00",
+    "last_device": "127.0.0.1:16384",
+    "last_run": "2026-07-23 17:29:52",
     "name": "10337767595",
     "save_web_game_id": "qzc2dxeho",
     "save_web_game_title": "หัวจ่าย คางุระ มอส 10337767595",
@@ -625,8 +625,8 @@
     "cards": [],
     "card_count": 0,
     "source": "Save_Web_Game",
-    "diamonds": 4456,
-    "diamond_time": "2026-07-22 14:08:38"
+    "diamonds": 4636,
+    "diamond_time": "2026-07-23 17:29:26"
   },
   {
     "email": "shamaryonkristen1@outlook.com",
@@ -635,8 +635,8 @@
     "group": "มอส",
     "last_status": "completed",
     "last_error": "",
-    "last_device": "127.0.0.1:16384",
-    "last_run": "2026-07-23 14:46:55",
+    "last_device": "127.0.0.1:16416",
+    "last_run": "2026-07-23 17:35:26",
     "name": "10337950687",
     "save_web_game_id": "c7n29i21h",
     "save_web_game_title": "หัวจ่าย คางุระ มอส 10337950687",
@@ -645,8 +645,8 @@
     "cards": [],
     "card_count": 0,
     "source": "Save_Web_Game",
-    "diamonds": 2094,
-    "diamond_time": "2026-07-22 14:12:13"
+    "diamonds": 2274,
+    "diamond_time": "2026-07-23 17:35:02"
   },
   {
     "email": "houlkerclewy6@outlook.com",
@@ -655,8 +655,8 @@
     "group": "มอส",
     "last_status": "completed",
     "last_error": "",
-    "last_device": "127.0.0.1:16416",
-    "last_run": "2026-07-23 14:47:16",
+    "last_device": "127.0.0.1:16384",
+    "last_run": "2026-07-23 17:36:38",
     "name": "10337949318",
     "save_web_game_id": "c8x42dn68",
     "save_web_game_title": "หัวจ่าย คางุระปลุก2 มอส 10337949318",
@@ -665,18 +665,18 @@
     "cards": [],
     "card_count": 0,
     "source": "Save_Web_Game",
-    "diamonds": 2168,
-    "diamond_time": "2026-07-22 14:14:57"
+    "diamonds": 2328,
+    "diamond_time": "2026-07-23 17:36:10"
   },
   {
     "email": "alabedavelazco5@outlook.com",
     "password": "WXJ20680aqd",
     "checked": true,
     "group": "มอส",
-    "last_status": "completed",
-    "last_error": "",
-    "last_device": "127.0.0.1:16384",
-    "last_run": "2026-07-23 14:49:06",
+    "last_status": "device_error",
+    "last_error": "device_error",
+    "last_device": "127.0.0.1:16416",
+    "last_run": "2026-07-23 17:35:38",
     "name": "10337762868",
     "save_web_game_id": "y5m6ih7sg",
     "save_web_game_title": "หัวจ่ายคางุระปลุก2 มอส 10337762868",
