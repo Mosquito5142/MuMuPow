@@ -481,6 +481,62 @@
     },
     {
       "type": "run_set",
+      "set": "ข้ามhotzone",
+      "desc": "บล็อก: ข้ามhotzone",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "keyevent",
+      "desc": "",
+      "code": "4",
+      "delay": 0.45
+    },
+    {
+      "type": "tap",
+      "desc": "",
+      "x": "442",
+      "y": "354",
+      "delay": 1.5
+    },
+    {
+      "type": "run_set",
       "set": "ส่งรถบัส",
       "desc": "บล็อก: ส่งรถบัส",
       "block_on_fail": "home_retry",
