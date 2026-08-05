@@ -1,19 +1,18 @@
-"""เทส 'บล็อกกันพัง' ฝั่ง Tkinter (gui.py) ให้ตรงกับ macro_runner (test_block_retry.py):
-run_set + block_on_fail='home_retry' → ถ้า set พัง กลับหน้าแรกแล้วเริ่ม set ใหม่ จำกัดรอบ
+"""เทส 'บล็อกกันพัง' ผ่านหน้า Tkinter: run_set + block_on_fail='home_retry'
+→ ถ้า set พัง กลับหน้าแรกแล้วเริ่ม set ใหม่ จำกัดรอบ
 
-ใช้ MuMuGUI ตัวเดียวร่วมกันทั้งไฟล์ (module fixture) แล้วรีเซ็ต controller/สถานะต่อเทส —
-เพราะการสร้าง tk.Tk() หลายตัวแล้ว destroy บน Windows ทำให้ Tcl หมดทรัพยากร (root ใหม่สร้างไม่ได้)"""
+ตรรกะจริงอยู่ใน macro_runner (เทสตรงที่ test_block_retry.py) ไฟล์นี้เทส 'สายไฟ' ว่า
+MuMuGUI.execute_device_macro ต่อเข้าตัวรันร่วมถูกต้อง — ผลที่ได้ต้องเหมือนกันเป๊ะทั้งสองทาง
+
+Tk root มาจาก session fixture ตัวเดียว (tests/conftest.py) ห้ามสร้างใหม่ที่นี่:
+สร้าง tk.Tk() แล้ว destroy หลายรอบบน Windows ทำให้ Tcl หมดทรัพยากรแล้วเทสล้มแบบสุ่ม"""
 import base64
 import os
 import sys
-import tempfile
-import unittest.mock
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import gui as G
 
 B64 = base64.b64encode(b"TMPL").decode()
 
@@ -51,17 +50,13 @@ class FakeController:
         return True, ""
 
 
-@pytest.fixture(scope="module")
-def app():
-    with unittest.mock.patch.object(G.MuMuGUI, "load_accounts", lambda self: None), \
-         unittest.mock.patch.object(G.MuMuGUI, "scan_devices", lambda self: None):
-        a = G.MuMuGUI()
-    a.error_reports_dir = tempfile.mkdtemp()
-    a.macro_running = True
-    a.script_sets = {"work": WORK_SET, "home": HOME_SET}
-    a._anchor_poll_interval = 0.01
-    yield a
-    a.destroy()
+@pytest.fixture
+def app(gui_app):
+    """ยืม Tk root ตัวเดียวของทั้ง session (ดู tests/conftest.py) แล้วตั้งค่าที่ไฟล์นี้ต้องใช้"""
+    gui_app.macro_running = True
+    gui_app.script_sets = {"work": WORK_SET, "home": HOME_SET}
+    gui_app._anchor_poll_interval = 0.01
+    return gui_app
 
 
 def _run(app, fail_times, retries=2):

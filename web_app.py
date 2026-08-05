@@ -249,6 +249,14 @@ class Api:
         except Exception:
             return {}
 
+    def _load_gemini_key(self):
+        """คีย์ Gemini (ตัวกู้จอด้วย AI ของ Story Auto) — ว่างได้ ระบบจะข้ามส่วน AI ไปเอง"""
+        try:
+            return json.load(open(os.path.join(base_dir(), "gemini_config.json"),
+                                  encoding="utf-8")).get("api_key", "")
+        except Exception:
+            return ""
+
     def _persist_diamonds(self, rows, log_cb):
         """เขียนผลอ่านเพชรตอนจบรัน: ไฟล์ export + อัปเดตจำนวนล่าสุดลง accounts.json
         + ส่งเข้าเว็บ Save Web Game อัตโนมัติ (พอร์ตจาก gui._write_and_push_diamonds ให้ทำงานตรงกัน)
@@ -375,7 +383,8 @@ class Api:
         runner = MacroRunner(self.controller, self.macro_steps, log_cb=self._run_log_cb,
                              progress_cb=self._run_progress_cb, running_check=lambda: self._running,
                              anchor_poll=poll, reset_cfg=self._load_reset_cfg(),
-                             diamond_cfg=self._load_diamond_cfg())
+                             diamond_cfg=self._load_diamond_cfg(),
+                             gemini_key=self._load_gemini_key())
         runner.profile_name = self.current_profile or ""
         self._runner = runner
 
@@ -498,11 +507,7 @@ class Api:
         def progress_cb(device, **st):
             self._run_state.setdefault(device, {}).update(st)
 
-        gem = ""
-        try:
-            gem = json.load(open(os.path.join(base_dir(), "gemini_config.json"), encoding="utf-8")).get("api_key", "")
-        except Exception:
-            pass
+        gem = self._load_gemini_key()
         try:
             iv = float(interval)
         except Exception:
@@ -584,7 +589,8 @@ class Api:
             runner = MacroRunner(self.controller, self.macro_steps, log_cb=self._run_log_cb,
                                  progress_cb=self._run_progress_cb, running_check=lambda: flag["running"],
                                  anchor_poll=self._anchor_poll, reset_cfg=self._load_reset_cfg(),
-                                 diamond_cfg=self._load_diamond_cfg())
+                                 diamond_cfg=self._load_diamond_cfg(),
+                                 gemini_key=self._load_gemini_key())
             runner.profile_name = self.current_profile or ""
             runner.total_accounts = main_runner.total_accounts
             
@@ -633,7 +639,8 @@ class Api:
         runner = MacroRunner(self.controller, steps, log_cb=self._run_log_cb,
                              progress_cb=self._run_progress_cb, running_check=lambda: flag["running"],
                              anchor_poll=self._anchor_poll, reset_cfg=self._load_reset_cfg(),
-                             diamond_cfg=self._load_diamond_cfg())
+                             diamond_cfg=self._load_diamond_cfg(),
+                             gemini_key=self._load_gemini_key())
         runner.profile_name = self.current_profile or ""
         runner.total_accounts = 1   # รันต่อแค่บัญชีเดียว (ของเดิมที่ค้างไว้) กันการ์ดโชว์ "X / 0" ที่หน้าเว็บ
 
@@ -936,7 +943,7 @@ class Api:
                   "wait_for_image": "image", "tap_text": "text-cursor-input", "wait_for_text": "search",
                   "clear_ads_loop": "x-circle", "fetch_otp": "mail", "screenshot": "camera",
                   "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
-                  "if_image": "git-branch"}
+                  "if_image": "git-branch", "story_auto": "clapperboard"}
 
     # ชนิด step -> ฟิลด์ที่ใช้จริง (ตัวอื่นถูกล้างทิ้งเมื่อเปลี่ยนชนิด) — อิงจาก _build_step_from_form เดิม
     STEP_FIELDS = {
@@ -959,6 +966,7 @@ class Api:
         "screenshot": ["text", "delay"],
         "find_yellow_stage": ["delay"],
         "if_image": ["text", "threshold", "timeout", "delay"],
+        "story_auto": ["text", "threshold", "max_stages", "delay"],
     }
     # ค่าเริ่มต้นเมื่อสร้างขั้นใหม่/เปลี่ยนชนิด
     STEP_DEFAULTS = {
@@ -981,6 +989,8 @@ class Api:
         "screenshot": {"text": "screenshots/{DATE}/{NAME}_{TIME}.png", "delay": 1.0},
         "find_yellow_stage": {"delay": 1.0},
         "if_image": {"text": "", "threshold": 0.8, "timeout": 2.0, "then": [], "else": []},
+        # text = รายชื่อไฟล์ปุ่มที่จะกวาด (คั่นด้วย ,) เว้นว่าง = ใช้ templates/story_*.png ทั้งหมด
+        "story_auto": {"text": "", "threshold": 0.78, "max_stages": 30, "delay": 1.0},
     }
 
     def get_steps(self):
@@ -1026,7 +1036,7 @@ class Api:
         order = ["tap", "swipe", "text", "if_image", "keyevent", "sleep", "start_app", "stop_app",
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
-                 "screenshot", "find_yellow_stage"]
+                 "screenshot", "find_yellow_stage", "story_auto"]
         return [{"value": t, "label": f"{self._STEP_TH.get(t, t)} ({t})"} for t in order]
 
     def _canonical_step(self, t, merged, existing=None):
@@ -1515,7 +1525,8 @@ class Api:
 
         runner = MacroRunner(self.controller, steps, log_cb=log_cb,
                              progress_cb=progress_cb, running_check=lambda: self._running,
-                             diamond_cfg=self._load_diamond_cfg())
+                             diamond_cfg=self._load_diamond_cfg(),
+                             gemini_key=self._load_gemini_key())
         runner.profile_name = self.current_profile or ""
 
         def worker():

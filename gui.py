@@ -18,6 +18,10 @@ from mumu_controller import (
     find_yellow_frame, find_highlighted_stage, find_swipe_glow, in_match_autoplay,
     ocr_find_button, gemini_tap_suggestion,
 )
+from macro_runner import (
+    MacroRunner,
+    DEFAULT_STEP_DELAYS as _DEFAULT_STEP_DELAYS,
+)
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
     DEFAULT_ACTION_DELAY,
@@ -238,24 +242,9 @@ def label_to_step_type(label):
 
 
 # ค่าหน่วงเวลาเริ่มต้น (วินาที) ต่อชนิด step เมื่อ step ไม่ได้ระบุ delay เอง
-DEFAULT_STEP_DELAYS = {
-    "tap": 1.0,
-    "swipe": 1.0,
-    "text": 1.0,
-    "keyevent": 0.3,
-    "start_app": 1.0,
-    "stop_app": 1.0,
-    "detect_image": 1.0,
-    "wait_for_image": 1.0,
-    "tap_text": 1.0,
-    "wait_for_text": 1.0,
-    "clear_ads_loop": 1.0,
-    "fetch_otp": 1.0,
-    "screenshot": 1.0,
-    "read_diamond": 1.0,
-    "story_auto": 1.0,
-    "find_yellow_stage": 1.0,
-}
+# ตัวจริงอยู่ที่ macro_runner (ตัวรันร่วมของทั้งสองแอป) — ที่นี่แค่ re-export ไว้ให้โค้ด/เทสเดิม
+# ที่อ้าง gui.DEFAULT_STEP_DELAYS ยังใช้ได้ ห้ามสร้างสำเนาแยกอีก ไม่งั้นสองแอปหน่วงไม่เท่ากัน
+DEFAULT_STEP_DELAYS = _DEFAULT_STEP_DELAYS
 
 
 # ป้ายไทยของนโยบาย 'ถ้าไม่เจอภาพ anchor' — โชว์ให้ผู้ใช้อ่านเข้าใจ แต่ยังเก็บค่าเดิม (pause/abort/skip/tap/retry)
@@ -368,6 +357,10 @@ class MuMuGUI(tk.Tk):
         # สถานะรันสดต่อจอ (device -> status/account/step/done_count) ให้การ์ดความคืบหน้าหน้าแรกอ่านได้
         # เขียนจาก worker thread แต่ key ของแต่ละจอแยกกัน (ไม่มี thread ไหนแก้ key เดียวกันพร้อมกัน) จึงไม่ต้อง lock
         self._device_run_state = {}
+        # จอที่ตัวรันสั่ง 'หยุดรอแก้ไข' (anchor_on_fail='pause') -> ภาพ+บัญชี ณ ตอนค้าง
+        # Tkinter ไม่มีแผงแก้ไข/รันต่อสดแบบ MuMupow_new เก็บไว้เพื่อให้รายงานจุดที่ติดอ้างอิงได้
+        self._paused_devices = {}
+        self._last_runner_error = ""
 
         # ตัวแปรสำหรับการรันแบบแบ่งเซ็ต
         self.pause_between_sets = tk.BooleanVar(value=False)
@@ -7305,398 +7298,121 @@ class MuMuGUI(tk.Tk):
             "duration": 0.0,
         }
 
-        def record(ret, label):
-            """รับผลลัพธ์ (success, output) จาก controller — ถ้า fail ให้ log + นับ"""
-            try:
-                ok, out = ret
-            except (TypeError, ValueError):
-                ok, out = True, ""
-            if not ok:
-                result["errors"] += 1
-                if not result["error"]:
-                    result["error"] = f"{label}: {out}"
-                self.write_log(f"   ❌ [{device}] คำสั่ง {label} ล้มเหลว: {out}", "error")
-            return ok
-
-        progress = {"num": None, "step": None, "total": 0}  # ขั้นล่าสุดที่ทำ (ให้รายงานปัญหารู้ว่าติดตรงไหน)
-
         def finish():
             result["duration"] = round(time.time() - run_start, 1)
-            if result["errors"] and result["status"] == "completed":
-                result["status"] = "device_error"
-            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> บันทึกจุดที่ติด (ภาพ+ข้อมูล) ไว้ดูย้อนหลัง
-            # เดิมจุดนี้จะรีเซ็ตเกม (ออกแล้วเข้าใหม่) ให้จอสะอาดก่อนไปบัญชีถัดไปเสมอ — เอาออกแล้ว ตรงกับที่
-            # ฝั่ง webui เปลี่ยนไปใช้ระบบ 'เรียนรู้ทีละจอ' (anchor_on_fail='pause', ค่าเริ่มต้นใหม่) เป็นหลัก
-            # แทน — Tkinter ไม่มีแผงโต้ตอบแบบ webui (แก้ไข/รันต่อสด) แต่ก็ไม่รีเซ็ตเกมอัตโนมัติอีกต่อไปเช่นกัน
-            # เพื่อให้สคริปต์ที่ 'สอน' ไว้จาก webui ทำงานสอดคล้องกันไม่ว่าจะรันผ่านแอปไหน
+            # บัญชีนี้ติดปัญหา (ไม่ใช่ผู้ใช้กดหยุด) -> จอค้างสถานะ 'ติดปัญหา' ไว้ให้เห็นบนการ์ด
+            # ภาพ+ข้อมูลจุดที่ติดถูก MacroRunner บันทึกลง error_reports ไปแล้วตั้งแต่ตอนที่พัง
+            # (ไม่รีเซ็ตเกมอัตโนมัติ — ปล่อยจอไว้ตามสภาพ ตรงกับฝั่ง webui)
             if result["status"] in ("device_error", "macro_error"):
-                if not result.get("_reported") and progress["step"] is not None:
-                    self._save_failure_report(device, account, progress["num"], progress["total"],
-                                              progress["step"], result.get("error") or "error")
+                result["errors"] = result["errors"] or 1
                 self._device_run_state.setdefault(device, {})["status"] = "stuck"
             return result
 
-        # ขยายขั้นตอนคำสั่งย่อย (Script Sets) ถ้ามี — ไล่เข้ากิ่ง then/else ของ if_image ด้วย
-        resolver = lambda name: self.script_sets.get(name)
-        try:
-            steps_to_run = self._expand_steps_with_sets_recursive(self.macro_steps, resolver)
-        except Exception as e:
-            self.write_log(f"❌ เกิดข้อผิดพลาดในการขยายชุดคำสั่ง (Script Sets): {e}", "error")
+        runner = self._build_macro_runner()
+        if runner is None:   # สร้างตัวรันไม่ผ่าน — ข้อความบอกสาเหตุถูก log ไปแล้ว
             result["status"] = "macro_error"
-            result["error"] = f"script_sets: {e}"
+            result["error"] = self._last_runner_error or "runner_init"
             return finish()
 
-        # บริบทที่ส่งให้ handler แต่ละชนิด (device/account คงที่, step_delay อัปเดตทุก step)
-        import types
-        ctx = types.SimpleNamespace(device=device, account=account, record=record, step_delay=0.0)
-        handlers = self._get_step_handlers()
+        def prog(**kw):
+            """สะพานจาก progress ของ MacroRunner -> การ์ดสถานะจอของ Tkinter
+            ตั้งใจ 'ไม่' รับ done_count/total_accounts จากตัวรัน เพราะฝั่ง Tkinter นับเองในคิวหลัก
+            (executor ของแต่ละโหมดนับคนละแบบ) ถ้าปล่อยให้ทับจะทำให้เลข x/y บนการ์ดเพี้ยน"""
+            kw.pop("done_count", None)
+            kw.pop("total_accounts", None)
+            pause_shot = kw.pop("_pause_shot", None)
+            pause_acc = kw.pop("_pause_account", None)
+            st.update({k: v for k, v in kw.items() if not k.startswith("_")})
+            if pause_shot or pause_acc:
+                # Tkinter ไม่มีแผง 'จอที่รอแก้ไข' แบบ webui — เก็บภาพ/บัญชีที่ค้างไว้เฉยๆ เผื่อใช้ต่อ
+                self._paused_devices[device] = {"shot": pause_shot, "account": pause_acc}
+            if highlight:
+                self._highlight_running_step(kw.get("step_idx"))
 
-        status = self._run_macro_steps(device, account, steps_to_run, ctx, handlers, result,
-                                       progress, st, highlight)
+        try:
+            status = runner._run_steps(device, account, runner.steps, prog, path="", depth=0, disp="")
+        except Exception as e:
+            self.write_log(f"❌ [{device}] ระบบรันมาโครขัดข้อง: {e}", "error")
+            result["status"] = "macro_error"
+            result["error"] = str(e)
+            return finish()
+
+        if status == "paused":
+            # นโยบาย anchor_on_fail='pause': webui หยุดจอไว้ให้ผู้ใช้แก้แล้วกด 'รันต่อ' ได้สด
+            # Tkinter ไม่มีแผงนั้น จึงปิดบัญชีนี้เป็น 'ติดปัญหา' แทน (ภาพจุดที่ค้างเก็บไว้แล้ว)
+            # จอไม่ถูกแตะต่อ ไม่รีเซ็ต — ไปแก้สคริปต์ที่ MuMupow_new แล้วรันบัญชีนี้ซ้ำ
+            self.write_log(f"   ⏸ [{device}] หยุดรอแก้ไข — Tkinter รันต่อสดไม่ได้ "
+                           f"ไปแก้สคริปต์ที่โปรแกรมใหม่ (MuMupow_new) แล้วรันบัญชีนี้ซ้ำ", "error")
+            self._save_failure_report(device, account, st.get("step_idx"), st.get("step_total"),
+                                      {"type": "", "desc": st.get("step_desc", "")}, "anchor_fail_pause")
+            result["status"] = "device_error"
+            result["error"] = f"anchor_fail_pause: {st.get('step_desc', '')}"
+            return finish()
+
         if status != "completed":
             result["status"] = status
+
+        # เพชรที่ step 'อ่านเพชร' เก็บได้รอบนี้ -> รวมเข้าถังของรอบรัน (export/push ตอนจบ)
+        if runner.diamond_rows:
+            lock = getattr(self, "run_diamond_lock", None)
+            if not hasattr(self, "run_diamond_rows"):
+                self.run_diamond_rows = []
+            if lock is not None:
+                with lock:
+                    self.run_diamond_rows.extend(runner.diamond_rows)
+            else:
+                self.run_diamond_rows.extend(runner.diamond_rows)
         return finish()
 
-    # จำกัดความลึกกิ่งซ้อนของ if_image (กันสคริปต์ตั้งวนอ้างตัวเองไม่รู้จบ) — ตรงกับ macro_runner.py
-    MAX_BRANCH_DEPTH = 5
+    def _build_macro_runner(self):
+        """สร้าง MacroRunner สำหรับรัน 1 บัญชี — ตัวรันตัวเดียวกับที่ MuMupow_new ใช้
 
-    def _tree_has_run_set(self, steps):
-        """เช็คว่ามี run_set ที่ไหนสักแห่ง (รวมในกิ่ง then/else ของ if_image) — พอร์ตจาก macro_runner.py"""
-        for s in steps:
-            if s.get("type") == "run_set":
-                return True
-            for k in ("then", "else"):
-                if s.get(k) and self._tree_has_run_set(s[k]):
-                    return True
-        return False
-
-    @staticmethod
-    def _is_block(step):
-        """run_set ที่ตั้งเป็น 'บล็อกกันพัง' (block_on_fail=='home_retry') — พอร์ตจาก macro_runner.py
-        ถ้า set พังให้กลับหน้าแรกแล้วรัน set นั้นใหม่ ต่างจาก run_set ธรรมดาที่ถูกคลี่แบนทิ้ง"""
-        return step.get("type") == "run_set" and step.get("block_on_fail") == "home_retry"
-
-    def _expand_steps_with_sets_recursive(self, steps, resolver):
-        """ขยาย run_set ให้กลายเป็นขั้นย่อยจริง รวมถึง run_set ที่ซ่อนอยู่ในกิ่ง then/else
-        (expand_steps_with_sets เดิมรู้จักแค่ลิสต์แบน ไม่รู้จักโครงสร้างกิ่ง) — พอร์ตจาก macro_runner.py
-
-        ยกเว้น run_set ที่เป็น 'บล็อกกันพัง' — ไม่คลี่แบน แต่เก็บไว้เป็นบล็อกตอนรัน โดย pre-resolve
-        ขั้นย่อยของ set (_block_steps) และ set กลับหน้าแรก (_home_steps) ติดไว้กับ step เลย"""
-        import copy as _copy
-        if not self._tree_has_run_set(steps):
-            return steps
-
-        def flatten(lst):
-            flat = expand_steps_with_sets(lst, resolver)
-            for s in flat:
-                if s.get("type") == "if_image":
-                    for k in ("then", "else"):
-                        if s.get(k):
-                            s[k] = flatten(s[k])
-            return flat
-
-        def build(lst):
-            out = []
-            for step in lst:
-                if self._is_block(step):
-                    blk = _copy.deepcopy(step)
-                    set_name = str(step.get("set") or step.get("text") or "").strip()
-                    sub = resolver(set_name)
-                    if sub is None:
-                        self.write_log(f"   ⚠️ ไม่พบชุดคำสั่ง '{set_name}' (บล็อกกันพัง) -> ข้ามบล็อกนี้", "warning")
-                        continue
-                    blk["_block_steps"] = flatten(sub)
-                    home_name = str(step.get("block_home") or "").strip()
-                    if home_name:
-                        if resolver(home_name) is not None:
-                            blk["_home_steps"] = flatten(resolver(home_name))
-                        else:
-                            self.write_log(f"   ⚠️ ไม่พบชุด 'กลับหน้าแรก' ชื่อ '{home_name}' -> บล็อกจะลองใหม่โดยไม่กลับหน้าแรก", "warning")
-                    out.append(blk)
-                elif step.get("type") == "if_image":
-                    s2 = _copy.deepcopy(step)
-                    for k in ("then", "else"):
-                        if s2.get(k):
-                            s2[k] = build(s2[k])
-                    out.append(s2)
-                else:
-                    out.extend(flatten([step]))
-            return out
-
-        return build(steps)
-
-    def _eval_if_image_gui(self, device, step):
-        """ประเมินเงื่อนไข if_image: เจอภาพภายใน timeout -> 'then' ไม่เจอ -> 'else'
-        ภาพเงื่อนไขมาจาก anchor_img (base64 ที่ลากกรอบ) หรือ text (ไฟล์ใน templates/)
-        พอร์ตจาก macro_runner.MacroRunner._eval_if_image ให้พฤติกรรมตรงกันเป๊ะทั้งสองแอป"""
-        import base64
-        threshold = float(step.get("threshold", 0.8) or 0.8)
-        timeout = float(step.get("timeout", 2.0) or 2.0)
-
-        tmpl_bytes, tmpl_path = None, None
-        b64 = step.get("anchor_img") or ""
-        if b64:
-            try:
-                tmpl_bytes = base64.b64decode(b64) or None
-            except Exception:
-                tmpl_bytes = None
-        if tmpl_bytes is None:
-            tf = (step.get("text") or "").strip()
-            p = os.path.join(self.templates_dir, tf) if tf else ""
-            if p and os.path.exists(p):
-                tmpl_path = p
-        if tmpl_bytes is None and tmpl_path is None:
-            self.write_log(f"   ⚠️ [{device}] if_image: ไม่ได้ตั้งภาพเงื่อนไข -> ถือว่า 'ไม่เจอ'", "warning")
-            return "else"
-
-        deadline = time.time() + timeout
-        while True:
-            if not self.macro_running:
-                return "stopped"
-            ok, data = self.controller.capture_screenshot_bytes(device)
-            if ok:
-                if tmpl_bytes is not None:
-                    found, _x, _y, _m = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
-                else:
-                    found, _x, _y, _m = self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
-                if found:
-                    self.write_log(f"   🔀 [{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' -> ✅ เจอ", "info")
-                    return "then"
-            if time.time() >= deadline:
-                self.write_log(f"   🔀 [{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' -> ❌ ไม่เจอ", "info")
-                return "else"
-            waited = 0.0
-            while waited < 0.4:
-                if not self.macro_running:
-                    return "stopped"
-                time.sleep(0.1)
-                waited += 0.1
-
-    def _run_macro_steps(self, device, account, steps, ctx, handlers, result, progress, st,
-                         highlight, path="", depth=0, disp="", block_mode=False):
-        """รันลิสต์ขั้นตอน — เรียกซ้ำตัวเองเข้าไปในกิ่ง then/else ของ if_image ได้ (พอร์ตจาก macro_runner.py
-        MacroRunner._run_steps ให้ตัวรันทั้งสองแอปมีตรรกะเดียวกันเป๊ะ) mutate result[]/progress[] ให้ตรง
-        ก่อน return เสมอ (ยกเว้น "completed") คืน "completed" | "stopped" | "device_error"
-
-        block_mode = True เมื่อรันขั้นย่อยใน 'บล็อกกันพัง' — anchor ไม่เจอ ให้คืน device_error ทันที
-        (ถือว่า set พัง) ให้ตัวจัดการบล็อกไปกลับหน้าแรก+เริ่ม set ใหม่เอง แทนหยุดรอ/วนเอง
-
-        ใช้ while + ตัวชี้ idx เดินเอง (ไม่ใช่ for) เพราะ anchor_on_fail="retry" ต้องกระโดด
-        ตัวชี้ถอยหลังไปทำขั้นก่อนหน้าใหม่ในลิสต์เดียวกันได้ (วนทำซ้ำ ไม่ใช่แค่ไล่หน้าเดียว)
-        """
-        if depth > self.MAX_BRANCH_DEPTH:
-            self.write_log(f"   ⚠️ [{device}] กิ่งซ้อนเกิน {self.MAX_BRANCH_DEPTH} ชั้น -> ข้ามกิ่งนี้ (กันวนไม่รู้จบ)", "warning")
-            return "completed"
-
-        total = len(steps)
-        in_branch = bool(path)
-        retry_counts = {}  # idx ของขั้นนี้ -> จำนวนรอบที่วนไปแล้ว (รีเซ็ตใหม่ทุกครั้งที่เรียกฟังก์ชันนี้)
-        pause_self_healed = set()  # idx ที่เคยลองย้อนไปกดขั้นก่อนหน้าซ้ำแล้ว (นโยบาย pause) — กันวนซ้ำไม่รู้จบ
-        idx = 0
-        while idx < total:
-            if not self.macro_running:
-                result["status"] = "stopped"
-                return "stopped"
-
-            step = steps[idx]
-            t = step.get("type", "tap")
-            here = f"{path}.{idx}" if path else str(idx)
-            num = f"{disp}{idx + 1}"  # เลขขั้นให้คนอ่าน เช่น "4" หรือ "4.เจอ.1"
-            desc = step.get("desc", f"ขั้นตอนที่ {idx+1}")
-            if not in_branch:
-                progress["num"], progress["step"], progress["total"] = num, step, total
-                st.update({"step_idx": idx + 1, "step_total": total, "step_desc": desc})
-            email_log = ""
-            if account:
-                acc_name = account_display_name(account)
-                email_log = f" ({acc_name if acc_name and acc_name != '-' else account['email']})"
-            self.write_log(f"   👉 [{device}]{email_log} ขั้นที่ {num}"
-                           f"{f'/{total}' if not in_branch else ''}: {desc}...", "info")
-
-            # ไฮไลท์การทำงานบนลิสต์บ็อกซ์ GUI เฉพาะเส้นหลัก (กิ่งไม่มีแถวใน listbox ให้ชี้)
-            if highlight and not in_branch and idx < self.step_listbox.size():
-                self.after(0, lambda i=idx: self.step_listbox.selection_clear(0, tk.END))
-                self.after(0, lambda i=idx: self.step_listbox.selection_set(i))
-                self.after(0, lambda i=idx: self.step_listbox.see(i))
-
-            # ดึงค่าหน่วงเวลาเฉพาะของขั้นตอนนี้ (ถ้าไม่มีให้ดึงค่าดีฟอลต์มาใช้)
-            step_delay = step.get("delay")
-            if step_delay is None:
-                step_delay = DEFAULT_STEP_DELAYS.get(t, 0.0)
-            else:
-                step_delay = float(step_delay)
-            if step_delay > 0:
-                step_delay = step_delay * random.uniform(0.8, 1.4)
-
-            # ---- บล็อกกันพัง: รัน set นี้จนจบ ถ้าพัง -> กลับหน้าแรก -> เริ่ม set นี้ใหม่ (จำกัดรอบ) ----
-            if self._is_block(step):
-                r = self._run_block_gui(device, account, step, ctx, handlers, result, progress, st,
-                                        highlight, here, num, depth)
-                if r != "completed":
-                    return r
-                if step_delay > 0:
-                    time.sleep(step_delay)
-                idx += 1
-                continue
-
-            # ---- บล็อกทางเลือก: เจอภาพ -> กิ่ง then จนจบ แล้วกลับมาต่อเส้นนี้ / ไม่เจอ -> กิ่ง else ----
-            if t == "if_image":
-                branch = self._eval_if_image_gui(device, step)
-                if branch == "stopped":
-                    result["status"] = "stopped"
-                    return "stopped"
-                sub = step.get(branch) or []
-                bname = "เจอ" if branch == "then" else "ไม่เจอ"
-                if sub:
-                    self.write_log(f"   🔀 [{device}] ขั้น {num}: เข้ากิ่ง '{bname}' ({len(sub)} ขั้น)", "info")
-                    r = self._run_macro_steps(device, account, sub, ctx, handlers, result, progress, st,
-                                              highlight, path=f"{here}.{branch}", depth=depth + 1,
-                                              disp=f"{num}.{bname}.", block_mode=block_mode)
-                    if r != "completed":
-                        return r
-                    self.write_log(f"   ↩️ [{device}] ขั้น {num}: จบกิ่ง '{bname}' -> กลับเส้นหลัก", "info")
-                else:
-                    self.write_log(f"   🔀 [{device}] ขั้น {num}: กิ่ง '{bname}' ว่าง (ไม่มีขั้นให้ทำ) -> ไปต่อ", "warning")
-                if step_delay > 0:
-                    time.sleep(step_delay)
-                idx += 1
-                continue
-
-            # === Anchor gate (ชั้น B): ถ้าสเต็ปมีภาพ anchor -> 'รอจนเห็นภาพนั้นบนจอ' ก่อนทำ ===
-            # กันปัญหาจอช้า/ค้างแล้วกดตาบอดจนมั่ว: จอช้า=รอจนตามทัน, จอไม่ตรง=ตามนโยบาย anchor_on_fail
-            ctx.anchor_hit = None  # จุดกึ่งกลางที่ anchor เจอรอบนี้ (ให้ tap 'ตามภาพที่ขยับ' ได้)
-            if step.get("anchor_img"):
-                gate, ax, ay = self._wait_for_step_anchor(device, step)
-                if gate == "found" and ax is not None:
-                    ctx.anchor_hit = (ax, ay)
-                if gate == "stopped":
-                    result["status"] = "stopped"
-                    return "stopped"
-                if gate == "missing":
-                    # อยู่ในบล็อกกันพัง: ไม่เจอภาพ = ถือว่า 'set นี้พัง' ทันที คืน device_error ให้ตัวจัดการบล็อก
-                    # ไปกลับหน้าแรก+เริ่ม set ใหม่เอง (ไม่หยุดรอ/ไม่วนเองในนี้ เพราะบล็อกคุมการลองใหม่แล้ว)
-                    if block_mode:
-                        self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> ถือว่าชุดคำสั่งนี้พัง (จะกลับหน้าแรกแล้วลองใหม่)", "warning")
-                        result["status"] = "device_error"
-                        return "device_error"
-                    # ค่าเริ่มต้นเป็น 'pause' แทน 'abort' เดิม — ตรงกับ webui (ใช้การเรียนรู้เป็นหลัก)
-                    policy = step.get("anchor_on_fail", "pause")
-                    if policy == "retry":
-                        target = step.get("anchor_retry_target")
-                        limit = int(step.get("anchor_retry_limit", 3) or 3)
-                        cnt = retry_counts.get(idx, 0)
-                        if target is not None and 0 <= int(target) < total and cnt < limit:
-                            retry_counts[idx] = cnt + 1
-                            self.write_log(f"   🔁 [{device}] ไม่เจอภาพ anchor ขั้น {num} -> วนกลับไปทำขั้นที่ {int(target)+1} ใหม่ "
-                                          f"(รอบที่ {cnt+1}/{limit})", "warning")
-                            idx = int(target)
-                            continue
-                        reason = "ยังไม่ได้ตั้งขั้นเป้าหมายให้วนกลับ" if target is None else f"วนครบ {limit} รอบแล้วยังไม่เจอ"
-                        self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> {reason} -> หยุดจอนี้ กันรันมั่ว", "error")
-                        self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (retry หมดรอบ)")
-                        result["_reported"] = True
-                        result["status"] = "device_error"
-                        result["error"] = f"anchor_fail_retry_exhausted: ขั้น {num} {desc}"
-                        return "device_error"
-                    elif policy == "skip":
-                        self.write_log(f"   ⏭️ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> ข้ามขั้นนี้", "warning")
-                        idx += 1
-                        continue
-                    elif policy == "tap":
-                        self.write_log(f"   ⚠️ [{device}] ไม่เจอภาพ anchor ขั้น {num} -> กดตามพิกัดเดิม (เสี่ยง)", "warning")
-                    elif policy == "pause":
-                        # ก่อนหยุดรอจริง ลองย้อนไปทำขั้นก่อนหน้าซ้ำอีก 1 ที (เผื่อกดตอนนั้นแล้วจอ/เครื่องค้าง
-                        # เลยไม่ขยับมาจอนี้จริง ๆ) แล้วเช็ค anchor ใหม่ — ถ้าลองแล้วยังไม่เจอจริง ๆ ค่อยหยุดรอ
-                        if idx > 0 and idx not in pause_self_healed:
-                            pause_self_healed.add(idx)
-                            self.write_log(f"   🔁 [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> ลองย้อนไปทำขั้นก่อนหน้าซ้ำ "
-                                          f"(เผื่อจอค้าง) แล้วเช็คใหม่", "warning")
-                            idx -= 1
-                            continue
-                        # Tkinter ไม่มีแผง 'จอที่รอแก้ไข' แบบ webui (แก้ไข/รันต่อสด) — แค่หยุดจอนี้สะอาดๆ
-                        # ไม่รีเซ็ต ไม่กดต่อ บันทึกภาพไว้ดู แล้วให้ผู้ใช้ไปเพิ่มเงื่อนไข/if ที่ webui เอง
-                        self.write_log(f"   ⏸ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> หยุดจอนี้รอ (ไปแก้สคริปต์ที่ webui แล้วรันใหม่)", "error")
-                        self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (pause)")
-                        result["_reported"] = True
-                        result["status"] = "device_error"
-                        result["error"] = f"anchor_fail_pause: ขั้น {num} {desc}"
-                        return "device_error"
-                    else:  # abort — หยุดจอนี้เฉยๆ (ไม่รอ ไม่วน) จออื่นเดินต่อ + รายงานให้ตามเก็บ — ไม่รีเซ็ตเกมแล้ว
-                        self.write_log(f"   ⛔ [{device}] ไม่เจอภาพ anchor ขั้น {num} ({desc}) -> หยุดจอนี้ กันรันมั่ว", "error")
-                        self._save_failure_report(device, account, num, total, step, "ไม่เจอภาพ anchor (abort)")
-                        result["_reported"] = True
-                        result["status"] = "device_error"
-                        result["error"] = f"anchor_fail: ขั้น {num} {desc}"
-                        return "device_error"
-
-            # ประมวลผลคำสั่งมาโคร ผ่านตาราง dispatch (handler ต่อชนิด step)
-            ctx.step_delay = step_delay
-            handler = handlers.get(t)
-            if handler is None:
-                self.write_log(f"   ⚠️ [{device}] ไม่รู้จักชนิดขั้นตอน '{t}' -> ข้าม", "warning")
-                idx += 1
-                continue
-            signal = handler(ctx, step)
-            if signal == "stop":
-                result["status"] = "stopped"
-                return "stopped"
-
-            idx += 1
-
-        return "completed"
-
-    def _run_block_gui(self, device, account, step, ctx, handlers, result, progress, st,
-                       highlight, here, num, depth):
-        """รัน 'บล็อกกันพัง' 1 บล็อก (พอร์ตจาก macro_runner._run_block): รันขั้นย่อยของ set (block_mode=True)
-        ถ้าพัง → เล่นชุด 'กลับหน้าแรก' → เริ่ม set นี้ใหม่ จำกัดรอบ (block_retries)
-        คืน 'completed' | 'stopped' | 'device_error'"""
-        set_name = str(step.get("set") or step.get("text") or "").strip() or "ชุดคำสั่ง"
-        sub_steps = step.get("_block_steps") or []
-        home_steps = step.get("_home_steps") or []
+        สร้างใหม่ต่อบัญชีเหมือนที่โค้ดเดิมขยาย script set ใหม่ทุกบัญชี (ค่าใช้จ่ายเท่าเดิม)
+        ทำให้แต่ละจอมีตัวรันของตัวเอง ไม่ต้องแชร์สถานะข้ามเธรด ซึ่งเป็นจุดที่พลาดง่ายที่สุด
+        คืน None ถ้าสร้างไม่ผ่าน (เหตุผลอยู่ใน self._last_runner_error)"""
+        self._last_runner_error = ""
         try:
-            retries = max(0, int(step.get("block_retries", 3) or 0))
-        except (TypeError, ValueError):
-            retries = 3
-        total_rounds = retries + 1
-        total = progress.get("total") or 0
+            runner = MacroRunner(
+                self.controller, self.macro_steps,
+                log_cb=self._runner_log_cb,
+                running_check=lambda: self.macro_running,
+                anchor_poll=getattr(self, "_anchor_poll_interval", 2.0),
+                reset_cfg=self.game_reset_config or {},
+                diamond_cfg=self.diamond_config or {},
+                gemini_key=getattr(self, "gemini_api_key", "") or "",
+                script_sets=self.script_sets or {},
+            )
+        except Exception as e:
+            self.write_log(f"❌ สร้างตัวรันมาโครไม่สำเร็จ: {e}", "error")
+            self._last_runner_error = f"runner_init: {e}"
+            return None
+        runner.profile_name = getattr(self, "_active_profile_name", "")
+        return runner
 
-        for attempt in range(1, total_rounds + 1):
-            if not self.macro_running:
-                result["status"] = "stopped"
-                return "stopped"
-            # เคลียร์สถานะพังของรอบก่อนหน้า ก่อนลองรอบใหม่ (ไม่งั้น finish() เห็น device_error ค้างจากรอบที่พัง)
-            result["status"] = "completed"
-            result["error"] = ""
-            result["_reported"] = False
-            self.write_log(f"   ▶️ [{device}] เริ่มชุด '{set_name}' (รอบ {attempt}/{total_rounds})", "info")
-            r = self._run_macro_steps(device, account, sub_steps, ctx, handlers, result, progress, st,
-                                      highlight, path=f"{here}.set", depth=depth + 1,
-                                      disp=f"{num}.", block_mode=True)
-            if r == "stopped":
-                return "stopped"
-            if r == "completed":
-                self.write_log(f"   ✅ [{device}] ชุด '{set_name}' สำเร็จ", "success")
-                return "completed"
-            # r == device_error → ชุดนี้พังในรอบนี้
-            if attempt >= total_rounds:
-                self.write_log(f"   ⛔ [{device}] ชุด '{set_name}' พังครบ {total_rounds} รอบแล้ว -> หยุด (บันทึกจุดที่ติดไว้)", "error")
-                self._save_failure_report(device, account, num, total, step, f"block_failed:{set_name}")
-                result["_reported"] = True
-                result["status"] = "device_error"
-                result["error"] = f"block_failed: ชุด '{set_name}' ({total_rounds} รอบ)"
-                return "device_error"
-            # ยังมีรอบเหลือ → กลับหน้าแรกก่อนเริ่มใหม่
-            if home_steps:
-                self.write_log(f"   ↺ [{device}] ชุด '{set_name}' พัง -> กลับหน้าแรกแล้วเริ่มใหม่ (รอบถัดไป {attempt + 1}/{total_rounds})", "warning")
-                hr = self._run_macro_steps(device, account, home_steps, ctx, handlers, result, progress, st,
-                                           highlight, path=f"{here}.home", depth=depth + 1,
-                                           disp=f"{num}.กลับ.", block_mode=False)
-                if hr == "stopped":
-                    return "stopped"
-            else:
-                self.write_log(f"   ↺ [{device}] ชุด '{set_name}' พัง -> เริ่มใหม่ (ไม่ได้ตั้งชุดกลับหน้าแรก) รอบถัดไป {attempt + 1}/{total_rounds}", "warning")
-        result["status"] = "device_error"
-        return "device_error"
+    # ระดับความรุนแรงที่ MacroRunner ใช้ -> แท็กสีของกล่องล็อก Tkinter
+    _RUNNER_LOG_KINDS = {"info": "info", "warn": "warning", "err": "error", "ok": "success"}
+
+    def _runner_log_cb(self, text, kind="info"):
+        self.write_log(f"   {text}", self._RUNNER_LOG_KINDS.get(kind, "info"))
+
+    def _highlight_running_step(self, step_idx):
+        """ไฮไลต์ขั้นที่กำลังทำในลิสต์บ็อกซ์ (เฉพาะตอนรันจอเดียว ไม่งั้นแย่งกันกะพริบ)
+
+        MacroRunner ส่ง step_idx มาเฉพาะขั้นบน 'เส้นหลัก' เท่านั้น ขั้นที่อยู่ในกิ่ง then/else
+        ส่งมาแค่ step_desc/step_path — ซึ่งถูกต้อง เพราะกิ่งไม่มีแถวของตัวเองในลิสต์บ็อกซ์ให้ชี้"""
+        if step_idx is None:
+            return
+        i = int(step_idx) - 1   # ตัวรันส่งเลขแบบเริ่มที่ 1 ลิสต์บ็อกซ์เริ่มที่ 0
+        if i < 0:
+            return
+
+        def apply():
+            if i < self.step_listbox.size():
+                self.step_listbox.selection_clear(0, tk.END)
+                self.step_listbox.selection_set(i)
+                self.step_listbox.see(i)
+
+        self.after(0, apply)
 
     def _update_anchor_poll(self):
         """อัปเดตค่าความถี่วนเช็ค anchor (เก็บเป็น float แยก) จากช่อง UI — ทำบนเธรดหลัก
@@ -7747,34 +7463,6 @@ class MuMuGUI(tk.Tk):
                 waited += 0.2
         self.write_log(f"   🔎 [{device}] anchor: รอ {timeout:g} วิ ยังไม่เจอ (คล้ายสุด {best:.2f}/{threshold:g})", "warning")
         return "missing", None, None
-
-    # ===== Macro step handlers (dispatch table) =====
-    def _get_step_handlers(self):
-        """ตารางจับคู่ชนิด step -> เมธอด handler (สร้างครั้งเดียวแล้วแคชไว้)"""
-        if not hasattr(self, "_step_handlers"):
-            self._step_handlers = {
-                "tap": self._step_tap,
-                "swipe": self._step_swipe,
-                "text": self._step_text,
-                "keyevent": self._step_keyevent,
-                "start_app": self._step_start_app,
-                "stop_app": self._step_stop_app,
-                "detect_image": self._step_detect_image,
-                "wait_for_image": self._step_wait_for_image,
-                "tap_text": self._step_tap_text,
-                "wait_for_text": self._step_wait_for_text,
-                "screenshot": self._step_screenshot,
-                "clear_ads_loop": self._step_clear_ads_loop,
-                "fetch_otp": self._step_fetch_otp,
-                "sleep": self._step_sleep,
-                "keyboard": self._step_keyboard,
-                "read_diamond": self._step_read_diamond,
-                "story_auto": self._step_story_auto,
-                "find_yellow_stage": self._step_find_yellow_stage,
-                # หมายเหตุ: if_image ไม่อยู่ในตารางนี้ — ถูกดักจัดการพิเศษใน _run_macro_steps
-                # ก่อนถึงจุด dispatch เสมอ (ต้องแตกกิ่ง then/else ไม่ใช่ handler ปกติ)
-            }
-        return self._step_handlers
 
     # ===== Story Auto: เล่นเนื้อเรื่องอัตโนมัติ (หาด่านเหลือง -> ลุยจนจบ -> วนซ้ำ) =====
     def _story_button_templates(self, buttons_field=""):
@@ -8030,493 +7718,6 @@ class MuMuGUI(tk.Tk):
 
         self.write_log(f"   🎉 [{device}] Story Auto หยุด — เคลียร์ไป {cleared} ด่าน", "success")
         return cleared
-
-    def _step_story_auto(self, ctx, step):
-        """step: เล่นเนื้อเรื่องอัตโนมัติทั้งชุดบนเครื่องนี้"""
-        self.run_story_auto(
-            ctx.device,
-            max_stages=int(step.get("max_stages", 30) or 30),
-            stage_timeout=float(step.get("stage_timeout", 240) or 240),
-            threshold=float(step.get("threshold", 0.78) or 0.78),
-            buttons_field=(step.get("buttons") or step.get("text") or ""),
-        )
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
-
-    def _step_find_yellow_stage(self, ctx, step):
-        """step: หา 'ด่านเหลือง' บนหน้าเลือกด่านแล้วแตะ (กดด่านถัดไป 1 ครั้ง)"""
-        device = ctx.device
-        ok, data = self.controller.capture_screenshot_bytes(device)
-        if not ok:
-            self.write_log(f"   ❌ [{device}] แคปจอไม่ได้ -> ข้าม", "error")
-            return
-        found, cx, cy, _box = find_yellow_frame(data)
-        if found:
-            self.write_log(f"   🎯 [{device}] เจอด่านเหลือง ({cx},{cy}) -> แตะ", "success")
-            ctx.record(self.controller.tap(device, cx, cy), "find_yellow_stage")
-        else:
-            self.write_log(f"   ⏭️ [{device}] ไม่พบด่านเหลืองบนจอ", "warning")
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
-
-    def _step_tap(self, ctx, step):
-        x, y = step["x"], step["y"]
-        # โหมด 'กดตรงที่เจอภาพ': ถ้าสเต็ปตั้ง anchor_tap และรอบนี้ anchor เจอ -> ย้ายจุดกดตามภาพ
-        # ที่ขยับ โดยคงระยะห่างเดิม (จุดแดง) เทียบกับจุดกึ่งกลางกรอบ anchor (จุดเขียว) เอาไว้
-        # => ปุ่ม/ป็อปอัพเลื่อนตำแหน่งนิดหน่อยก็ยังกดตรง (แม่นกว่าพิกัดตายตัว)
-        hit = getattr(ctx, "anchor_hit", None)
-        reg = step.get("anchor_region")
-        if step.get("anchor_tap") and hit and reg:
-            try:
-                acx = reg["x"] + reg["w"] / 2.0
-                acy = reg["y"] + reg["h"] / 2.0
-                x = int(round(hit[0] + (float(step["x"]) - acx)))
-                y = int(round(hit[1] + (float(step["y"]) - acy)))
-                self.write_log(f"   🎯 [{ctx.device}] กดตามภาพที่เจอ -> ({x},{y})", "info")
-            except (TypeError, ValueError, KeyError):
-                x, y = step["x"], step["y"]
-        ctx.record(self.controller.tap(ctx.device, x, y), "tap")
-        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังคลิกเพื่อให้ระบบ Android ทำงานทัน
-
-    def _step_swipe(self, ctx, step):
-        swipe_duration = int(float(step.get("duration", DEFAULT_SWIPE_DURATION)))
-        ctx.record(self.controller.swipe(ctx.device, step["x"], step["y"], step["x2"], step["y2"], swipe_duration), "swipe")
-        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังลากจอ
-
-    def _step_text(self, ctx, step):
-        # แทนที่ตัวแปร {EMAIL}/{PASSWORD}/{NAME} ด้วยไอดีรอบนี้
-        text_to_send = self._substitute_account(step["text"], ctx.account)
-        if str(text_to_send).isascii():
-            ctx.record(self.controller.input_text(ctx.device, text_to_send), "text")
-        else:
-            # มีอักขระไทย/Unicode -> ต้องผ่าน ADBKeyboard
-            ctx.record(self.controller.input_text_unicode(ctx.device, text_to_send), "text")
-        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังพิมพ์ข้อความ
-
-    def _step_keyevent(self, ctx, step):
-        ctx.record(self.controller.keyevent(ctx.device, step["code"]), "keyevent")
-        time.sleep(ctx.step_delay)  # หน่วงเวลาหลังคีย์อีเวนท์
-
-    def _step_start_app(self, ctx, step):
-        ctx.record(self.controller.start_app(ctx.device, step["text"]), "start_app")
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
-
-    def _step_stop_app(self, ctx, step):
-        ctx.record(self.controller.stop_app(ctx.device, step["text"]), "stop_app")
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
-
-    def _step_detect_image(self, ctx, step):
-        device = ctx.device
-        template_file = step["text"]
-        template_path = os.path.join(self.templates_dir, template_file)
-        if not os.path.exists(template_path):
-            self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file}", "warning")
-            return
-
-        # ถ่ายภาพหน้าจอตรงเข้าหน่วยความจำ (exec-out, ไม่มีไฟล์ชั่วคราว)
-        success, data = self.controller.capture_screenshot_bytes(device)
-        if not success:
-            self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {data}", "error")
-            return
-
-        # ค้นหาตำแหน่งภาพ
-        found, match_x, match_y, msg = self.controller.find_image_in_bytes(data, template_path, threshold=0.8)
-
-        if found:
-            self.write_log(f"   🎯 [{device}] พบรูป '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
-            self.controller.tap(device, match_x, match_y)
-            if ctx.step_delay > 0:
-                time.sleep(ctx.step_delay)
-        else:
-            self.write_log(f"   🔍 [{device}] ไม่พบรูป '{template_file}' บนจอ -> ข้ามขั้นตอนนี้", "info")
-
-    def _step_wait_for_image(self, ctx, step):
-        """รอจนกว่าจะเจอรูปบนหน้าจอ (มี timeout) แล้วค่อยทำต่อ — แทน sleep แบบตายตัว
-
-        params ใน step: text=ชื่อไฟล์เทมเพลต, timeout=วินาทีรอสูงสุด,
-        interval=ช่วงเช็ค (ดีฟอลต์ 1.0), threshold=ความเหมือน (ดีฟอลต์ 0.8),
-        click=คลิกเมื่อเจอ (ดีฟอลต์ True), on_timeout='continue'|'fail'
-        """
-        device = ctx.device
-        template_file = (step.get("text") or "").strip()
-        if not template_file:
-            self.write_log(f"   ⚠️ [{device}] wait_for_image: ไม่ได้ระบุไฟล์รูปภาพต้นแบบ -> ข้าม", "warning")
-            return
-        template_path = os.path.join(self.templates_dir, template_file)
-        if not os.path.exists(template_path):
-            self.write_log(f"   ⚠️ [{device}] ไม่พบไฟล์เทมเพลต: {template_file} -> ข้าม", "warning")
-            return
-
-        timeout = float(step.get("timeout", 30) or 30)
-        interval = float(step.get("interval", 1.0) or 1.0)
-        threshold = float(step.get("threshold", 0.8) or 0.8)
-        click = step.get("click", True)
-        on_timeout = (step.get("on_timeout") or "continue").lower()
-
-        self.write_log(f"   ⏳ [{device}] รอจนกว่าจะเจอรูป '{template_file}' (สูงสุด {timeout:g} วิ)...", "info")
-        deadline = time.time() + timeout
-
-        while time.time() < deadline:
-            if not self.macro_running:
-                return "stop"
-
-            success, data = self.controller.capture_screenshot_bytes(device)
-            if success:
-                found, mx, my, msg = self.controller.find_image_in_bytes(data, template_path, threshold=threshold)
-                if found:
-                    self.write_log(f"   🎯 [{device}] เจอรูป '{template_file}' พิกัด ({mx}, {my})", "success")
-                    if click:
-                        self.controller.tap(device, mx, my)
-                    if ctx.step_delay > 0:
-                        time.sleep(ctx.step_delay)
-                    return
-            else:
-                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {data}", "error")
-
-            # รอช่วง interval ก่อนเช็คอีกครั้ง (ตรวจสถานะหยุดถี่ๆ เพื่อยกเลิกได้ทันที)
-            waited = 0.0
-            while waited < interval:
-                if not self.macro_running:
-                    return "stop"
-                time.sleep(0.1)
-                waited += 0.1
-
-        # หมดเวลาแล้วยังไม่เจอ
-        self.write_log(f"   ⌛ [{device}] รอครบ {timeout:g} วิ แล้วยังไม่เจอรูป '{template_file}'", "warning")
-        if on_timeout == "fail":
-            ctx.record((False, f"wait_for_image timeout: {template_file}"), "wait_for_image")
-
-    @staticmethod
-    def _substitute_account(text, account):
-        """แทนที่ {EMAIL}/{PASSWORD}/{NAME} ในข้อความด้วยข้อมูลบัญชี (ถ้ามี)"""
-        if not account:
-            return text
-        return (text
-                .replace("{EMAIL}", account.get("email", ""))
-                .replace("{PASSWORD}", account.get("password", ""))
-                .replace("{NAME}", account.get("name", "")))
-
-    @staticmethod
-    def _parse_ui_query(query):
-        """แยกคำค้น element: ขึ้นต้น 'id:' = ค้นจาก resource-id, ไม่งั้นค้นจาก text"""
-        query = (query or "").strip()
-        if query.lower().startswith("id:"):
-            return None, query[3:].strip()
-        return query, None
-
-    def _step_tap_text(self, ctx, step):
-        """กดปุ่ม/element ตามข้อความหรือ resource-id (หน้าจอ Android ปกติ ไม่ใช่ในเกม)"""
-        device = ctx.device
-        query = self._substitute_account(step.get("text", ""), ctx.account)
-        text, rid = self._parse_ui_query(query)
-        if not text and not rid:
-            self.write_log(f"   ⚠️ [{device}] tap_text: ไม่ได้ระบุข้อความ/id ที่จะค้นหา -> ข้าม", "warning")
-            return
-
-        ok, xml = self.controller.dump_ui(device)
-        if not ok:
-            self.write_log(f"   ⚠️ [{device}] อ่าน UI ไม่ได้: {xml}", "warning")
-            return
-
-        found, x, y, info = find_element_center(xml, text=text, resource_id=rid)
-        if found:
-            self.write_log(f"   🎯 [{device}] เจอ element ({info}) พิกัด ({x}, {y}) -> กำลังคลิก", "success")
-            ctx.record(self.controller.tap(device, x, y), "tap_text")
-            if ctx.step_delay > 0:
-                time.sleep(ctx.step_delay)
-        else:
-            self.write_log(f"   🔍 [{device}] ไม่พบ element: {info} -> ข้ามขั้นตอนนี้", "info")
-
-    def _step_wait_for_text(self, ctx, step):
-        """รอจน element (text/id) โผล่บนจอ แล้วค่อยทำต่อ (มี timeout) — เหมือน wait_for_image แต่ใช้ uiautomator"""
-        device = ctx.device
-        query = self._substitute_account(step.get("text", ""), ctx.account)
-        text, rid = self._parse_ui_query(query)
-        if not text and not rid:
-            self.write_log(f"   ⚠️ [{device}] wait_for_text: ไม่ได้ระบุข้อความ/id -> ข้าม", "warning")
-            return
-
-        timeout = float(step.get("timeout", 30) or 30)
-        interval = float(step.get("interval", 1.0) or 1.0)
-        click = step.get("click", True)
-        on_timeout = (step.get("on_timeout") or "continue").lower()
-
-        self.write_log(f"   ⏳ [{device}] รอจนเจอข้อความ/element '{query}' (สูงสุด {timeout:g} วิ)...", "info")
-        deadline = time.time() + timeout
-
-        while time.time() < deadline:
-            if not self.macro_running:
-                return "stop"
-
-            ok, xml = self.controller.dump_ui(device)
-            if ok:
-                found, x, y, info = find_element_center(xml, text=text, resource_id=rid)
-                if found:
-                    self.write_log(f"   🎯 [{device}] เจอ element ({info}) พิกัด ({x}, {y})", "success")
-                    if click:
-                        self.controller.tap(device, x, y)
-                    if ctx.step_delay > 0:
-                        time.sleep(ctx.step_delay)
-                    return
-
-            waited = 0.0
-            while waited < interval:
-                if not self.macro_running:
-                    return "stop"
-                time.sleep(0.1)
-                waited += 0.1
-
-        self.write_log(f"   ⌛ [{device}] รอครบ {timeout:g} วิ แล้วยังไม่เจอ '{query}'", "warning")
-        if on_timeout == "fail":
-            ctx.record((False, f"wait_for_text timeout: {query}"), "wait_for_text")
-
-    def _step_screenshot(self, ctx, step):
-        device = ctx.device
-        account = ctx.account
-        filename_pattern = step.get("text", "").strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
-
-        # แทนที่ตัวแปร {EMAIL}, {PASSWORD}, {NAME}, {GROUP}, {DATE}, {TIME} ในชื่อไฟล์ภาพ
-        filename = filename_pattern
-
-        from datetime import datetime
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d")
-        time_str = now.strftime("%H-%M-%S")
-
-        if account:
-            filename = filename.replace("{EMAIL}", account.get("email", "no_account"))
-            filename = filename.replace("{PASSWORD}", account.get("password", "no_password"))
-            filename = filename.replace("{NAME}", account.get("name", ""))
-            filename = filename.replace("{GROUP}", account.get("group", "no_group"))
-        else:
-            filename = filename.replace("{EMAIL}", "no_account")
-            filename = filename.replace("{PASSWORD}", "no_password")
-            filename = filename.replace("{NAME}", "no_name")
-            filename = filename.replace("{GROUP}", "no_group")
-
-        filename = filename.replace("{DATE}", date_str)
-        filename = filename.replace("{TIME}", time_str)
-
-        # ทำความสะอาดชื่อไฟล์ให้ปลอดภัยสำหรับ Windows (รองรับภาษาไทย อังกฤษ ตัวเลข และสัญลักษณ์ที่ปลอดภัย)
-        safe_device = device.replace(":", "_").replace(".", "_")
-        filename = filename.replace("{DEVICE}", safe_device)
-
-        def is_safe_char(c):
-            return c.isalnum() or c in "-_.() /\\" or ('฀' <= c <= '๿')
-
-        filename = "".join(c for c in filename if is_safe_char(c))
-
-        # หากไม่มีนามสกุล .png หรือ .jpg ให้เติม .png
-        if not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-            filename += ".png"
-
-        # สร้างโฟลเดอร์สำหรับเก็บภาพสกรีนช็อต
-        screenshots_dir = os.path.dirname(os.path.abspath(filename))
-        if screenshots_dir and not os.path.exists(screenshots_dir):
-            os.makedirs(screenshots_dir, exist_ok=True)
-
-        # ถ่ายภาพหน้าจอ
-        self.write_log(f"   📸 [{device}] กำลังบันทึกภาพหน้าจอเป็น '{filename}'...", "info")
-        success, err = self.controller.take_screenshot(device, filename)
-        if success:
-            self.write_log(f"   ✅ [{device}] บันทึกภาพหน้าจอสำเร็จ: '{filename}'", "success")
-        else:
-            self.write_log(f"   ❌ [{device}] บันทึกภาพหน้าจอล้มเหลว: {err}", "error")
-
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
-
-    def _step_clear_ads_loop(self, ctx, step):
-        device = ctx.device
-        step_delay = ctx.step_delay
-        step_text = step.get("text", "").strip()
-        lobby_template = ""
-        ad_templates = []
-
-        if "|" in step_text:
-            parts = step_text.split("|")
-            lobby_template = parts[0].strip()
-            ad_templates = [p.strip() for p in parts[1].split(",") if p.strip()]
-        else:
-            if step_text.endswith(".png"):
-                lobby_template = step_text
-            elif step_text:
-                ad_templates = [p.strip() for p in step_text.split(",") if p.strip()]
-
-        # ถ้าไม่ระบุรูปภาพปุ่มปิดโฆษณา ให้ดึงไฟล์ .png ทั้งหมดในโฟลเดอร์ยกเว้นรูปหน้าหลัก รูปชั่วคราว และรูปที่มีคีย์เวิร์ดบ่งบอกว่าเป็นหน้าหลัก
-        if not ad_templates:
-            import glob
-            all_pngs = [os.path.basename(f) for f in glob.glob(os.path.join(self.templates_dir, "*.png"))]
-            ad_templates = [
-                f for f in all_pngs
-                if f != lobby_template
-                and not f.startswith("temp_")
-                and not any(k in f.lower() for k in ["lobby", "home", "main", "start"])
-            ]
-
-        self.write_log(f"   🔄 [{device}] เริ่มรันลูปเคลียร์โฆษณา (หน้าจอหลักเป้าหมาย: '{lobby_template or 'ไม่ได้ตั้งค่า'}')", "info")
-        if ad_templates:
-            self.write_log(f"   🔍 [{device}] รายการรูปปุ่มปิดที่จะตรวจจับ: {', '.join(ad_templates)}", "info")
-
-        max_attempts = 15
-        for attempt in range(max_attempts):
-            if not self.macro_running:
-                break
-
-            # ถ่ายภาพหน้าจอตรงเข้าหน่วยความจำ (exec-out, ไม่มีไฟล์ชั่วคราว)
-            success, data = self.controller.capture_screenshot_bytes(device)
-            if not success:
-                self.write_log(f"   ❌ [{device}] ถ่ายภาพหน้าจอล้มเหลว: {data}", "error")
-                break
-
-            # 1. ตรวจสอบว่ามาถึงหน้าจอหลัก/เริ่มต้น (Lobby) หรือยัง
-            reached_lobby = False
-            lobby_msg = ""
-            if lobby_template:
-                lobby_path = os.path.join(self.templates_dir, lobby_template)
-                if os.path.exists(lobby_path):
-                    found_lobby, lx, ly, lmsg = self.controller.find_image_in_bytes(data, lobby_path, threshold=0.7)
-                    lobby_msg = lmsg
-                    if found_lobby:
-                        self.write_log(f"   🎉 [{device}] รอบที่ {attempt+1}: ตรวจพบหน้าจอหลัก/เริ่มต้น '{lobby_template}' -> โฆษณาเคลียร์หมดแล้ว!", "success")
-                        reached_lobby = True
-
-            if reached_lobby:
-                break
-
-            # 2. ตรวจสอบปุ่มปิดโฆษณาเพื่อกดปิด
-            found_ad = False
-            for template_file in ad_templates:
-                template_path = os.path.join(self.templates_dir, template_file)
-                if not os.path.exists(template_path):
-                    continue
-
-                found, match_x, match_y, msg = self.controller.find_image_in_bytes(data, template_path, threshold=0.7)
-                if found:
-                    self.write_log(f"   🎯 [{device}] รอบที่ {attempt+1}: พบรูปปุ่มปิด '{template_file}' พิกัด ({match_x}, {match_y}) -> กำลังคลิก", "success")
-                    self.controller.tap(device, match_x, match_y)
-                    found_ad = True
-                    if step_delay > 0:
-                        time.sleep(step_delay)
-                    break
-
-            # 3. หากไม่พบปุ่มปิดใดๆ และยังไม่ถึงหน้าหลัก ให้ส่งปุ่ม BACK ย้อนกลับเป็นทางเลือกสำรอง
-            if not found_ad:
-                if lobby_template:
-                    conf_info = ""
-                    if "confidence:" in lobby_msg:
-                        try:
-                            conf_val = lobby_msg.split("confidence:")[1].strip().replace(")", "")
-                            conf_info = f" (ความเหมือนสูงสุด: {conf_val})"
-                        except Exception:
-                            pass
-                    self.write_log(f"   🔍 [{device}] รอบที่ {attempt+1}: ไม่พบหน้าหลัก '{lobby_template}'{conf_info} และไม่พบปุ่มปิด -> ส่งปุ่มย้อนกลับ (BACK)", "warning")
-                    self.controller.keyevent(device, 4)
-                    if step_delay > 0:
-                        time.sleep(step_delay)
-                else:
-                    # ถ้าไม่ได้ตั้งรูปหน้าจอหลัก และไม่เจอปุ่มปิดใดๆ อีก ให้ถือว่าเคลียร์เสร็จสิ้น
-                    self.write_log(f"   ✅ [{device}] เคลียร์โฆษณาเรียบร้อยแล้ว (ไม่พบโฆษณาบนจอ)", "success")
-                    break
-        else:
-            self.write_log(f"   ⚠️ [{device}] ทำงานลูปเคลียร์โฆษณาครบ {max_attempts} รอบแล้ว (สิ้นสุดลูป)", "warning")
-
-    def _step_fetch_otp(self, ctx, step):
-        device = ctx.device
-        account = ctx.account
-        if not account:
-            self.write_log(f"   ⚠️ [{device}] ข้ามขั้นตอนดึง OTP เนื่องจากรันแบบไม่มีบัญชีไอดี", "warning")
-            return
-
-        email_addr = account.get("email", "").strip()
-        email_pass = account.get("password", "").strip()
-        ref_token = account.get("refresh_token", "").strip()
-        cli_id = account.get("client_id", "").strip()
-
-        self.write_log(f"   📥 [{device}] กำลังเชื่อมต่อดึงรหัส OTP ของบัญชี {email_addr}...", "info")
-
-        pattern_str = step.get("text", "").strip()
-        otp_code = self.fetch_otp_from_mail(email_addr, email_pass, pattern_str, refresh_token=ref_token, client_id=cli_id)
-
-        if otp_code:
-            self.write_log(f"   ✅ [{device}] ดึงรหัส OTP สำเร็จ: {otp_code} -> กำลังกรอกรหัสลงบนจอ", "success")
-            ctx.record(self.controller.input_text(device, otp_code), "fetch_otp")
-            if ctx.step_delay > 0:
-                time.sleep(ctx.step_delay)
-        else:
-            self.write_log(f"   ❌ [{device}] ไม่สามารถดึงรหัส OTP ได้หลังจากสแกนกล่องข้อความ", "error")
-
-    def _step_sleep(self, ctx, step):
-        sleep_time = float(step["seconds"]) * random.uniform(0.85, 1.2)
-        slices = int(sleep_time / 0.1)
-        for _ in range(slices):
-            if not self.macro_running:
-                return "stop"
-            time.sleep(0.1)
-        time.sleep(sleep_time % 0.1)
-
-    def _step_keyboard(self, ctx, step):
-        key_name = step.get("key", "").strip().lower()
-        action = step.get("action", "").strip().lower()
-        self.write_log(f"   ⌨️ [{ctx.device}] ส่งปุ่มคีย์บอร์ด: '{key_name}' ({action})", "info")
-        self.execute_keyboard_input(ctx.device, key_name, action)
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
-
-    def _step_read_diamond(self, ctx, step):
-        """อ่านจำนวนเพชรของแอคเคานต์รอบนี้ แล้วเก็บไว้ (จะ export/push เข้าเว็บตอนจบรัน)
-
-        ถ้าอ่านไม่ได้ (ยังไม่ตั้งพื้นที่ / ไม่มี Tesseract / แคปจอพลาด / OCR พลาด)
-        จะ log แล้ว 'ข้าม' ไปทำ step ต่อไป — ไม่นับเป็น error ของบัญชีและไม่หยุดลูป
-        """
-        from datetime import datetime
-        device = ctx.device
-        account = ctx.account or {}
-        region = (self.diamond_config or {}).get("region") or {}
-        who = account_display_name(account) if account else "no_account"
-
-        # เงื่อนไขที่อ่านไม่ได้ -> ข้าม (ไม่ใช้ ctx.record เพื่อไม่ให้บัญชีถูกตีว่า error)
-        if int(region.get("w", 0)) <= 0 or int(region.get("h", 0)) <= 0:
-            self.write_log(f"   ⏭️ [{device}] อ่านเพชร: ยังไม่ได้ตั้งพื้นที่ตัวเลขเพชร (ปุ่ม ⚙️ ตั้งค่าพื้นที่เพชร) -> ข้าม", "warning")
-            return
-        if not find_tesseract():
-            self.write_log(f"   ⏭️ [{device}] อ่านเพชร: ไม่พบ Tesseract OCR -> ข้าม", "warning")
-            return
-
-        ok, data = self.controller.capture_screenshot_bytes(device)
-        if not ok:
-            self.write_log(f"   ⏭️ [{device}] {who}: อ่านเพชรไม่ได้ (แคปจอไม่สำเร็จ) -> ข้าม", "warning")
-            return
-
-        # ไม่มีการยืนยันชื่อในเกมอีกต่อไป — ขั้นนี้มาถึงได้ก็ต่อเมื่อ anchor ของสคริปต์ยืนยันจอ/บัญชี
-        # ที่ถูกต้องแล้วเท่านั้น (ผู้ใช้ยืนยันแล้วว่าลำดับ anchor รับประกันสิ่งนี้อยู่แล้ว การ OCR ชื่อซ้ำ
-        # ซ้อนเข้าไปมีแต่ทำให้หลุดจาก false positive ตอน OCR อ่านเลขพลาดตัวเดียว)
-        rok, number, _raw = self.controller.read_number_tesseract(data, region)
-        if not rok or number is None:
-            self.write_log(f"   ⏭️ [{device}] {who}: OCR อ่านจำนวนเพชรไม่ได้ -> ข้าม", "warning")
-            return
-
-        row = {
-            "email": account.get("email", ""),
-            "name": account_display_name(account),
-            "save_web_game_id": (account.get("save_web_game_id") or "").strip(),
-            "diamonds": number,
-            "device": device,
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        lock = getattr(self, "run_diamond_lock", None)
-        if not hasattr(self, "run_diamond_rows"):
-            self.run_diamond_rows = []
-        if lock is not None:
-            with lock:
-                self.run_diamond_rows.append(row)
-        else:
-            self.run_diamond_rows.append(row)
-        self.write_log(f"   💎 [{device}] {who}: {number} เพชร (จะอัพเดทเข้าเว็บตอนจบรัน)", "success")
-        if ctx.step_delay > 0:
-            time.sleep(ctx.step_delay)
 
     def execute_keyboard_input(self, device, key_name, action):
         import ctypes

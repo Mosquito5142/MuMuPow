@@ -1,9 +1,17 @@
+"""เทสตัวจัดการ step รายชนิด — ยิงที่ MacroRunner ซึ่งตอนนี้เป็นตัวรันของทั้งสองแอป
+
+เดิมไฟล์นี้เทส MuMuGUI._step_* (เอนจินสำเนาฝั่ง Tkinter) แต่สำเนานั้นถูกถอดออกแล้ว
+Tkinter เรียก MacroRunner ตัวเดียวกับ MuMupow_new ดังนั้นเคสเดิมทั้งหมดย้ายมาที่นี่:
+ผ่านที่นี่ = ผ่านทั้งสองแอป ไม่ต้องเทสซ้ำสองที่ให้เลื่อนออกจากกันอีก
+"""
 import os
+import sys
 import tempfile
-import types
 import unittest
 
-import gui
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import macro_runner as M
 
 
 class FakeController:
@@ -48,11 +56,6 @@ class FakeController:
         self.calls.append(("screenshot_bytes", device))
         return (True, b"PNGDATA")
 
-    def find_image_on_screen(self, screen_path, template_path, threshold=0.8):
-        if self.found_image:
-            return (True, self.match_point[0], self.match_point[1], "match")
-        return (False, 0, 0, "no match")
-
     def find_image_in_bytes(self, screen_bytes, template_path, threshold=0.8):
         if self.found_image:
             return (True, self.match_point[0], self.match_point[1], "match")
@@ -69,172 +72,188 @@ class FakeController:
         return (False, "no elements")
 
 
-def make_stub(controller):
-    stub = types.SimpleNamespace()
-    stub.controller = controller
-    stub.macro_running = True
-    stub.templates_dir = "templates"
-    stub._logs = []
-    stub.write_log = lambda msg, t="info": stub._logs.append((t, msg))
-    # static helper บน MuMuGUI ที่ handler เรียกผ่าน self
-    stub._substitute_account = gui.MuMuGUI._substitute_account
-    stub._parse_ui_query = gui.MuMuGUI._parse_ui_query
-    return stub
+DEV = "127.0.0.1:5555"
 
 
-def make_ctx(device="127.0.0.1:5555", account=None):
-    result = {"errors": 0, "error": ""}
-
-    def record(ret, label):
-        try:
-            ok, out = ret
-        except (TypeError, ValueError):
-            ok, out = True, ""
-        if not ok:
-            result["errors"] += 1
-            if not result["error"]:
-                result["error"] = f"{label}: {out}"
-        return ok
-
-    ctx = types.SimpleNamespace(device=device, account=account, record=record, step_delay=0.0)
-    ctx.result = result
-    return ctx
+def run_step(controller, step, account=None, running=True):
+    """รัน step เดียวผ่านตัวรันจริง คืน (status, runner) — delay ถูกบังคับเป็น 0 ให้เทสไว"""
+    step = dict(step)
+    step.setdefault("delay", 0)
+    runner = M.MacroRunner(controller, [step], log_cb=lambda t, k="info": None,
+                           running_check=(running if callable(running) else (lambda: running)))
+    status = runner._run_steps(DEV, account, runner.steps, lambda **kw: None)
+    return status, runner
 
 
 class StepHandlerTests(unittest.TestCase):
-    def test_tap_sends_command_and_records_no_error_on_success(self):
+
+    # ---------- tap ----------
+
+    def test_tap_sends_command_and_reports_no_error_on_success(self):
         ctrl = FakeController()
-        ctx = make_ctx()
-        gui.MuMuGUI._step_tap(make_stub(ctrl), ctx, {"x": "10", "y": "20"})
+        status, _ = run_step(ctrl, {"type": "tap", "x": "10", "y": "20"})
 
-        self.assertEqual(ctrl.calls, [("tap", "127.0.0.1:5555", "10", "20")])
-        self.assertEqual(ctx.result["errors"], 0)
+        self.assertEqual(ctrl.calls, [("tap", DEV, 10, 20)])
+        self.assertEqual(status, "completed")
 
-    def test_tap_records_error_when_adb_fails(self):
+    def test_tap_stops_the_account_when_adb_fails(self):
+        """ADB พัง = ต้องหยุดบัญชีนี้ ไม่ใช่เดินหน้าทำขั้นถัดไปทั้งที่ขั้นนี้ไม่ได้กดจริง"""
         ctrl = FakeController(fail=True)
-        ctx = make_ctx()
-        gui.MuMuGUI._step_tap(make_stub(ctrl), ctx, {"x": "10", "y": "20"})
+        status, _ = run_step(ctrl, {"type": "tap", "x": "10", "y": "20"})
 
-        self.assertEqual(ctx.result["errors"], 1)
-        self.assertTrue(ctx.result["error"].startswith("tap:"))
+        self.assertEqual(status, "device_error")
+
+    def test_failed_step_does_not_run_the_next_one(self):
+        ctrl = FakeController(fail=True)
+        runner = M.MacroRunner(ctrl, [{"type": "tap", "x": "1", "y": "1", "delay": 0},
+                                      {"type": "tap", "x": "9", "y": "9", "delay": 0}],
+                               log_cb=lambda t, k="info": None, running_check=lambda: True)
+        runner._run_steps(DEV, None, runner.steps, lambda **kw: None)
+
+        self.assertNotIn(("tap", DEV, 9, 9), ctrl.calls)
+
+    def test_tap_accepts_decimal_coordinates(self):
+        """พิกัดจากการลากกรอบเป็นทศนิยมได้ — ADB รับแต่จำนวนเต็ม ถ้าไม่ปัดจะพังเงียบ"""
+        ctrl = FakeController()
+        run_step(ctrl, {"type": "tap", "x": "293.5", "y": "77.4"})
+
+        self.assertEqual(ctrl.calls, [("tap", DEV, 294, 77)])
+
+    # ---------- swipe ----------
+
+    def test_swipe_passes_all_points_and_duration(self):
+        ctrl = FakeController()
+        run_step(ctrl, {"type": "swipe", "x": "1", "y": "2", "x2": "3", "y2": "4", "duration": 250})
+
+        self.assertEqual(ctrl.calls, [("swipe", DEV, 1, 2, 3, 4, 250)])
+
+    # ---------- text ----------
 
     def test_text_substitutes_account_placeholders(self):
         ctrl = FakeController()
         account = {"email": "p@e.com", "password": "secret", "name": "Ace"}
-        ctx = make_ctx(account=account)
-        gui.MuMuGUI._step_text(make_stub(ctrl), ctx, {"text": "{EMAIL}/{PASSWORD}/{NAME}"})
+        run_step(ctrl, {"type": "text", "text": "{EMAIL}/{PASSWORD}/{NAME}"}, account=account)
 
-        self.assertEqual(ctrl.calls, [("text", "127.0.0.1:5555", "p@e.com/secret/Ace")])
+        self.assertEqual(ctrl.calls, [("text", DEV, "p@e.com/secret/Ace")])
 
     def test_text_without_account_sends_literal(self):
         ctrl = FakeController()
-        ctx = make_ctx(account=None)
-        gui.MuMuGUI._step_text(make_stub(ctrl), ctx, {"text": "{EMAIL}"})
+        run_step(ctrl, {"type": "text", "text": "{EMAIL}"}, account=None)
 
-        self.assertEqual(ctrl.calls, [("text", "127.0.0.1:5555", "{EMAIL}")])
+        self.assertEqual(ctrl.calls, [("text", DEV, "{EMAIL}")])
 
     def test_thai_text_routes_to_unicode_input(self):
+        """ข้อความไทยต้องไปทาง ADBKeyboard (broadcast base64) ไม่ใช่ input text ที่พิมพ์ไทยไม่ได้"""
         ctrl = FakeController()
         account = {"email": "p@e.com", "password": "x", "name": "บอส"}
-        ctx = make_ctx(account=account)
-        gui.MuMuGUI._step_text(make_stub(ctrl), ctx, {"text": "{NAME}"})
+        run_step(ctrl, {"type": "text", "text": "{NAME}"}, account=account)
 
-        self.assertEqual(ctrl.calls, [("text_unicode", "127.0.0.1:5555", "บอส")])
+        self.assertEqual(ctrl.calls, [("text_unicode", DEV, "บอส")])
+
+    # ---------- keyevent ----------
 
     def test_keyevent_passes_code(self):
         ctrl = FakeController()
-        ctx = make_ctx()
-        gui.MuMuGUI._step_keyevent(make_stub(ctrl), ctx, {"code": "4"})
+        run_step(ctrl, {"type": "keyevent", "code": "4"})
 
-        self.assertEqual(ctrl.calls, [("keyevent", "127.0.0.1:5555", "4")])
+        self.assertEqual(ctrl.calls, [("keyevent", DEV, "4")])
 
-    def test_sleep_returns_stop_when_macro_halted(self):
-        stub = make_stub(FakeController())
-        stub.macro_running = False
-        ctx = make_ctx()
-        signal = gui.MuMuGUI._step_sleep(stub, ctx, {"seconds": 1})
+    # ---------- sleep ----------
 
-        self.assertEqual(signal, "stop")
+    def test_sleep_stops_when_macro_halted(self):
+        ctrl = FakeController()
+        status, _ = run_step(ctrl, {"type": "sleep", "seconds": 1}, running=False)
+
+        self.assertEqual(status, "stopped")
 
     def test_sleep_completes_when_running(self):
-        stub = make_stub(FakeController())
-        ctx = make_ctx()
-        signal = gui.MuMuGUI._step_sleep(stub, ctx, {"seconds": 0})
+        ctrl = FakeController()
+        status, _ = run_step(ctrl, {"type": "sleep", "seconds": 0})
 
-        self.assertIsNone(signal)
+        self.assertEqual(status, "completed")
+
+    # ---------- wait_for_image ----------
 
     def test_wait_for_image_taps_when_image_appears(self):
         ctrl = FakeController()
         ctrl.found_image = True
         ctrl.match_point = (123, 456)
-        stub = make_stub(ctrl)
         with tempfile.TemporaryDirectory() as tmp:
             open(os.path.join(tmp, "tpl.png"), "wb").close()
-            stub.templates_dir = tmp
-            ctx = make_ctx()
-            signal = gui.MuMuGUI._step_wait_for_image(
-                stub, ctx, {"text": "tpl.png", "timeout": 5, "interval": 0.1, "click": True}
-            )
+            orig = M.templates_dir
+            M.templates_dir = lambda: tmp
+            try:
+                run_step(ctrl, {"type": "wait_for_image", "text": "tpl.png",
+                                "timeout": 5, "interval": 0.1, "click": True})
+            finally:
+                M.templates_dir = orig
 
-        self.assertIsNone(signal)
-        self.assertIn(("tap", "127.0.0.1:5555", 123, 456), ctrl.calls)
+        self.assertIn(("tap", DEV, 123, 456), ctrl.calls)
 
     def test_wait_for_image_skips_when_template_missing(self):
         ctrl = FakeController()
-        stub = make_stub(ctrl)
-        with tempfile.TemporaryDirectory() as tmp:
-            stub.templates_dir = tmp  # ไม่มีไฟล์ tpl.png
-            ctx = make_ctx()
-            signal = gui.MuMuGUI._step_wait_for_image(
-                stub, ctx, {"text": "tpl.png", "timeout": 5}
-            )
+        with tempfile.TemporaryDirectory() as tmp:   # ไม่มีไฟล์ tpl.png
+            orig = M.templates_dir
+            M.templates_dir = lambda: tmp
+            try:
+                status, _ = run_step(ctrl, {"type": "wait_for_image", "text": "tpl.png", "timeout": 5})
+            finally:
+                M.templates_dir = orig
 
-        self.assertIsNone(signal)
-        self.assertEqual(ctrl.calls, [])  # ไม่ควรถ่ายภาพหรือคลิกเลย
+        self.assertEqual(status, "completed")
+        self.assertEqual(ctrl.calls, [])   # ไม่ควรถ่ายภาพหรือคลิกเลย
+
+    # ---------- tap_text / wait_for_text ----------
 
     def test_tap_text_finds_element_and_taps_center(self):
         ctrl = FakeController()
-        ctx = make_ctx()
-        gui.MuMuGUI._step_tap_text(make_stub(ctrl), ctx, {"text": "ยืนยัน"})
+        run_step(ctrl, {"type": "tap_text", "text": "ยืนยัน"})
 
-        self.assertIn(("dump_ui", "127.0.0.1:5555"), ctrl.calls)
-        self.assertIn(("tap", "127.0.0.1:5555", 200, 450), ctrl.calls)
+        self.assertIn(("dump_ui", DEV), ctrl.calls)
+        self.assertIn(("tap", DEV, 200, 450), ctrl.calls)
 
     def test_tap_text_substitutes_account_placeholder(self):
         ctrl = FakeController()
         ctrl.ui_xml = '<hierarchy><node text="p@e.com" resource-id="" bounds="[0,0][100,100]"/></hierarchy>'
-        ctx = make_ctx(account={"email": "p@e.com", "password": "x", "name": "n"})
-        gui.MuMuGUI._step_tap_text(make_stub(ctrl), ctx, {"text": "{EMAIL}"})
+        run_step(ctrl, {"type": "tap_text", "text": "{EMAIL}"},
+                 account={"email": "p@e.com", "password": "x", "name": "n"})
 
-        self.assertIn(("tap", "127.0.0.1:5555", 50, 50), ctrl.calls)
+        self.assertIn(("tap", DEV, 50, 50), ctrl.calls)
 
     def test_tap_text_skips_when_element_absent(self):
         ctrl = FakeController()
-        ctx = make_ctx()
-        gui.MuMuGUI._step_tap_text(make_stub(ctrl), ctx, {"text": "ไม่มีปุ่มนี้"})
+        status, _ = run_step(ctrl, {"type": "tap_text", "text": "ไม่มีปุ่มนี้"})
 
-        self.assertNotIn(("tap", "127.0.0.1:5555", 200, 450), ctrl.calls)
+        self.assertNotIn(("tap", DEV, 200, 450), ctrl.calls)
+        self.assertEqual(status, "completed")   # หาไม่เจอ = ข้าม ไม่ใช่ทั้งบัญชีพัง
 
-    def test_wait_for_text_returns_stop_when_halted(self):
-        stub = make_stub(FakeController())
-        stub.macro_running = False
-        ctx = make_ctx()
-        signal = gui.MuMuGUI._step_wait_for_text(stub, ctx, {"text": "ยืนยัน", "timeout": 5})
+    def test_wait_for_text_stops_when_halted(self):
+        ctrl = FakeController()
+        status, _ = run_step(ctrl, {"type": "wait_for_text", "text": "ยืนยัน", "timeout": 5},
+                             running=False)
 
-        self.assertEqual(signal, "stop")
+        self.assertEqual(status, "stopped")
 
-    def test_every_known_step_type_has_a_handler_method(self):
-        # ทุกชนิด step ที่ระบบรองรับต้องมีเมธอด handler _step_<type> รองรับ
+    # ---------- ความครบของตาราง dispatch ----------
+
+    def test_every_known_step_type_actually_dispatches(self):
+        """ทุกชนิดที่ตัวแก้ไขเสนอให้เลือกต้องมีสาขาจริงใน _dispatch
+
+        ถ้าขาด step นั้นจะตกไปที่ 'ไม่รู้จักชนิด → ข้าม' คือเงียบหายไปเฉยๆ ระหว่างรัน
+        ซึ่งเป็นบั๊กที่หาเจอยากที่สุดแบบหนึ่ง (สคริปต์ดูเหมือนรันผ่าน แต่ขั้นนั้นไม่ได้ทำ)
+        """
         expected = {
             "tap", "swipe", "text", "keyevent", "start_app", "stop_app",
             "detect_image", "wait_for_image", "tap_text", "wait_for_text",
             "screenshot", "clear_ads_loop", "fetch_otp", "sleep", "keyboard",
+            "read_diamond", "find_yellow_stage", "story_auto",
         }
-        for step_type in expected:
-            self.assertTrue(
-                callable(getattr(gui.MuMuGUI, f"_step_{step_type}", None)),
-                f"ขาด handler สำหรับ step '{step_type}'",
-            )
+        import inspect
+        src = inspect.getsource(M.MacroRunner._dispatch)
+        for step_type in sorted(expected):
+            self.assertIn(f'"{step_type}"', src, f"_dispatch ไม่มีสาขาสำหรับ step '{step_type}'")
+            self.assertNotIn(step_type, M.MacroRunner._UNSUPPORTED,
+                             f"step '{step_type}' ยังถูกทำเครื่องหมายว่าไม่รองรับ")
 
 
 if __name__ == "__main__":
