@@ -25,6 +25,28 @@ from mumu_controller import (find_tesseract,
 
 DEFAULT_SWIPE_DURATION = 300
 
+# ค่าหน่วงเวลาเริ่มต้น (วินาที) ต่อชนิด step — ใช้เมื่อ step "ไม่มีฟิลด์ delay เลย"
+# (สคริปต์เก่า/เขียนมือ) สคริปต์ที่สร้างจาก webui มี delay ติดมาเสมอจาก Api.STEP_DEFAULTS
+# แหล่งความจริงเดียวของทั้งสองแอป — gui.py import ตัวนี้ไปใช้ ไม่มีสำเนาแยกอีกแล้ว
+DEFAULT_STEP_DELAYS = {
+    "tap": 1.0,
+    "swipe": 1.0,
+    "text": 1.0,
+    "keyevent": 0.3,
+    "start_app": 1.0,
+    "stop_app": 1.0,
+    "detect_image": 1.0,
+    "wait_for_image": 1.0,
+    "tap_text": 1.0,
+    "wait_for_text": 1.0,
+    "clear_ads_loop": 1.0,
+    "fetch_otp": 1.0,
+    "screenshot": 1.0,
+    "read_diamond": 1.0,
+    "story_auto": 1.0,
+    "find_yellow_stage": 1.0,
+}
+
 
 def base_dir():
     if getattr(sys, "frozen", False):
@@ -53,6 +75,55 @@ def substitute_account(text, account):
 
 def templates_dir():
     return os.path.join(base_dir(), "templates")
+
+
+def load_script_sets_dir():
+    """อ่านชุดคำสั่งย่อยทั้งหมดจาก script_sets/*.json → {ชื่อชุด: steps}
+    ไฟล์ไหนพังก็ข้ามไฟล์นั้น ไม่ทำให้ทั้งรอบล่ม"""
+    import glob as _glob
+    from script_sets import load_script_set
+    sets = {}
+    for f in _glob.glob(os.path.join(base_dir(), "script_sets", "*.json")):
+        try:
+            d = load_script_set(f)
+            sets[d["name"]] = d["steps"]
+        except Exception:
+            pass
+    return sets
+
+
+def screenshot_filename(pattern, device, account, now=None):
+    """แปลงรูปแบบชื่อไฟล์ของ step 'screenshot' เป็นชื่อจริง — พอร์ตจาก MuMuGUI._step_screenshot
+    ให้ได้ชื่อเดียวกันเป๊ะไม่ว่ารันจากแอปไหน (ผู้ใช้ตั้งชื่อไว้เพื่อไปหาไฟล์ต่อ ห้ามเพี้ยน)
+
+    ตัวแปร: {EMAIL} {PASSWORD} {NAME} {GROUP} {DEVICE} {DATE} {TIME}
+    หมายเหตุ: {NAME} ใช้ฟิลด์ 'name' ตรงๆ (ไม่ใช่ account_display_name) ตามของเดิม"""
+    now = now or datetime.datetime.now()
+    filename = (pattern or "").strip() or "screenshots/{DATE}/screenshot_{NAME}_{TIME}.png"
+
+    if account:
+        filename = filename.replace("{EMAIL}", account.get("email", "no_account"))
+        filename = filename.replace("{PASSWORD}", account.get("password", "no_password"))
+        filename = filename.replace("{NAME}", account.get("name", ""))
+        filename = filename.replace("{GROUP}", account.get("group", "no_group"))
+    else:
+        filename = filename.replace("{EMAIL}", "no_account")
+        filename = filename.replace("{PASSWORD}", "no_password")
+        filename = filename.replace("{NAME}", "no_name")
+        filename = filename.replace("{GROUP}", "no_group")
+
+    filename = filename.replace("{DATE}", now.strftime("%Y-%m-%d"))
+    filename = filename.replace("{TIME}", now.strftime("%H-%M-%S"))
+    filename = filename.replace("{DEVICE}", str(device).replace(":", "_").replace(".", "_"))
+
+    # ตัดอักขระที่ Windows ห้ามในชื่อไฟล์ทิ้ง (คงไทย/อังกฤษ/ตัวเลข/ตัวคั่นพาธที่ปลอดภัยไว้)
+    def is_safe_char(c):
+        return c.isalnum() or c in "-_.() /\\" or ('฀' <= c <= '๿')
+
+    filename = "".join(c for c in filename if is_safe_char(c))
+    if not filename.lower().endswith((".png", ".jpg", ".jpeg")):
+        filename += ".png"
+    return filename
 
 
 def parse_ui_query(query):
@@ -247,14 +318,18 @@ def send_keyboard_input(log, device, ordered_devices, key_name, action):
 
 
 class MacroRunner:
-    # ชนิด step ที่ตัวรันใหม่ยังไม่รองรับ (จะ log แล้วข้าม ไม่ให้พังทั้งรอบ)
+    # ชนิด step ที่ตัวรันนี้ยังไม่รองรับ (จะ log แล้วข้าม ไม่ให้พังทั้งรอบ) — ตอนนี้ว่างแล้ว
     # หมายเหตุ: run_set ถูกขยายทิ้งไปตั้งแต่ __init__ แล้ว จึงไม่โผล่ถึง _dispatch
-    _UNSUPPORTED = {"story_auto"}
+    _UNSUPPORTED = set()
 
     def __init__(self, controller, steps, log_cb=None, progress_cb=None,
-                 running_check=None, anchor_poll=2.0, reset_cfg=None, diamond_cfg=None):
+                 running_check=None, anchor_poll=2.0, reset_cfg=None, diamond_cfg=None,
+                 gemini_key="", script_sets=None):
         self.controller = controller
         self.log = log_cb or (lambda t, k="info": None)
+        # {ชื่อชุด: steps} สำหรับคลี่ run_set — None = ไปอ่านจากโฟลเดอร์ script_sets/ เอง
+        # ต้องตั้งก่อน _expand_sets เพราะบรรทัดถัดไปเรียกใช้ทันที
+        self.script_sets = script_sets
         self.steps = self._expand_sets(steps or [])
         self.progress = progress_cb or (lambda dev, **kw: None)
         self.running = running_check or (lambda: True)
@@ -264,6 +339,7 @@ class MacroRunner:
         self.anchor_poll = min(10.0, max(0.1, float(anchor_poll or 2.0)))
         self.reset_cfg = reset_cfg or {}
         self.diamond_cfg = diamond_cfg or {}
+        self.gemini_key = gemini_key or ""   # ใช้เฉพาะ step 'story_auto' (ตัวกู้จอด้วย AI)
         self.diamond_rows = []          # ผลอ่านเพชร (Api เอาไปเขียนไฟล์/บัญชีตอนจบรัน)
         self.account_results = []       # ผลรายบัญชี (status/error/device) — เขียน last_status ตอนจบรัน
         self.profile_name = ""          # ชื่อสคริปต์ (ใส่ในรายงานจุดที่ติด)
@@ -291,8 +367,12 @@ class MacroRunner:
         return step.get("type") == "run_set" and step.get("block_on_fail") == "home_retry"
 
     def _expand_sets(self, steps):
-        """ขยายขั้น run_set ให้กลายเป็นขั้นย่อยจริง (โหลดชุดจาก script_sets/*.json)
+        """ขยายขั้น run_set ให้กลายเป็นขั้นย่อยจริง
         recurse เข้ากิ่ง then/else ของ if_image ด้วย — cycle detection อยู่ใน expand_steps_with_sets
+
+        ชุดคำสั่งย่อยมาจาก script_sets ที่ผู้เรียกส่งเข้ามา (ถ้าไม่ส่ง = โหลดจาก script_sets/*.json)
+        ตัวแก้ไขฝั่ง Tkinter ถือชุดไว้ในหน่วยความจำอยู่แล้ว ให้ส่งชุดนั้นเข้ามาตรงๆ ได้ จะได้ไม่ต้อง
+        พึ่งว่า "เซฟลงดิสก์แล้วหรือยัง" ซึ่งเป็นคนละแหล่งความจริงกัน
 
         ยกเว้น run_set ที่เป็น 'บล็อกกันพัง' (block_on_fail=='home_retry') — จะไม่คลี่แบน แต่เก็บไว้
         เป็นบล็อกตอนรัน โดย pre-resolve ขั้นย่อยของ set (_block_steps) และ set กลับหน้าแรก (_home_steps)
@@ -301,15 +381,8 @@ class MacroRunner:
         if not self._tree_has_run_set(steps):
             return steps
         try:
-            from script_sets import load_script_set, expand_steps_with_sets
-            import glob as _glob
-            sets = {}
-            for f in _glob.glob(os.path.join(base_dir(), "script_sets", "*.json")):
-                try:
-                    d = load_script_set(f)
-                    sets[d["name"]] = d["steps"]
-                except Exception:
-                    pass
+            from script_sets import expand_steps_with_sets
+            sets = self.script_sets if self.script_sets is not None else load_script_sets_dir()
             resolver = lambda name: sets.get(name)
 
             def flatten(lst):
@@ -800,6 +873,10 @@ class MacroRunner:
             self._keyboard(device, step); return
         elif t == "find_yellow_stage":
             self._find_yellow_stage(device, step); return
+        elif t == "screenshot":
+            self._screenshot(device, account, step)
+        elif t == "story_auto":
+            self._story_auto(device, step); return
         elif t in self._UNSUPPORTED:
             self.log(f"[{device}] ชนิด '{t}' ยังไม่รองรับในตัวรันใหม่ → ข้าม", "warn")
         else:
@@ -821,6 +898,21 @@ class MacroRunner:
         found, mx, my, _msg = self.controller.find_image_in_bytes(data, tp, threshold=0.8)
         if found:
             self.controller.tap(device, mx, my)
+
+    def _screenshot(self, device, account, step):
+        """step 'screenshot': แคปจอเก็บเป็นไฟล์ตามรูปแบบชื่อที่ผู้ใช้ตั้ง
+        พาธสัมพัทธ์อิง cwd เหมือนเดิมของ Tkinter (os.path.abspath) — ห้ามเปลี่ยนไปอิง base_dir()
+        เพราะภาพของผู้ใช้เดิมจะย้ายที่เงียบๆ"""
+        filename = screenshot_filename(step.get("text", ""), device, account)
+        folder = os.path.dirname(os.path.abspath(filename))
+        if folder and not os.path.exists(folder):
+            os.makedirs(folder, exist_ok=True)
+        self.log(f"[{device}] กำลังบันทึกภาพหน้าจอเป็น '{filename}'...", "info")
+        ok, err = self.controller.take_screenshot(device, filename)
+        if ok:
+            self.log(f"[{device}] บันทึกภาพหน้าจอสำเร็จ: '{filename}'", "ok")
+        else:
+            self.log(f"[{device}] บันทึกภาพหน้าจอล้มเหลว: {err}", "err")
 
     def _sleep_delay(self, step):
         d = self._delay(step)
@@ -1011,6 +1103,23 @@ class MacroRunner:
             self.log(f"[{device}] ไม่พบด่านเหลืองบนจอ", "warn")
         self._sleep_delay(step)
 
+    # ---------- เล่นเนื้อเรื่องอัตโนมัติทั้งชุดบนจอนี้ (พอร์ตจาก _step_story_auto) ----------
+    def _story_auto(self, device, step):
+        """ยืม StoryRunner (ลูปเนื้อเรื่องตัวเดียวกับปุ่ม 'Story Auto') มาทำงานเป็น 1 ขั้นของมาโคร
+        ใช้ callback ชุดเดียวกับมาโคร จอนี้เท่านั้น — จออื่นในรอบเดียวกันไม่โดนกระทบ
+
+        หมายเหตุ: 'stage_timeout' ของ step เดิมไม่ถูกใช้ StoryRunner ตรวจ 'จอค้าง' เองด้วยการเทียบ
+        ภาพต่อเนื่อง (STUCK) แล้วไล่กู้ตามลำดับ ซึ่งครอบเคสเดียวกันแต่ไวกว่านาฬิกาจับเวลาแบบเดิม"""
+        story = StoryRunner(
+            self.controller, log_cb=self.log, progress_cb=self.progress,
+            running_check=self.running, gemini_key=self.gemini_key,
+            buttons_field=(step.get("buttons") or step.get("text") or ""),
+            threshold=float(step.get("threshold", 0.78) or 0.78),
+            max_stages=int(step.get("max_stages", 30) or 30),
+        )
+        story.run_story(device)
+        self._sleep_delay(step)
+
     # ---------- ส่งปุ่มคีย์บอร์ดจริง (พอร์ตจาก _step_keyboard) ----------
     def _keyboard(self, device, step):
         key_name = (step.get("key") or "").strip().lower()
@@ -1114,10 +1223,19 @@ class MacroRunner:
     # ---------- helper ----------
     @staticmethod
     def _delay(step):
-        try:
-            d = float(step.get("delay") or 0)
-        except (TypeError, ValueError):
-            d = 0
+        """หน่วงหลังทำ step นี้ (วินาที)
+
+        step ที่ "ไม่มีฟิลด์ delay เลย" ใช้ค่าเริ่มต้นตามชนิดจาก DEFAULT_STEP_DELAYS — ไม่ใช่ 0
+        (สคริปต์เก่าที่เขียนมือไม่ได้ใส่ delay ต้องยังเว้นจังหวะให้เกมตามทันเหมือนเดิม)
+        ส่วน delay: 0 ที่ตั้งมาชัดเจน = ตั้งใจไม่หน่วง ต้องเคารพ จึงแยกสองกรณีนี้ออกจากกัน"""
+        raw = step.get("delay")
+        if raw is None:
+            d = DEFAULT_STEP_DELAYS.get(step.get("type", "tap"), 0.0)
+        else:
+            try:
+                d = float(raw)
+            except (TypeError, ValueError):
+                d = 0.0
         return d * random.uniform(0.8, 1.4) if d > 0 else 0
 
 

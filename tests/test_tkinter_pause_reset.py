@@ -2,19 +2,15 @@
 และไม่มีนโยบายไหนสั่งรีเซ็ตเกม (_reset_device_to_login) อัตโนมัติอีกต่อไป — เดิมทุกครั้งที่ 'ติดปัญหา'
 (device_error/macro_error) จะรีเซ็ตเกมเสมอ ตอนนี้ถอดออกแล้วตามที่ผู้ใช้ขอ ให้สอดคล้องกับ webui
 
-ใช้ MuMuGUI ตัวเดียวร่วมกันทั้งไฟล์ (module fixture) แล้วรีเซ็ต controller/สถานะต่อเทส — เพราะสร้าง
-tk.Tk() หลายตัวแล้ว destroy บน Windows ทำให้ Tcl หมดทรัพยากร (สร้าง root ใหม่ไม่ได้) เมื่อรันทั้งชุด"""
+Tk root มาจาก session fixture ตัวเดียว (tests/conftest.py) ห้ามสร้างใหม่ที่นี่:
+สร้าง tk.Tk() แล้ว destroy หลายรอบบน Windows ทำให้ Tcl หมดทรัพยากรแล้วเทสล้มแบบสุ่ม"""
 import base64
 import os
 import sys
-import tempfile
-import unittest.mock
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import gui as G
 
 B64 = base64.b64encode(b"TMPL").decode()
 
@@ -40,24 +36,17 @@ class FakeController:
         return True, ""
 
 
-@pytest.fixture(scope="module")
-def _root():
-    with unittest.mock.patch.object(G.MuMuGUI, "load_accounts", lambda self: None), \
-         unittest.mock.patch.object(G.MuMuGUI, "scan_devices", lambda self: None):
-        a = G.MuMuGUI()
-    a.error_reports_dir = tempfile.mkdtemp()
-    yield a
-    a.destroy()
-
-
 @pytest.fixture
-def app(_root):
-    """รีเซ็ตสถานะต่อเทส: controller ใหม่, ยกเลิกการรีเซ็ตเกมด้วย stub, เปิด macro_running"""
-    _root.controller = FakeController()
-    _root.macro_running = True
-    _root.reset_calls = []
-    _root._reset_device_to_login = lambda device: _root.reset_calls.append(device)
-    return _root
+def app(gui_app):
+    """รีเซ็ตสถานะต่อเทส: controller ใหม่, ยกเลิกการรีเซ็ตเกมด้วย stub, เปิด macro_running
+    Tk root มาจาก session fixture ตัวเดียว (ดู tests/conftest.py) — ห้ามสร้างใหม่ที่นี่"""
+    gui_app.controller = FakeController()
+    gui_app.macro_running = True
+    gui_app.script_sets = {}
+    gui_app._anchor_poll_interval = 0.01
+    gui_app.reset_calls = []
+    gui_app._reset_device_to_login = lambda device: gui_app.reset_calls.append(device)
+    return gui_app
 
 
 def _tap_step(x, y, **extra):
