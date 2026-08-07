@@ -7,3 +7,20 @@ __pycache__/
 .claude/
 scratch/
 
+# ผลลัพธ์ตอนปล่อยรีลีส (publish.py สร้างเอง ไม่ต้องเก็บเข้า git)
+release_build/
+release_work/
+release_zip/
+
+# ---- ผลลัพธ์จาก PyInstaller: ห้ามเข้า git ----
+# .exe เป็นไบนารี git บีบอัดไม่ลงและเก็บทุกเวอร์ชันไว้ถาวร — commit ทีละ 60 MB
+# ที่ผ่านมาทำให้ .git บวมเป็น 1.8 GB (blob ใหญ่กว่า 1MB รวม 1.57 GB เกือบทั้งหมดคือ .exe/.pkg ซ้ำ ๆ)
+# ตัวส่งให้ลูกค้าอยู่บน GitHub Releases อยู่แล้ว ไม่ต้องเก็บซ้ำใน repo
+/build/
+/MuMupow.exe
+/MuMupow_new.exe
+
+# dist/ ถูกยุบทิ้งแล้ว — ตอนนี้รันโปรแกรมจากรากโดยตรง ข้อมูล/สคริปต์อยู่ที่รากที่เดียว
+# เก็บบรรทัดนี้ไว้เผื่อ PyInstaller สร้าง dist/ ขึ้นมาใหม่ (publish.py build ลง release_build/ แทน)
+/dist/
+
