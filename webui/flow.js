@@ -7,6 +7,42 @@ let SCRIPT_VIEW = 'list';     // 'list' | 'flow'
 let FLOW = null;              // tree ล่าสุดจาก get_flow()
 let SEL_PATH = null;          // path ของบล็อกที่เลือก เช่น [1,'then',0]
 let FLOW_HL = null;           // path ไฮไลต์สดตอนรัน (string เช่น "1.then.0")
+let CUT_PATH = null;          // บล็อกที่กด 'ย้ายไปที่อื่น' ค้างไว้ — ระหว่างนี้จุด + จะกลายเป็นปุ่ม 'วาง'
+let FLOW_RANGE = null;        // [pathA, pathB] ช่วงที่ Shift+คลิกคลุมไว้ (ต้องอยู่ระดับเดียวกัน)
+let CUT_RANGE = null;         // ช่วงที่กำลังย้าย (ใช้แทน CUT_PATH เมื่อย้ายหลายบล็อกพร้อมกัน)
+
+// ---------- ตัวช่วยเรื่อง path ----------
+const samePath = (a,b) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+const sameParent = (a,b) => !!a && !!b && a.length===b.length
+  && JSON.stringify(a.slice(0,-1)) === JSON.stringify(b.slice(0,-1));
+// บล็อกนี้อยู่ในช่วงที่คลุมไว้ไหม (ใช้ทั้งตอนไฮไลต์และตอนย้าย)
+function inRange(path, range){
+  if(!range || !sameParent(range[0], path)) return false;
+  const lo = Math.min(range[0][range[0].length-1], range[1][range[1].length-1]);
+  const hi = Math.max(range[0][range[0].length-1], range[1][range[1].length-1]);
+  const i = path[path.length-1];
+  return i >= lo && i <= hi;
+}
+function rangeCount(range){
+  if(!range) return 0;
+  return Math.abs(range[1][range[1].length-1] - range[0][range[0].length-1]) + 1;
+}
+
+// คลิกบล็อกบนผัง — Shift+คลิก = คลุมช่วง (เหมือนหน้าลิสต์), คลิกธรรมดา = เลือกทีละอัน
+function flowClick(ev, path){
+  if(ev && ev.shiftKey && SEL_PATH){
+    if(!sameParent(SEL_PATH, path)){
+      notReady('เลือกคลุมได้เฉพาะบล็อกที่อยู่ระดับเดียวกัน (เส้นเดียวกัน/กิ่งเดียวกัน)');
+      return;
+    }
+    FLOW_RANGE = [SEL_PATH.slice(), path.slice()];
+    renderFlow();
+    return;
+  }
+  FLOW_RANGE = null;
+  flowSelect(path);
+}
+function flowClearRange(){ FLOW_RANGE = null; renderFlow(); }
 let RETRY_ARROWS = [];        // เส้นวนกลับที่ต้องวาด: [{from, to}] (path string ทั้งคู่) — เก็บระหว่างเรนเดอร์บล็อก
 
 const DEMO_FLOW = { name: 'ล็อกอิน + เก็บของ', typeOptions: null, steps: [
@@ -44,7 +80,8 @@ async function renderFlow(){
   const steps = FLOW.steps || [];
   RETRY_ARROWS = [];   // flowChain/flowBlock เก็บคู่ {from,to} เข้ามาระหว่างสร้าง HTML ด้านล่าง
   const chainHtml = flowChain(steps, []);
-  cv.innerHTML = '<div id="flowInner" style="position:relative;display:flex;flex-direction:column;align-items:center;padding:14px 6px">'
+  cv.innerHTML = cutBanner()
+    + '<div id="flowInner" style="position:relative;display:flex;flex-direction:column;align-items:center;padding:14px 6px">'
     + '<svg id="flowArrowsSvg" style="position:absolute;top:0;left:0;pointer-events:none;overflow:visible"></svg>'
     + '<div style="display:flex;align-items:center;gap:7px;padding:7px 16px;border-radius:999px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.3);color:#6EE7B7;font-size:12px;font-weight:600"><i data-lucide="play" width="12" height="12" stroke-width="2.5"></i>เริ่ม</div>'
     + chainHtml
@@ -103,11 +140,59 @@ function svgLabel(x, y, text){
 }
 
 function pj(path){ return esc(JSON.stringify(path)).replace(/"/g,'&quot;'); }
+
+// แถบบอกว่ากำลังย้ายบล็อกไหนอยู่ + ทางออก (กันผู้ใช้ค้างอยู่ในโหมดย้ายโดยไม่รู้ตัว)
+function nodeAt(path){
+  try{
+    let cur = (FLOW && FLOW.steps) || [], node = null;
+    path.forEach(tok => {
+      if(typeof tok === 'string'){ cur = (node && node[tok]) || []; }
+      else { node = cur[tok]; }
+    });
+    return node;
+  }catch(e){ return null; }
+}
+function blockName(path){
+  const n = nodeAt(path);
+  return n ? (n.desc || typeTH(n.type||'tap')) : 'บล็อกที่เลือก';
+}
+function cutBanner(){
+  // แถบ 1: คลุมช่วงไว้แล้วแต่ยังไม่กดย้าย — บอกจำนวนที่เลือกและทางไปต่อ
+  if(!CUT_PATH && !CUT_RANGE && FLOW_RANGE){
+    const n = rangeCount(FLOW_RANGE);
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;margin-bottom:8px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72">'
+      + '<i data-lucide="check-square" width="15" height="15" stroke-width="1.9" style="color:#7DD3FC;flex:none"></i>'
+      + '<span style="flex:1;font-size:12.5px;color:#7DD3FC">เลือกไว้ <b style="color:#FFF">' + n + ' บล็อก</b> — กด <b>✂ ย้ายไปที่อื่น</b> เพื่อยกทั้งชุด</span>'
+      + '<button class="in" onclick="flowClearRange()" style="padding:5px 11px;border-radius:7px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:11.5px;cursor:pointer">ยกเลิกที่เลือก</button></div>';
+  }
+  if(!CUT_PATH && !CUT_RANGE){
+    // ยังไม่ได้ทำอะไร — บอกวิธีเลือกหลายบล็อกไว้ตรงนี้ ผู้ใช้จะได้ไม่ต้องเดา
+    return '<div style="font-size:11px;color:#5C6B82;margin-bottom:6px">'
+      + '💡 คลิกบล็อกแรก แล้ว <b style="color:#7DD3FC">Shift+คลิก</b> บล็อกสุดท้าย = เลือกหลายอัน '
+      + 'แล้วกด <b style="color:#7DD3FC">✂ ย้ายไปที่อื่น</b> เพื่อยกเข้า/ออกเงื่อนไขทั้งชุด</div>';
+  }
+
+  const what = CUT_RANGE
+    ? ('<b style="color:#FFF">' + rangeCount(CUT_RANGE) + ' บล็อก</b>')
+    : ('<b style="color:#FFF">' + esc(blockName(CUT_PATH)) + '</b>');
+  return '<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;margin-bottom:8px;border-radius:9px;background:#0F2F4A;border:1px solid #164E72">'
+    + '<i data-lucide="scissors" width="15" height="15" stroke-width="1.9" style="color:#7DD3FC;flex:none"></i>'
+    + '<span style="flex:1;font-size:12.5px;color:#7DD3FC">กำลังย้าย ' + what + ' — กดปุ่ม <b style="color:#6EE7B7">วาง</b> สีเขียวตรงจุดที่ต้องการ (วางในกิ่งของเงื่อนไขก็ได้)</span>'
+    + '<button class="in" onclick="flowCancelCut()" style="padding:5px 11px;border-radius:7px;background:#2A1113;border:1px solid #7F1D1D;color:#FCA5A5;font-size:11.5px;cursor:pointer">ยกเลิก</button></div>';
+}
 function connector(insertPath){
+  // ปกติจุดนี้คือ "แทรกบล็อกใหม่" แต่ระหว่างย้าย (CUT_PATH) มันจะกลายเป็น "วางตรงนี้"
+  // ใช้จุดเดิมเป็นเป้าวางเลย ผู้ใช้จึงไม่ต้องเรียนรู้อะไรใหม่ และวางเข้ากิ่ง then/else ได้ทุกจุด
+  const cutting = CUT_PATH !== null || CUT_RANGE !== null;
+  const handler = cutting ? ('flowDropAt(' + pj(insertPath) + ')') : ('flowInsertAt(' + pj(insertPath) + ')');
+  const style = cutting
+    ? 'width:26px;height:20px;border-radius:10px;background:#10B981;border:1px solid #34D399;color:#04120C;font-weight:700;font-size:10px'
+    : 'width:20px;height:20px;border-radius:50%;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:13px';
   return '<div style="display:flex;flex-direction:column;align-items:center">'
     + '<div style="width:2px;height:10px;background:#24344B"></div>'
-    + '<div onclick="flowInsertAt(' + pj(insertPath) + ')" title="แทรกบล็อกตรงนี้" '
-    + 'style="width:20px;height:20px;border-radius:50%;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;line-height:1">+</div>'
+    + '<div onclick="' + handler + '" title="' + (cutting ? 'วางบล็อกที่ย้ายมาตรงนี้' : 'แทรกบล็อกตรงนี้') + '" '
+    + 'style="' + style + ';display:flex;align-items:center;justify-content:center;cursor:pointer;line-height:1">'
+    + (cutting ? 'วาง' : '+') + '</div>'
     + '<div style="width:2px;height:10px;background:#24344B"></div></div>';
 }
 
@@ -167,14 +252,18 @@ function flowBlock(s, path){
   const selected = SEL_PATH && SEL_PATH.join('.') === pathStr;
   const running = FLOW_HL === pathStr;
   const hasImg = !!s.anchor_img;
-  const border = running ? '#10B981' : (selected ? 'rgba(16,185,129,.55)' : (t==='if_image' ? 'rgba(251,191,36,.45)' : '#24344B'));
-  const glow = running ? 'box-shadow:0 0 0 3px rgba(16,185,129,.25);' : '';
+  // อยู่ในช่วงที่คลุมไว้ (หรือกำลังถูกยกไปวาง) — ทำให้เห็นชัดว่ากำลังจะย้ายบล็อกไหนบ้าง
+  const picked = inRange(path, FLOW_RANGE) || inRange(path, CUT_RANGE);
+  const border = running ? '#10B981'
+    : (picked ? '#38BDF8' : (selected ? 'rgba(16,185,129,.55)' : (t==='if_image' ? 'rgba(251,191,36,.45)' : '#24344B')));
+  const glow = running ? 'box-shadow:0 0 0 3px rgba(16,185,129,.25);'
+    : (picked ? 'box-shadow:0 0 0 2px rgba(56,189,248,.28);' : '');
 
   if(t === 'if_image'){
     const thenSteps = s.then || [], elseSteps = s['else'] || [];
     return '<div style="display:flex;flex-direction:column;align-items:center">'
       // หัวข้าวหลามตัด (เงื่อนไข)
-      + '<div onclick="flowSelect(' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;display:flex;gap:9px;align-items:center;padding:11px 16px;border-radius:12px;background:#221B0A;border:1.5px solid ' + border + '">'
+      + '<div onclick="flowClick(event,' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;display:flex;gap:9px;align-items:center;padding:11px 16px;border-radius:12px;background:#221B0A;border:1.5px solid ' + border + '">'
       + '<i data-lucide="git-branch" width="15" height="15" stroke-width="2" style="color:#FBBF24"></i>'
       + '<span style="font-size:12.5px;font-weight:600;color:#FBBF24">' + esc(s.desc || 'ถ้าเจอภาพ?') + '</span>'
       + (hasImg ? '<img src="data:image/png;base64,' + s.anchor_img + '" style="height:26px;border-radius:5px;border:1px solid #7A5A1E">'
@@ -207,7 +296,7 @@ function flowBlock(s, path){
 
   const warn = blockWarning(s);
   const bColor = warn ? '#F87171' : border;
-  return '<div onclick="flowSelect(' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;min-width:220px;max-width:330px;display:flex;gap:9px;align-items:center;padding:10px 13px;border-radius:11px;background:' + (selected?'rgba(16,185,129,.08)':'#0A0F19') + ';border:1.5px solid ' + bColor + '">'
+  return '<div onclick="flowClick(event,' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;min-width:220px;max-width:330px;display:flex;gap:9px;align-items:center;padding:10px 13px;border-radius:11px;background:' + (selected?'rgba(16,185,129,.08)':'#0A0F19') + ';border:1.5px solid ' + bColor + '">'
     + '<i data-lucide="' + stepIcon(t) + '" width="15" height="15" stroke-width="1.9" style="color:' + (hasImg?'#FBBF24':'#7DD3FC') + ';flex:none"></i>'
     + '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:500">' + esc(s.desc || typeTH(t)) + '</div>'
     + '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:' + (warn?'#FCA5A5':'#7C8CA3') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (warn ? '⚠ ' + esc(warn) : esc(typeTH(t)) + ' · ' + esc(stepDetail(s))) + '</div></div>'
@@ -250,6 +339,8 @@ function renderFlowActions(s, path){
   let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">';
   html += btn('flowMoveSel(-1)','arrow-up','ขึ้น','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   html += btn('flowMoveSel(1)','arrow-down','ลง','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+  html += btn('flowStartCut()','scissors','ย้ายไปที่อื่น','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
+  html += btn('flowMoveIntoBranch()','git-branch','ย้ายเข้าเงื่อนไข','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
   if(t==='tap'||t==='swipe'){
     html += btn('flowPickCoord()','crosshair','ตั้งพิกัดจากภาพจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
     html += btn('flowPickImage(\'anchor\')','image-plus','อัดภาพรอก่อนกด','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
@@ -303,6 +394,74 @@ async function flowMoveSel(dir){
   const p = SEL_PATH.slice(); p[p.length-1] = Math.max(0, p[p.length-1]+dir);
   SEL_PATH = p;
   renderFlow();
+}
+
+// ---------- ย้ายบล็อกข้ามที่ (ตัด -> วาง) ----------
+// ปุ่ม 'ขึ้น/ลง' ย้ายได้แค่ในลิสต์เดียวกัน ย้ายเข้า/ออกกิ่ง if ไม่ได้ — โหมดนี้เลยเติมช่องว่างนั้น
+// ตัดค้างไว้ แล้วจุด + ทุกจุดบนผัง (รวมจุดในกิ่ง then/else) จะกลายเป็นปุ่ม 'วาง' ทันที
+function flowStartCut(){
+  // ถ้าคลุมช่วงไว้ = ย้ายทั้งชุด ไม่งั้นย้ายบล็อกเดียวที่เลือกอยู่
+  if(FLOW_RANGE){
+    CUT_RANGE = [FLOW_RANGE[0].slice(), FLOW_RANGE[1].slice()];
+    CUT_PATH = null;
+  }else if(SEL_PATH){
+    CUT_PATH = SEL_PATH.slice();
+    CUT_RANGE = null;
+  }else{
+    notReady('เลือกบล็อกก่อน (Shift+คลิก = เลือกหลายอัน)');
+    return;
+  }
+  FLOW_RANGE = null;
+  renderFlow();
+}
+function flowCancelCut(){
+  CUT_PATH = null; CUT_RANGE = null;
+  renderFlow();
+}
+async function flowDropAt(dstPath){
+  if(!hasPy()) return;
+  let r = null;
+  if(CUT_RANGE){
+    r = await PY.flow_move_range(CUT_RANGE[0], CUT_RANGE[1], dstPath);
+  }else if(CUT_PATH){
+    r = await PY.flow_move_to(CUT_PATH, dstPath);
+  }else{
+    return;
+  }
+  CUT_PATH = null; CUT_RANGE = null;
+  if(r && r.flow) FLOW = r.flow;
+  if(r && r.ok){
+    SEL_PATH = r.path;                       // เลือกบล็อกเดิมต่อ ทำงานต่อได้ทันทีไม่ต้องหาใหม่
+  }else if(r && r.error){
+    notReady('ย้ายไม่ได้: ' + r.error);
+  }
+  renderFlow();
+  if(SEL_PATH) await flowSelect(SEL_PATH);
+}
+
+// ปุ่มลัดสำหรับเคสที่ใช้บ่อยสุด: เอาบล็อกนี้ยัดเข้าเงื่อนไข if ที่อยู่ในผังเดียวกัน
+async function flowMoveIntoBranch(){
+  if(!hasPy() || !SEL_PATH){ notReady('เลือกบล็อกก่อน'); return; }
+  const r = await PY.flow_branch_targets(SEL_PATH);
+  const targets = (r && r.targets) || [];
+  if(!targets.length){
+    notReady('ผังนี้ยังไม่มีบล็อกเงื่อนไข (ถ้าเจอภาพ) ให้ย้ายเข้า');
+    return;
+  }
+  const items = targets.map(t =>
+    '<button class="in" onclick="flowDoMoveInto(' + pj(t.path) + ')" style="display:flex;gap:9px;align-items:center;width:100%;padding:10px 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;color:#C7D2E0;font-size:12.5px;cursor:pointer;text-align:left">'
+    + '<i data-lucide="git-branch" width="14" height="14" style="color:#FBBF24;flex:none"></i>'
+    + '<span style="flex:1">' + esc(t.label) + '</span>'
+    + '<span style="color:#5C6B82;font-size:11px">' + t.count + ' ขั้น</span></button>').join('');
+  openModal('ย้ายเข้าเงื่อนไขไหน', 'git-branch',
+    '<div style="display:flex;flex-direction:column;gap:5px">' + items + '</div>'
+    + '<div style="margin-top:10px;font-size:11.5px;color:#5C6B82">บล็อกจะไปต่อท้ายกิ่งที่เลือก '
+    + 'ถ้าอยากวางตำแหน่งอื่นให้ใช้ปุ่ม “ย้ายไปที่อื่น” แล้วกดจุด “วาง” บนผังแทน</div>');
+}
+async function flowDoMoveInto(dstPath){
+  closeModal();
+  CUT_PATH = SEL_PATH ? SEL_PATH.slice() : null;
+  await flowDropAt(dstPath);
 }
 async function flowRunFrom(){
   if(!hasPy() || !SEL_PATH || SEL_PATH.length!==1) return;

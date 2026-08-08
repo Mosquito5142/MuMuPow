@@ -1313,6 +1313,138 @@ class Api:
             self._push_log(f"ย้ายบล็อกไม่ได้: {e}", "warn")
         return self.get_flow()
 
+    @staticmethod
+    def _is_inside(src, dst):
+        """dst อยู่ 'ข้างใน' บล็อก src ไหม — ใช้กันย้ายบล็อกเข้าไปในกิ่งของตัวเอง
+        ซึ่งจะทำให้บล็อกนั้นหายไปทั้งก้อน (ตัดออกมาแล้วไม่มีที่ให้วางกลับ)"""
+        return len(dst) > len(src) and list(dst[:len(src)]) == list(src)
+
+    def _depth_of(self, path):
+        """ความลึกของกิ่ง ณ path นี้ (เส้นหลัก = 0) — นับจากจำนวน 'then'/'else' ที่ผ่าน"""
+        return sum(1 for tok in path if isinstance(tok, str))
+
+    @staticmethod
+    def _tree_depth(step, base=0):
+        """ความลึกสูงสุดของกิ่งที่ซ้อนอยู่ในบล็อกนี้ (บล็อกธรรมดา = base)"""
+        deepest = base
+        for k in ("then", "else"):
+            for child in (step.get(k) or []):
+                deepest = max(deepest, Api._tree_depth(child, base + 1))
+        return deepest
+
+    def flow_move_to(self, src_path, dst_path):
+        """ย้ายบล็อกจาก src_path ไปแทรกที่ dst_path — ข้ามเข้า/ออกกิ่ง then/else ได้
+
+        dst_path ใช้กติกาเดียวกับ flow_add (ดัชนีท้าย = จุดแทรกในลิสต์นั้น) จุด '+' บนผัง
+        จึงเป็นเป้าวางได้เลยโดยไม่ต้องคิดพิกัดใหม่
+
+        เดิมย้ายได้แค่สลับกับเพื่อนบ้านในลิสต์เดียวกัน (flow_move) ถ้าจะเอาบล็อกที่ทำไว้แล้ว
+        ยัดเข้าเงื่อนไข if ต้องไปแก้ JSON เอง — เมธอดนี้ทำให้ทำบนผังได้ตรง ๆ
+        """
+        src, dst = list(src_path or []), list(dst_path or [])
+        try:
+            if not src or not dst:
+                raise ValueError("ต้องระบุทั้งต้นทางและปลายทาง")
+            if self._is_inside(src, dst):
+                raise ValueError("ย้ายบล็อกเข้าไปในกิ่งของตัวเองไม่ได้")
+
+            src_lst, si = self._locate(src)
+            if not (0 <= si < len(src_lst)):
+                raise ValueError("ไม่พบบล็อกต้นทาง")
+
+            # เช็คความลึกก่อนย้ายจริง: บล็อกที่มีกิ่งซ้อนอยู่แล้ว ถ้าย้ายเข้าไปลึกอีกอาจทะลุเพดาน
+            # แล้วขั้นข้างในจะถูกข้ามตอนรัน (MAX_BRANCH_DEPTH) — กันไว้ตั้งแต่ตอนแก้ผังจะชัดกว่า
+            final_depth = self._tree_depth(src_lst[si], self._depth_of(dst[:-1]))
+            if final_depth > MacroRunner.MAX_BRANCH_DEPTH:
+                raise ValueError(f"ย้ายแล้วกิ่งจะซ้อนเกิน {MacroRunner.MAX_BRANCH_DEPTH} ชั้น")
+
+            step = src_lst.pop(si)
+            # การดึงบล็อกออกทำให้ทุกอย่างที่อยู่ 'หลังมัน ในลิสต์เดียวกัน' เลื่อนขึ้น 1 ช่อง
+            # ปลายทางอาจโดนผลนี้ได้ 2 แบบ: เป็นตำแหน่งในลิสต์เดียวกันตรง ๆ หรือ 'มุดผ่าน'
+            # พี่น้องที่อยู่หลังต้นทาง (เช่น ย้าย [0] ไป [1,'then',0] -> ต้องกลายเป็น [0,'then',0])
+            k = len(src) - 1
+            if len(dst) > k and list(dst[:k]) == list(src[:k]) \
+                    and isinstance(dst[k], int) and dst[k] > si:
+                dst[k] -= 1
+
+            dst_lst, di = self._locate(dst)
+            di = max(0, min(int(di), len(dst_lst)))
+            dst_lst.insert(di, step)
+            return {"ok": True, "path": dst[:-1] + [di], "flow": self.get_flow()}
+        except Exception as e:
+            self._push_log(f"ย้ายบล็อกไม่ได้: {e}", "warn")
+            return {"ok": False, "error": str(e), "flow": self.get_flow()}
+
+    def flow_move_range(self, start_path, end_path, dst_path):
+        """ย้ายบล็อกหลายอันที่ติดกัน (ช่วง start..end ในลิสต์เดียวกัน) ไปวางที่ dst_path
+
+        สคริปต์จริงยาวหลายสิบขั้น ถ้าจะยัดเข้าเงื่อนไขต้องย้ายทีละอันคงไม่ไหว
+        ช่วงต้องอยู่ 'ลิสต์เดียวกัน' เท่านั้น (พี่น้องกัน) — ตรงกับที่ผู้ใช้เห็นว่าเป็นชุดต่อเนื่อง
+        และทำให้ลำดับหลังย้ายคาดเดาได้ ไม่ต้องเดาว่าบล็อกจากคนละกิ่งจะเรียงยังไง
+        """
+        s, e, dst = list(start_path or []), list(end_path or []), list(dst_path or [])
+        try:
+            if not s or not e or not dst:
+                raise ValueError("ต้องระบุช่วงและปลายทาง")
+            if s[:-1] != e[:-1]:
+                raise ValueError("เลือกได้เฉพาะบล็อกที่อยู่ระดับเดียวกัน")
+            lo, hi = sorted((int(s[-1]), int(e[-1])))
+            parent = s[:-1]
+
+            src_lst, _ = self._locate(parent + [lo])
+            if not (0 <= lo <= hi < len(src_lst)):
+                raise ValueError("ช่วงที่เลือกไม่ถูกต้อง")
+
+            # ห้ามวางลงในกิ่งของบล็อกที่กำลังย้ายเอง (บล็อกจะหายทั้งชุด)
+            for i in range(lo, hi + 1):
+                if self._is_inside(parent + [i], dst):
+                    raise ValueError("วางลงในกิ่งของบล็อกที่กำลังย้ายไม่ได้")
+
+            base_depth = self._depth_of(dst[:-1])
+            for i in range(lo, hi + 1):
+                if self._tree_depth(src_lst[i], base_depth) > MacroRunner.MAX_BRANCH_DEPTH:
+                    raise ValueError(f"ย้ายแล้วกิ่งจะซ้อนเกิน {MacroRunner.MAX_BRANCH_DEPTH} ชั้น")
+
+            chunk = src_lst[lo:hi + 1]
+            del src_lst[lo:hi + 1]
+
+            # ดึงออกทีเดียวหลายอัน ปลายทางที่อยู่หลังช่วงจึงเลื่อนขึ้นเท่าจำนวนที่ดึง
+            k = len(parent)
+            n = len(chunk)
+            if len(dst) > k and list(dst[:k]) == parent and isinstance(dst[k], int):
+                if dst[k] > hi:
+                    dst[k] -= n
+                elif dst[k] > lo:      # ปลายทางตกอยู่กลางช่วงที่ย้าย -> วางคืนที่เดิม
+                    dst[k] = lo
+
+            dst_lst, di = self._locate(dst)
+            di = max(0, min(int(di), len(dst_lst)))
+            dst_lst[di:di] = chunk
+            return {"ok": True, "path": dst[:-1] + [di], "count": n, "flow": self.get_flow()}
+        except Exception as e_:
+            self._push_log(f"ย้ายหลายบล็อกไม่ได้: {e_}", "warn")
+            return {"ok": False, "error": str(e_), "flow": self.get_flow()}
+
+    def flow_branch_targets(self, src_path):
+        """จุดวางแบบ 'เข้ากิ่ง' ที่ใช้ได้กับบล็อกนี้ — เอาไว้ทำปุ่มลัดย้ายเข้า if ที่อยู่ติดกัน
+        คืนรายการ if_image ที่เป็นพี่น้องกับบล็อกนี้ พร้อม path ปลายทางของกิ่ง then/else"""
+        out = []
+        try:
+            lst, i = self._locate(list(src_path or []))
+            parent = list(src_path)[:-1]
+            for j, s in enumerate(lst):
+                if j == i or s.get("type") != "if_image":
+                    continue
+                for br, label in (("then", "เจอ"), ("else", "ไม่เจอ")):
+                    out.append({
+                        "label": f"{s.get('desc') or 'ทางเลือก'} → กิ่ง '{label}'",
+                        "path": parent + [j, br, len(s.get(br) or [])],
+                        "count": len(s.get(br) or []),
+                    })
+        except Exception as e:
+            self._push_log(f"หากิ่งปลายทางไม่ได้: {e}", "warn")
+        return {"targets": out}
+
     def flow_get_step(self, path):
         try:
             lst, i = self._locate(path)
