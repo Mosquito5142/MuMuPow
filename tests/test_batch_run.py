@@ -143,3 +143,42 @@ def test_normal_run_still_uses_full_queue_not_batches():
         assert len(api.controller.taps) == 4
     finally:
         shutil.rmtree(tmp)
+
+
+def test_sequential_mode_runs_one_device_at_a_time():
+    """โหมดกันแคปช่า: ต้องไม่ยิงพร้อมกันหลายจอ และต้องรันครบทุกบัญชี"""
+    api, tmp = _api_with_temp_accounts(4)
+    try:
+        api.run(anchor_poll="0.5", sequential=True, sequential_gap=[0, 0])
+        assert api._sequential is True
+        api._run_thread.join(timeout=30)
+
+        assert api._running is False
+        assert api._awaiting_next_batch is False
+        assert len(api.controller.taps) == 4
+        # วนจอสลับกันไปเรื่อย ๆ ตามลำดับบัญชี
+        assert [t[0] for t in api.controller.taps] == [":7555", ":7556", ":7555", ":7556"]
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_sequential_mode_beats_batch_flag_when_both_set():
+    """ถ้าเผลอส่งมาทั้งคู่ ให้ 'ทีละจอ' ชนะ — เป็นโหมดที่เข้มงวดกว่า ปลอดภัยกว่า"""
+    api, tmp = _api_with_temp_accounts(2)
+    try:
+        api.run(anchor_poll="0.5", pause_between_batches=True, sequential=True, sequential_gap=[0, 0])
+        api._run_thread.join(timeout=30)
+        assert api._awaiting_next_batch is False   # ไม่ได้เข้าโหมดทีละชุด
+        assert len(api.controller.taps) == 2
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_default_run_is_not_sequential():
+    api, tmp = _api_with_temp_accounts(2)
+    try:
+        api.run(anchor_poll="0.5")
+        api._run_thread.join(timeout=10)
+        assert api._sequential is False
+    finally:
+        shutil.rmtree(tmp)

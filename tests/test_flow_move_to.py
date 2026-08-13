@@ -242,3 +242,31 @@ def test_move_range_bad_input_does_not_corrupt():
     for s, e, d in (([], [1], [0]), ([0], [99], [0]), ([0], [1], [])):
         a.flow_move_range(s, e, d)
     assert descs(a.macro_steps) == ["A", "B"]
+
+
+# ---------- เลขขั้นบนผัง ----------
+
+def test_sibling_index_is_position_within_its_own_list():
+    """ผังโชว์เลขขั้น = ตำแหน่งในลิสต์ตัวเอง +1 และ dropdown 'วนกลับไปทำขั้นไหน'
+    ก็อ้างลิสต์เดียวกัน — ถ้าสองที่นี้นับคนละแบบ ผู้ใช้จะตั้งเป้าหมายวนกลับผิดขั้นโดยไม่รู้ตัว"""
+    a = api([tap("A"), iff("เงื่อนไข", then=[tap("ใน1"), tap("ใน2")]), tap("C")])
+
+    main = a.list_siblings([2])
+    assert main["ok"] is True
+    assert [s["idx"] for s in main["steps"]] == [0, 1, 2]
+    assert [s["desc"] for s in main["steps"]] == ["A", "เงื่อนไข", "C"]
+    assert main["current"] == 2
+
+    branch = a.list_siblings([1, "then", 1])
+    assert [s["idx"] for s in branch["steps"]] == [0, 1]
+    assert [s["desc"] for s in branch["steps"]] == ["ใน1", "ใน2"]
+    assert branch["current"] == 1
+
+
+def test_retry_target_index_points_at_the_same_block_the_number_shows():
+    """เป้าหมายวนกลับเก็บเป็น idx ดิบ (0-based) ส่วนที่โชว์ให้คนอ่านคือ idx+1
+    เทสนี้ยึดความสัมพันธ์นั้นไว้ ไม่ให้ใครเผลอเปลี่ยนข้างใดข้างหนึ่ง"""
+    a = api([tap("A"), tap("B"), tap("C")])
+    steps = a.list_siblings([1])["steps"]
+    shown = {s["idx"] + 1: s["desc"] for s in steps}   # เลขที่ผู้ใช้เห็นบนผัง -> บล็อกจริง
+    assert shown == {1: "A", 2: "B", 3: "C"}

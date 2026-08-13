@@ -77,6 +77,22 @@ def templates_dir():
     return os.path.join(base_dir(), "templates")
 
 
+def build_sequential_macro_pairs(devices, accounts):
+    """จับคู่ (จอ, บัญชี) สำหรับโหมด 'รันทีละจอ' — วนจอไปเรื่อย ๆ ทีละบัญชี
+
+    คืน [(device, account, idx, total)] เรียงตามลำดับที่จะรัน ทีละคู่ ไม่ขนานกัน
+    ใช้ตอนเว็บ/เกมจับได้ว่ากดพร้อมกันหลายจอแล้วเด้งแคปช่า — ยิงทีละเครื่องจะเนียนกว่า
+    """
+    if not devices:
+        return []
+    if not accounts:
+        total = len(devices)
+        return [(device, None, idx, total) for idx, device in enumerate(devices)]
+    total = len(accounts)
+    return [(devices[idx % len(devices)], account, idx, total)
+            for idx, account in enumerate(accounts)]
+
+
 def load_script_sets_dir():
     """อ่านชุดคำสั่งย่อยทั้งหมดจาก script_sets/*.json → {ชื่อชุด: steps}
     ไฟล์ไหนพังก็ข้ามไฟล์นั้น ไม่ทำให้ทั้งรอบล่ม"""
@@ -473,6 +489,56 @@ class MacroRunner:
         if status != "paused":
             self.progress(dev, status="done" if self.running() else "stopped", step_desc="")
 
+    def run_sequential(self, devices, accounts, gap=(8.0, 20.0)):
+        """รันทีละจอทีละบัญชี ไม่ขนานกันเลย + เว้นจังหวะสุ่มระหว่างบัญชี
+
+        มีไว้สู้กับระบบกันบอท: พอยิงพร้อมกันหลายจอ เว็บ/เกมจับได้แล้วเด้งแคปช่า
+        (เจอตอนใช้สคริปต์สมัครไอดี พอถึงจอที่ 5 จะติดทุกที) ยิงทีละเครื่องแล้วทิ้งช่วง
+        ให้ดูเหมือนคนใช้งานจริงมากกว่า — ช้ากว่าแต่ผ่าน
+
+        จอไหนสั่ง 'หยุดรอแก้ไข' (paused) จะไม่ถูกหยิบมาใช้กับบัญชีถัดไปอีก
+        แต่บัญชีที่เหลือยังเดินต่อบนจออื่นได้ ไม่ต้องล้มทั้งรอบ
+        """
+        pairs = build_sequential_macro_pairs(devices, accounts)
+        self.total_accounts = len(accounts) if accounts else len(devices)
+        for d in devices:
+            self._done.setdefault(d, 0)
+            self.progress(d, status="queued", account_name="-", step_idx=0, step_total=0,
+                          step_desc="รอคิว", done_count=0, total_accounts=self.total_accounts)
+
+        lo, hi = (float(gap[0]), float(gap[1])) if gap else (0.0, 0.0)
+        paused_devices = set()
+
+        for dev, acc, idx, total in pairs:
+            if not self.running():
+                break
+            if dev in paused_devices:
+                self.log(f"[{dev}] ข้าม {account_display_name(acc)} — จอนี้ยังรอแก้ไขอยู่", "warn")
+                continue
+
+            self.log(f"เริ่มคิวที่ {idx + 1}/{total} บน [{dev}]"
+                     + (f": {account_display_name(acc)}" if acc else ""), "info")
+            status = self.execute_one(dev, acc)
+            if status == "paused":
+                paused_devices.add(dev)
+                if len(paused_devices) >= len(devices):
+                    self.log("ทุกจอรอแก้ไขหมดแล้ว — หยุดคิวไว้ก่อน", "warn")
+                    break
+                continue
+            if status == "stopped" or not self.running():
+                break
+            self.progress(dev, status="running", step_desc="พักก่อนบัญชีถัดไป…")
+
+            if idx < total - 1 and hi > 0:
+                wait = random.uniform(lo, hi)
+                self.log(f"พัก {wait:.1f} วินาทีก่อนไปบัญชีถัดไป (กันโดนจับว่าเป็นบอท)", "info")
+                if not self._interruptible_sleep(wait):
+                    break
+
+        for d in devices:
+            if d not in paused_devices:
+                self.progress(d, status="done" if self.running() else "stopped", step_desc="")
+
     def run_batch_once(self, devices, accounts):
         """รัน 1 ชุด (จับคู่จอ↔บัญชีตามลำดับ) แบบขนานแล้วคืนทันทีที่ชุดนี้เสร็จ — ไม่หยิบคิวต่อเอง
         ใช้กับโหมด 'หยุดรอตรวจทานทีละชุด' (ผู้ใช้เช็คจอเองก่อนค่อยสั่งชุดถัดไป)"""
@@ -861,6 +927,8 @@ class MacroRunner:
             self._read_diamond(device, account)
         elif t == "wait_for_image":
             self._wait_for_image(device, step); return
+        elif t == "tap_until_image":
+            self._tap_until_image(device, step); return
         elif t == "tap_text":
             self._tap_text(device, account, step); return
         elif t == "wait_for_text":
@@ -886,16 +954,19 @@ class MacroRunner:
             time.sleep(delay)
 
     def _detect_image(self, device, step):
-        import os as _os
-        tf = step.get("text", "")
-        tp = _os.path.join(base_dir(), "templates", tf)
-        if not _os.path.exists(tp):
-            self.log(f"[{device}] ไม่พบเทมเพลต {tf} → ข้าม", "warn")
+        """เจอรูปแล้วกด (เช็ครอบเดียว ไม่รอ) — รับภาพจากกรอบที่ลากบนจอ หรือไฟล์ใน templates/"""
+        tmpl_bytes, tmpl_path = self._step_template(step)
+        if tmpl_bytes is None and tmpl_path is None:
+            if step.get("text"):
+                self.log(f"[{device}] ไม่พบเทมเพลต {step.get('text')} → ข้าม", "warn")
+            else:
+                self.log(f"[{device}] detect_image: ยังไม่ได้ตั้งภาพ → ข้าม", "warn")
             return
         ok, data = self.controller.capture_screenshot_bytes(device)
         if not ok:
             return
-        found, mx, my, _msg = self.controller.find_image_in_bytes(data, tp, threshold=0.8)
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        found, mx, my, _msg = self._match_step_template(data, step, threshold)
         if found:
             self.controller.tap(device, mx, my)
 
@@ -930,15 +1001,50 @@ class MacroRunner:
         return True
 
     # ---------- รอภาพก่อนทำต่อ (พอร์ตจาก _step_wait_for_image) ----------
-    def _wait_for_image(self, device, step):
+    @staticmethod
+    def _step_template(step):
+        """ภาพต้นแบบของ step ที่ต้องเทียบภาพ (wait_for_image / detect_image)
+
+        รับได้ 2 ทาง: wait_img = base64 จากการลากกรอบบนจอจริง (ใช้บ่อยกว่า สะดวกกว่า)
+        หรือ text = ชื่อไฟล์ใน templates/ (แบบเดิม ยังใช้ได้ ไม่ทำสคริปต์เก่าพัง)
+
+        ตั้งใจไม่ใช้ชื่อ anchor_img เพราะ step พวกนี้โดน 'ด่าน anchor' ด้วย —
+        anchor_img บน step เดียวกันแปลว่า 'รอเห็นภาพนี้ก่อนค่อยเริ่มทำ step' ซึ่งคนละความหมาย
+        (if_image ใช้ anchor_img เป็นภาพเงื่อนไขได้ เพราะมันถูกดักจัดการก่อนถึงด่าน anchor)
+
+        คืน (tmpl_bytes, tmpl_path) — อย่างใดอย่างหนึ่งเป็น None
+        """
+        b64 = step.get("wait_img") or ""
+        if b64:
+            try:
+                data = base64.b64decode(b64)
+                if data:
+                    return data, None
+            except Exception:
+                pass
         tf = (step.get("text") or "").strip()
-        if not tf:
-            self.log(f"[{device}] wait_for_image: ไม่ได้ระบุไฟล์รูป → ข้าม", "warn")
+        if tf:
+            p = os.path.join(templates_dir(), tf)
+            if os.path.exists(p):
+                return None, p
+        return None, None
+
+    def _match_step_template(self, data, step, threshold):
+        """เทียบภาพต้นแบบของ step กับภาพจอ — เลือกวิธีตามว่าเป็น base64 หรือไฟล์"""
+        tmpl_bytes, tmpl_path = self._step_template(step)
+        if tmpl_bytes is not None:
+            return self.controller.match_template_bytes(data, tmpl_bytes, threshold)
+        return self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
+
+    def _wait_for_image(self, device, step):
+        tmpl_bytes, tmpl_path = self._step_template(step)
+        if tmpl_bytes is None and tmpl_path is None:
+            if step.get("text"):
+                self.log(f"[{device}] ไม่พบเทมเพลต {step.get('text')} → ข้าม", "warn")
+            else:
+                self.log(f"[{device}] wait_for_image: ยังไม่ได้ตั้งภาพ (ลากกรอบจากจอ หรือใส่ชื่อไฟล์) → ข้าม", "warn")
             return
-        tp = os.path.join(templates_dir(), tf)
-        if not os.path.exists(tp):
-            self.log(f"[{device}] ไม่พบเทมเพลต {tf} → ข้าม", "warn")
-            return
+        tf = (step.get("text") or "").strip() or "ภาพที่ลากกรอบไว้"
         timeout = float(step.get("timeout", 30) or 30)
         interval = float(step.get("interval", 1.0) or 1.0)
         threshold = float(step.get("threshold", 0.8) or 0.8)
@@ -950,7 +1056,7 @@ class MacroRunner:
                 return
             ok, data = self.controller.capture_screenshot_bytes(device)
             if ok:
-                found, mx, my, _m = self.controller.find_image_in_bytes(data, tp, threshold=threshold)
+                found, mx, my, _m = self._match_step_template(data, step, threshold)
                 if found:
                     self.log(f"[{device}] เจอรูป '{tf}' ({mx},{my})", "ok")
                     if click:
@@ -960,6 +1066,55 @@ class MacroRunner:
             if not self._interruptible_sleep(interval):
                 return
         self.log(f"[{device}] รอครบ {timeout:g} วิ ยังไม่เจอรูป '{tf}'", "warn")
+
+    # ---------- กดรัวจนกว่าภาพเป้าหมายจะขึ้น ----------
+    def _tap_until_image(self, device, step):
+        """แตะพิกัดเดิมซ้ำ ๆ ทุก interval วินาที จนกว่าจะเจอ 'ภาพเป้าหมาย' แล้วค่อยไปขั้นต่อไป
+
+        ใช้กับหน้าโฆษณา/คัตซีนที่ต้องกดข้ามหลายทีติดกัน และไม่รู้ว่าต้องกดกี่ครั้ง —
+        การใส่ tap ซ้ำ ๆ ไว้เป็นสิบขั้นเดาจำนวนเอาจะพังทันทีที่โฆษณายาว/สั้นกว่าที่เดา
+
+        เช็คภาพก่อนกดเสมอ (ถ้าถึงหน้าที่ต้องการอยู่แล้วจะได้ไม่กดเกินไปอีกที)
+        ครบเวลาแล้วยังไม่เจอ = เตือนแล้วไปต่อ ไม่ล้มทั้งบัญชี (ให้ด่าน anchor ของขั้นถัดไปจัดการ)
+        """
+        tmpl_bytes, tmpl_path = self._step_template(step)
+        if tmpl_bytes is None and tmpl_path is None:
+            self.log(f"[{device}] กดรัวจนเจอรูป: ยังไม่ได้ตั้งภาพเป้าหมาย → ข้าม", "warn")
+            return
+        try:
+            x, y = self._as_int(step.get("x")), self._as_int(step.get("y"))
+        except (TypeError, ValueError):
+            self.log(f"[{device}] กดรัวจนเจอรูป: ยังไม่ได้ตั้งพิกัดที่จะกด → ข้าม", "warn")
+            return
+
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = max(0.05, float(step.get("interval", 0.5) or 0.5))
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        tap_found = bool(step.get("click"))     # เจอแล้วกดที่ภาพด้วยไหม (ปกติแค่ไปขั้นต่อไป)
+        name = (step.get("text") or "").strip() or "ภาพที่ลากกรอบไว้"
+
+        self.log(f"[{device}] กดรัวที่ ({x},{y}) ทุก {interval:g} วิ จนเจอ '{name}' "
+                 f"(สูงสุด {timeout:g} วิ)…", "info")
+        deadline = time.time() + timeout
+        taps = 0
+        while time.time() < deadline:
+            if not self.running():
+                return
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok:
+                found, mx, my, _m = self._match_step_template(data, step, threshold)
+                if found:
+                    self.log(f"[{device}] เจอ '{name}' แล้ว (กดไป {taps} ครั้ง) → ไปต่อ", "ok")
+                    if tap_found:
+                        self.controller.tap(device, mx, my)
+                    self._sleep_delay(step)
+                    return
+            self.controller.tap(device, x, y)
+            taps += 1
+            if not self._interruptible_sleep(interval):
+                return
+        self.log(f"[{device}] กดรัวครบ {timeout:g} วิ ({taps} ครั้ง) ยังไม่เจอ '{name}' → ไปต่อ", "warn")
+        self._sleep_delay(step)
 
     # ---------- แตะ element ตามข้อความ/id (พอร์ตจาก _step_tap_text) ----------
     def _tap_text(self, device, account, step):

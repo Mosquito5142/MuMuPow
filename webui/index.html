@@ -83,7 +83,7 @@
             </div>
             <div style="display:flex;gap:12px;align-items:flex-start">
               <div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#7C8CA3">ความถี่เช็ค Anchor (วิ)</span><input id="anchorPoll" class="in" value="2.0" style="height:36px;padding:0 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;font-family:'IBM Plex Mono',monospace;font-size:13px;color:#C7D2E0"></div>
-              <label title="รันทีละชุด (ชุดละเท่าจำนวนจอ) แล้วหยุดรอให้ตรวจจอเองก่อน ค่อยกด &quot;รันชุดถัดไป&quot; — ปิดไว้ถ้าอยากให้รันยาวต่อเนื่องอัตโนมัติ" style="flex:1;display:flex;align-items:center;gap:8px;font-size:12px;color:#90A0B7;margin-top:22px;cursor:pointer"><input type="checkbox" id="pauseBatch" style="width:16px;height:16px;border-radius:5px;accent-color:#10B981;cursor:pointer">หยุดรอตรวจทานทีละชุด</label>
+              <div style="flex:1;display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#7C8CA3">โหมดการรัน</span><div style="display:flex;align-items:center;height:36px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;position:relative"><select id="runMode" class="prof" style="width:100%;height:36px;padding:0 30px 0 11px;background:transparent;border:0;font-size:12.5px;color:#C7D2E0;cursor:pointer;appearance:none"><option value="parallel">รันพร้อมกันทุกจอ (เร็วสุด)</option><option value="batch">หยุดรอตรวจทานทีละชุด</option><option value="sequential">รันทีละจอ (กันแคปช่า)</option></select><i data-lucide="chevron-down" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3;position:absolute;right:10px;pointer-events:none"></i></div></div>
             </div>
             <div style="display:flex;gap:11px;margin-top:2px">
               <div id="runBtn" onclick="onRunBtnClick()" style="flex:1;height:56px;border-radius:12px;background:rgba(16,185,129,.14);border:1px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center;gap:10px;color:#6EE7B7;font-weight:600;font-size:14px;cursor:pointer"><i data-lucide="play" width="18" height="18" stroke-width="2.25"></i>รัน</div>
@@ -196,6 +196,7 @@
             <div id="fldAction" style="display:none;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">สถานะปุ่ม</span><select id="sfAction" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 11px;font-size:12.5px;color:#C7D2E0;cursor:pointer"><option value="press">press (กดแล้วปล่อย)</option><option value="down">down (กดค้าง)</option><option value="up">up (ปล่อย)</option></select></div>
             <div id="fldSeconds" style="display:none;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">รอกี่วินาที</span><input id="sfSeconds" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0"></div>
             <div id="fldTimeout" style="display:none;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">รอสูงสุด (วิ, timeout)</span><input id="sfTimeout" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0"></div>
+            <div id="fldInterval" style="display:none;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">กดซ้ำทุกกี่วินาที</span><input id="sfInterval" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0"></div>
             <div id="fldThreshold" style="display:none;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">ความเหมือนขั้นต่ำ (0–1, ปกติ 0.8)</span><input id="sfThreshold" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0"></div>
             <div style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">คำอธิบายขั้นตอน</span><input id="sfDesc" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-size:12.5px;color:#C7D2E0"></div>
             <div id="fldDelay" style="display:flex;flex-direction:column;gap:5px"><span style="font-size:11.5px;color:#90A0B7">หน่วงหลังทำ (วิ)</span><input id="sfDelay" class="in" style="height:38px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 12px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#C7D2E0"></div>
@@ -286,8 +287,8 @@
 </div>
 
 <!-- ?v= กันแคชเก่า (WebView2/เบราว์เซอร์แคชไฟล์ .js ข้ามเวอร์ชัน ทำปุ่มใหม่หาย) — บัมพ์เลขทุกครั้งที่แก้ JS -->
-<script src="app.js?v=20260808b"></script>
-<script src="tools.js?v=20260808b"></script>
-<script src="flow.js?v=20260808b"></script>
+<script src="app.js?v=20260808g"></script>
+<script src="tools.js?v=20260808g"></script>
+<script src="flow.js?v=20260808g"></script>
 </body>
 </html>

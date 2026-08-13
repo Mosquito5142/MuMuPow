@@ -43,6 +43,12 @@ function flowClick(ev, path){
   flowSelect(path);
 }
 function flowClearRange(){ FLOW_RANGE = null; renderFlow(); }
+
+async function flowClearPreview(){
+  if(!hasPy() || !SEL_PATH) return;
+  FLOW = await PY.flow_clear_preview(SEL_PATH);
+  await flowSelect(SEL_PATH);
+}
 let RETRY_ARROWS = [];        // เส้นวนกลับที่ต้องวาด: [{from, to}] (path string ทั้งคู่) — เก็บระหว่างเรนเดอร์บล็อก
 
 const DEMO_FLOW = { name: 'ล็อกอิน + เก็บของ', typeOptions: null, steps: [
@@ -206,7 +212,7 @@ function stepIcon(t){
     start_app:'power',stop_app:'power-off',detect_image:'image',wait_for_image:'image',
     tap_text:'text-cursor-input',wait_for_text:'search',clear_ads_loop:'x-circle',fetch_otp:'mail',
     screenshot:'camera',read_diamond:'gem',run_set:'layers',keyboard:'keyboard',
-    find_yellow_stage:'star',if_image:'git-branch'})[t] || 'circle';
+    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2'})[t] || 'circle';
 }
 function stepDetail(s){
   const t = s.type||'tap';
@@ -216,6 +222,7 @@ function stepDetail(s){
   if(t==='keyevent') return 'ปุ่ม '+(s.code||'?');
   if(t==='run_set') return s.set||'';
   if(t==='keyboard') return (s.key||'')+' ('+(s.action||'')+')';
+  if(t==='tap_until_image') return 'กดรัว ('+(s.x||'?')+','+(s.y||'?')+') ทุก '+(s.interval||0.5)+' วิ จนเจอรูป';
   return s.text || s.desc || '';
 }
 
@@ -226,7 +233,10 @@ function blockWarning(s){
   if(t === 'tap' && (empty(s.x) || empty(s.y)) && !s.anchor_tap) return 'ยังไม่ตั้งพิกัด — กด "ตั้งพิกัดจากภาพจอ"';
   if(t === 'swipe' && (empty(s.x) || empty(s.x2))) return 'ยังไม่ตั้งจุดเริ่ม/ปลายการปัด';
   if(t === 'text' && !String(s.text || '').trim()) return 'ยังไม่ใส่ข้อความที่จะพิมพ์';
-  if((t === 'detect_image' || t === 'wait_for_image') && !String(s.text || '').trim()) return 'ยังไม่ระบุไฟล์รูปต้นแบบ';
+  // ตั้งภาพได้ 2 ทาง: ลากกรอบจากจอ (wait_img) หรือใส่ชื่อไฟล์ใน templates/ (text) — มีอย่างใดอย่างหนึ่งก็พอ
+  if((t === 'detect_image' || t === 'wait_for_image' || t === 'tap_until_image') && !s.wait_img && !String(s.text || '').trim())
+    return 'ยังไม่ตั้งภาพ — กด "ตั้งภาพจากจอ (ลากกรอบ)"';
+  if(t === 'tap_until_image' && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งพิกัดที่จะกดรัว';
   if((t === 'tap_text' || t === 'wait_for_text') && !String(s.text || '').trim()) return 'ยังไม่ใส่ข้อความ/id ที่จะหา';
   if(t === 'run_set' && !String(s.set || '').trim()) return 'ยังไม่เลือกชุดคำสั่ง';
   if(t === 'start_app' || t === 'stop_app'){ if(!String(s.text || '').trim()) return 'ยังไม่ใส่ชื่อแพ็กเกจแอป'; }
@@ -244,6 +254,17 @@ function flowChain(steps, basePath){
   });
   html += connector(basePath.concat([steps.length]));
   return html;
+}
+
+// เลขขั้นที่โชว์บนบล็อก — นับในลิสต์ของตัวเอง (เส้นหลักนับของเส้นหลัก, ในกิ่งนับของกิ่งนั้น)
+// ต้องตรงกับเลขในช่อง 'วนกลับไปทำขั้นไหน' ของหน้าตั้งค่ารอภาพ ซึ่งก็อ้างลิสต์เดียวกัน
+// ไม่งั้นผู้ใช้จะเลือกเป้าหมายผิดขั้นโดยไม่รู้ตัว
+function stepNumBadge(path, color){
+  const n = path[path.length - 1] + 1;
+  return '<span title="ขั้นที่ ' + n + ' (ใช้เลขนี้ตอนตั้งวนกลับ)" style="flex:none;min-width:20px;height:20px;'
+    + 'padding:0 5px;border-radius:6px;background:rgba(255,255,255,.06);border:1px solid ' + color + ';'
+    + 'display:flex;align-items:center;justify-content:center;font-family:\'IBM Plex Mono\',monospace;'
+    + 'font-size:10.5px;font-weight:600;color:' + color + '">' + n + '</span>';
 }
 
 function flowBlock(s, path){
@@ -264,6 +285,7 @@ function flowBlock(s, path){
     return '<div style="display:flex;flex-direction:column;align-items:center">'
       // หัวข้าวหลามตัด (เงื่อนไข)
       + '<div onclick="flowClick(event,' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;display:flex;gap:9px;align-items:center;padding:11px 16px;border-radius:12px;background:#221B0A;border:1.5px solid ' + border + '">'
+      + stepNumBadge(path, '#B99B4A')
       + '<i data-lucide="git-branch" width="15" height="15" stroke-width="2" style="color:#FBBF24"></i>'
       + '<span style="font-size:12.5px;font-weight:600;color:#FBBF24">' + esc(s.desc || 'ถ้าเจอภาพ?') + '</span>'
       + (hasImg ? '<img src="data:image/png;base64,' + s.anchor_img + '" style="height:26px;border-radius:5px;border:1px solid #7A5A1E">'
@@ -297,11 +319,18 @@ function flowBlock(s, path){
   const warn = blockWarning(s);
   const bColor = warn ? '#F87171' : border;
   return '<div onclick="flowClick(event,' + pj(path) + ')" data-fpath="' + pathStr + '" style="' + glow + 'cursor:pointer;min-width:220px;max-width:330px;display:flex;gap:9px;align-items:center;padding:10px 13px;border-radius:11px;background:' + (selected?'rgba(16,185,129,.08)':'#0A0F19') + ';border:1.5px solid ' + bColor + '">'
+    + stepNumBadge(path, warn ? '#F87171' : '#5C6B82')
     + '<i data-lucide="' + stepIcon(t) + '" width="15" height="15" stroke-width="1.9" style="color:' + (hasImg?'#FBBF24':'#7DD3FC') + ';flex:none"></i>'
     + '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:500">' + esc(s.desc || typeTH(t)) + '</div>'
     + '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:' + (warn?'#FCA5A5':'#7C8CA3') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (warn ? '⚠ ' + esc(warn) : esc(typeTH(t)) + ' · ' + esc(stepDetail(s))) + '</div></div>'
     + (hasRetry ? '<i data-lucide="repeat" width="13" height="13" style="color:#FBBF24;flex:none" title="ไม่เจอภาพ → วนกลับไปทำขั้นก่อนหน้าใหม่"></i>' : '')
     + (hasImg ? '<i data-lucide="image" width="13" height="13" style="color:#FBBF24;flex:none" title="มีภาพ anchor"></i>' : '')
+    // ภาพต้นแบบที่ขั้นนี้รอ/จะกด (ลากกรอบไว้) — ขอบเหลืองเพราะมีผลต่อการรันจริง
+    + (s.wait_img ? '<img src="data:image/png;base64,' + s.wait_img + '" title="ภาพที่ขั้นนี้รอให้เจอ" '
+        + 'style="flex:none;max-width:52px;height:34px;object-fit:contain;border-radius:5px;border:1px solid #7A5A1E;background:#0A0F19">' : '')
+    // ภาพช่วยจำว่าขั้นนี้กดปุ่มอะไร (กากบาทแดง = จุดที่กดจริง) — ไม่มีผลต่อการรัน
+    + (s.preview_img ? '<img src="data:image/png;base64,' + s.preview_img + '" title="ตำแหน่งที่กด — กากบาทแดงคือจุดกดจริง" '
+        + 'style="flex:none;width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #24344B">' : '')
     + '</div>';
 }
 
@@ -341,13 +370,21 @@ function renderFlowActions(s, path){
   html += btn('flowMoveSel(1)','arrow-down','ลง','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   html += btn('flowStartCut()','scissors','ย้ายไปที่อื่น','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
   html += btn('flowMoveIntoBranch()','git-branch','ย้ายเข้าเงื่อนไข','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
-  if(t==='tap'||t==='swipe'){
+  if(t==='tap'||t==='swipe'||t==='tap_until_image'){
     html += btn('flowPickCoord()','crosshair','ตั้งพิกัดจากภาพจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
     html += btn('flowPickImage(\'anchor\')','image-plus','อัดภาพรอก่อนกด','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
+  }
+  if(s.preview_img){
+    html += btn('flowClearPreview()','image-off','ลบภาพจุดที่กด','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   }
   if(t==='if_image'){
     html += btn('flowPickImage(\'cond\')','image-plus','ตั้งภาพเงื่อนไขจากจอ','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
     html += btn('flowTestMatch()','flask-conical','ทดสอบว่าเจอไหม','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+  }
+  if(t==='wait_for_image'||t==='detect_image'||t==='tap_until_image'){
+    // ลากกรอบจากจอจริงแทนการพิมพ์ชื่อไฟล์ใน templates/ เอง
+    html += btn('flowPickImage(\'wait\')','image-plus','ตั้งภาพจากจอ (ลากกรอบ)','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
+    if(s.wait_img) html += btn('flowTestWaitMatch()','flask-conical','ทดสอบว่าเจอไหม','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   }
   if(s.anchor_img && t!=='if_image'){
     html += btn('flowAnchorOpts()','settings-2','ตั้งค่ารอภาพ','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
@@ -492,8 +529,10 @@ async function flowPickCoord(){
       document.getElementById('fpHint').textContent = 'จุดเริ่ม (' + Math.round(p.x) + ',' + Math.round(p.y) + ') ✓ — คลิกจุดปล่อย';
       return;
     }
-    if(isSwipe){ FLOW = await PY.flow_set_xy(SEL_PATH, first.x, first.y, p.x, p.y); }
-    else { FLOW = await PY.flow_set_xy(SEL_PATH, p.x, p.y); }
+    // ส่งภาพจอที่คลิกไปด้วย -> ฝั่ง Python ครอปเก็บภาพรอบจุดกดไว้เป็นตัวช่วยจำ
+    // (ใช้ภาพเดียวกับที่ผู้ใช้เพิ่งเห็นและคลิก ไม่แคปใหม่ กันจอเปลี่ยนระหว่างนั้น)
+    if(isSwipe){ FLOW = await PY.flow_set_xy(SEL_PATH, first.x, first.y, p.x, p.y, shot.img); }
+    else { FLOW = await PY.flow_set_xy(SEL_PATH, p.x, p.y, null, null, shot.img); }
     closeModal();
     await flowSelect(SEL_PATH);
   });
@@ -504,6 +543,7 @@ async function flowPickImage(mode){
   const shot = await PY.screenshot_b64();
   if(!shot || !shot.ok){ openModal('ตั้งภาพ','image-plus','<div style="font-size:12.5px;color:#FCA5A5">แคปจอไม่ได้ — เลือกจอก่อน</div>'); return; }
   const hint = mode==='cond' ? 'ลากกรอบคลุม "ภาพที่ใช้เป็นเงื่อนไข" (เช่น ป๊อปอัพ/ปุ่มที่จะเช็คว่าโผล่ไหม)'
+             : mode==='wait' ? 'ลากกรอบคลุม "ภาพที่จะรอ/จะกด" — ระบบจะวนเช็คจนเจอ แล้วกดตรงกลางภาพนั้นให้'
                              : 'ลากกรอบคลุม "ภาพที่ต้องเห็นก่อนกด" (เลือกจุดนิ่งๆ ใกล้ปุ่ม)';
   openModal('ตั้งภาพจากการลากกรอบ · ' + esc(shot.device||''), 'image-plus',
     '<div style="font-size:12px;color:#7C8CA3;margin-bottom:8px">' + hint + '</div>'
@@ -549,6 +589,17 @@ async function flowTestDraft(){
     ? '✅ เจอบนจอตอนนี้ (' + r.x + ',' + r.y + ') — ใช้ได้'
     : '❌ ไม่เจอ/ความเหมือนต่ำ — ลองเลือกบริเวณที่นิ่งกว่านี้';
 }
+async function flowTestWaitMatch(){
+  if(!hasPy() || !SEL_PATH) return;
+  const st = (await PY.flow_get_step(SEL_PATH)).step || {};
+  if(!st.wait_img){ notReady('ยังไม่ได้ลากกรอบภาพ'); return; }
+  const r = await PY.test_anchor_match(st.wait_img, st.threshold || 0.8);
+  openModal('ทดสอบภาพต้นแบบ', 'flask-conical',
+    '<div style="font-size:13px;color:' + (r&&r.found?'#6EE7B7':'#FCA5A5') + '">'
+    + (r&&r.found ? '✅ เจอบนจอตอนนี้ ที่ (' + r.x + ',' + r.y + ') — ขั้นนี้จะกดตรงนั้น'
+                  : '❌ ไม่เจอบนจอตอนนี้ — ' + esc((r&&(r.msg||r.error))||'')) + '</div>');
+}
+
 async function flowTestMatch(){
   if(!hasPy() || !SEL_PATH) return;
   const st = (await PY.flow_get_step(SEL_PATH)).step || {};

@@ -356,7 +356,8 @@ class Api:
             parts.append(f"ถูกหยุด {stopped}")
         log_cb("สรุปผลรอบนี้: " + " · ".join(parts), "ok" if not stuck else "warn")
 
-    def run(self, anchor_poll=None, pause_between_batches=False):
+    def run(self, anchor_poll=None, pause_between_batches=False, sequential=False,
+            sequential_gap=None):
         if self._running:
             self._push_log("กำลังรันอยู่แล้ว", "warn")
             return {"ok": False}
@@ -377,6 +378,7 @@ class Api:
         self._run_state = {}
         self._run_log = []
         self._awaiting_next_batch = False
+        self._sequential = bool(sequential)
         self._batch_devices = devices
         self._batch_pending = list(accounts)
 
@@ -388,7 +390,32 @@ class Api:
         runner.profile_name = self.current_profile or ""
         self._runner = runner
 
-        if pause_between_batches:
+        if sequential:
+            # ทีละจอ ไม่ขนาน — ช้ากว่ามากแต่ไม่โดนแคปช่าจากการยิงพร้อมกันหลายจอ
+            try:
+                gap = (float(sequential_gap[0]), float(sequential_gap[1])) if sequential_gap else (8.0, 20.0)
+            except (TypeError, ValueError, IndexError):
+                gap = (8.0, 20.0)
+
+            def worker():
+                try:
+                    self._run_log_cb(f"เริ่มรันแบบทีละจอ '{self.current_profile}' · {len(accounts)} รหัส "
+                                     f"บน {len(devices)} จอ (ยิงทีละเครื่อง เว้นจังหวะ "
+                                     f"{gap[0]:g}–{gap[1]:g} วิ กันแคปช่า)", "ok")
+                    runner.run_sequential(devices, accounts, gap=gap)
+                    self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
+                    self._persist_run_results(runner.account_results, self._run_log_cb)
+                    if self._running:
+                        if self._paused:
+                            self._run_log_cb(f"หยุดรอผู้ใช้แก้ไข {len(self._paused)} จอ — ดูแผง 'จอที่รอแก้ไข' ด้านบน", "warn")
+                        else:
+                            self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
+                except Exception as e:
+                    self._run_log_cb(f"ระบบรันขัดข้อง: {e}", "err")
+                finally:
+                    self._running = False
+            self._run_thread = threading.Thread(target=worker, daemon=True)
+        elif pause_between_batches:
             self._run_log_cb(f"เริ่มรันแบบทีละชุด '{self.current_profile}' · {len(accounts)} รหัส "
                              f"บน {len(devices)} จอ (ชุดละ {len(devices)} ไอดี — หยุดรอตรวจทานหลังแต่ละชุด)", "ok")
             self._run_thread = threading.Thread(target=self._run_next_batch, daemon=True)
@@ -937,13 +964,15 @@ class Api:
                 "clear_ads_loop": "เคลียร์โฆษณา", "fetch_otp": "กรอก OTP", "screenshot": "ถ่ายภาพ",
                 "read_diamond": "อ่านเพชร", "story_auto": "เล่นเนื้อเรื่อง", "run_set": "ชุดคำสั่ง",
                 "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง",
+                "tap_until_image": "กดรัวจนเจอรูป",
                 "if_image": "ทางเลือก (ถ้าเจอภาพ)"}
     _STEP_ICON = {"tap": "mouse-pointer-click", "text": "type", "keyevent": "smartphone", "swipe": "move",
                   "sleep": "clock", "start_app": "power", "stop_app": "power-off", "detect_image": "image",
                   "wait_for_image": "image", "tap_text": "text-cursor-input", "wait_for_text": "search",
                   "clear_ads_loop": "x-circle", "fetch_otp": "mail", "screenshot": "camera",
                   "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
-                  "if_image": "git-branch", "story_auto": "clapperboard"}
+                  "if_image": "git-branch", "story_auto": "clapperboard",
+                  "tap_until_image": "mouse-pointer-2"}
 
     # ชนิด step -> ฟิลด์ที่ใช้จริง (ตัวอื่นถูกล้างทิ้งเมื่อเปลี่ยนชนิด) — อิงจาก _build_step_from_form เดิม
     STEP_FIELDS = {
@@ -956,6 +985,7 @@ class Api:
         "stop_app": ["text", "delay"],
         "detect_image": ["text", "delay"],
         "wait_for_image": ["text", "timeout", "delay"],
+        "tap_until_image": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
         "tap_text": ["text", "delay"],
         "wait_for_text": ["text", "timeout", "delay"],
         "clear_ads_loop": ["text", "delay"],
@@ -979,6 +1009,9 @@ class Api:
         "stop_app": {"text": "", "delay": 1.0},
         "detect_image": {"text": "", "delay": 1.0},
         "wait_for_image": {"text": "", "timeout": 30, "delay": 0},
+        # กดรัวข้ามโฆษณา: 0.5 วิ/ครั้ง คือจังหวะที่เกมส่วนใหญ่รับไหวโดยไม่หลุด
+        "tap_until_image": {"x": "0", "y": "0", "text": "", "interval": 0.5,
+                            "timeout": 30, "threshold": 0.8, "delay": 0},
         "tap_text": {"text": "", "delay": 1.0},
         "wait_for_text": {"text": "", "timeout": 30, "delay": 0},
         "clear_ads_loop": {"text": "", "delay": 1.0},
@@ -1036,7 +1069,7 @@ class Api:
         order = ["tap", "swipe", "text", "if_image", "keyevent", "sleep", "start_app", "stop_app",
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
-                 "screenshot", "find_yellow_stage", "story_auto"]
+                 "screenshot", "find_yellow_stage", "story_auto", "tap_until_image"]
         return [{"value": t, "label": f"{self._STEP_TH.get(t, t)} ({t})"} for t in order]
 
     def _canonical_step(self, t, merged, existing=None):
@@ -1062,9 +1095,10 @@ class Api:
         if t == "if_image":
             step.setdefault("then", [])
             step.setdefault("else", [])
-        # คงค่า anchor (ภาพ+ตั้งค่า) ที่ไม่ได้อยู่ในฟอร์ม ไม่ให้หายตอนแก้
+        # คงค่าที่ไม่ได้อยู่ในฟอร์มไว้ ไม่ให้หายตอนแก้: ภาพ anchor, ภาพช่วยจำจุดที่กด
+        # และภาพต้นแบบของ 'รอรูป'/'เจอรูปกด' ที่ลากกรอบไว้
         for k, v in (existing or {}).items():
-            if k.startswith("anchor"):
+            if k.startswith("anchor") or k in ("preview_img", "wait_img", "wait_region"):
                 step[k] = v
         return step
 
@@ -1452,8 +1486,59 @@ class Api:
         except Exception:
             return {"ok": False}
 
-    def flow_set_xy(self, path, x, y, x2=None, y2=None):
-        """ตั้งพิกัดจากตัวช่วยภาพจอ (คลิกบนภาพ)"""
+    # ขนาดกรอบรอบจุดกด (พิกเซลบนจอจริง) และขนาดสูงสุดของภาพย่อที่เก็บลงไฟล์สคริปต์
+    # ต้องเล็กพอที่สคริปต์ 100 ขั้นจะไม่บวมจนเปิดช้า แต่ยังพอให้คนดูออกว่าเป็นปุ่มอะไร
+    PREVIEW_BOX = 150
+    PREVIEW_MAX = 96
+
+    def _tap_preview_b64(self, data_uri, x, y):
+        """ครอปภาพรอบ ๆ จุดที่กด + วางกากบาทตรงจุดกดจริง คืน base64 JPEG (ย่อแล้ว)
+
+        เก็บไว้ดูอย่างเดียว ตัวรันไม่เคยอ่านฟิลด์นี้ — ต่างจาก anchor_img ที่ทำให้ตัวรัน
+        'รอจนเจอภาพนั้น' ก่อนกด ถ้าเอาไปปนกันจะกลายเป็นเปลี่ยนพฤติกรรมสคริปต์โดยไม่ตั้งใจ
+        """
+        import base64 as _b64
+        try:
+            import cv2
+            import numpy as np
+            raw = data_uri.split(",", 1)[1] if "," in (data_uri or "") else (data_uri or "")
+            img = cv2.imdecode(np.frombuffer(_b64.b64decode(raw), np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                return ""
+            ih, iw = img.shape[:2]
+            cx, cy = int(round(float(x))), int(round(float(y)))
+            half = self.PREVIEW_BOX // 2
+            x0, y0 = max(0, cx - half), max(0, cy - half)
+            x1, y1 = min(iw, cx + half), min(ih, cy + half)
+            crop = img[y0:y1, x0:x1].copy()
+            if crop.size == 0:
+                return ""
+
+            # กากบาทบอกจุดกดจริงในกรอบ (เผื่อปุ่มใหญ่กว่ากรอบ จะได้รู้ว่ากดตรงไหนของปุ่ม)
+            mx, my = cx - x0, cy - y0
+            cv2.line(crop, (mx - 7, my), (mx + 7, my), (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.line(crop, (mx, my - 7), (mx, my + 7), (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.circle(crop, (mx, my), 3, (0, 0, 255), 1, cv2.LINE_AA)
+
+            ch, cw = crop.shape[:2]
+            scale = min(1.0, float(self.PREVIEW_MAX) / max(ch, cw))
+            if scale < 1.0:
+                crop = cv2.resize(crop, (max(1, int(cw * scale)), max(1, int(ch * scale))),
+                                  interpolation=cv2.INTER_AREA)
+            # JPEG ไม่ใช่ PNG: ภาพเกมเป็นภาพถ่าย PNG บีบไม่ลง (วัดได้ ~20 KB/ขั้น = สคริปต์
+            # 105 ขั้นโต 2 MB) ภาพนี้ใช้ดูอย่างเดียว ไม่ได้เอาไปเทียบ จึงยอมให้ lossy ได้
+            enc = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 72])[1]
+            return _b64.b64encode(enc.tobytes()).decode("ascii")
+        except Exception as e:
+            self._push_log(f"เก็บภาพจุดที่กดไม่สำเร็จ: {e}", "warn")
+            return ""
+
+    def flow_set_xy(self, path, x, y, x2=None, y2=None, shot=None):
+        """ตั้งพิกัดจากตัวช่วยภาพจอ (คลิกบนภาพ)
+
+        ถ้าส่งภาพจอที่ผู้ใช้คลิก (shot) มาด้วย จะเก็บภาพย่อรอบจุดกดไว้ในฟิลด์ preview_img
+        เพื่อให้ตอนกลับมาแก้สคริปต์ทีหลังดูออกว่าขั้นนี้กดปุ่มอะไร โดยไม่ต้องเปิดจอเทียบ
+        """
         try:
             lst, i = self._locate(path)
             lst[i]["x"] = str(int(round(float(x))))
@@ -1461,18 +1546,43 @@ class Api:
             if x2 is not None and y2 is not None:
                 lst[i]["x2"] = str(int(round(float(x2))))
                 lst[i]["y2"] = str(int(round(float(y2))))
+            if shot:
+                prev = self._tap_preview_b64(shot, x, y)
+                if prev:
+                    lst[i]["preview_img"] = prev
             self._push_log(f"ตั้งพิกัดบล็อกจากภาพจอแล้ว ({lst[i]['x']},{lst[i]['y']})", "ok")
         except Exception as e:
             self._push_log(f"ตั้งพิกัดไม่ได้: {e}", "warn")
         return self.get_flow()
 
+    def flow_clear_preview(self, path):
+        """ลบภาพช่วยจำของบล็อกนี้ (ไม่กระทบการทำงาน แค่ทำให้ไฟล์เล็กลง)"""
+        try:
+            lst, i = self._locate(path)
+            lst[i].pop("preview_img", None)
+            self._push_log("ลบภาพจุดที่กดแล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"ลบภาพไม่ได้: {e}", "warn")
+        return self.get_flow()
+
     def flow_set_image(self, path, b64, region, mode="cond"):
         """ตั้งภาพจากการลากกรอบบนภาพจอ:
         mode='cond'   → ภาพเงื่อนไขของ if_image (anchor_img)
-        mode='anchor' → ภาพ anchor gate ของ tap/swipe (รอเห็นภาพก่อนกด)"""
+        mode='anchor' → ภาพ anchor gate ของ tap/swipe (รอเห็นภาพก่อนกด)
+        mode='wait'   → ภาพต้นแบบของ 'รอรูป'/'เจอรูปกด' (wait_img) แทนการพิมพ์ชื่อไฟล์เอง
+
+        'wait' ต้องเก็บคนละฟิลด์กับ anchor เพราะ step พวกนี้ยังมีด่าน anchor ของตัวเองได้
+        ถ้าเขียนทับ anchor_img จะกลายเป็นเปลี่ยนความหมายเป็น 'รอภาพนี้ก่อนเริ่ม step'
+        """
         try:
             lst, i = self._locate(path)
             s = lst[i]
+            if mode == "wait":
+                s["wait_img"] = b64
+                if region:
+                    s["wait_region"] = {k: int(region[k]) for k in ("x", "y", "w", "h")}
+                self._push_log("ตั้งภาพต้นแบบจากการลากกรอบแล้ว", "ok")
+                return self.get_flow()
             s["anchor_img"] = b64
             if region:
                 s["anchor_region"] = {k: int(region[k]) for k in ("x", "y", "w", "h")}
