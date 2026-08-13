@@ -160,8 +160,9 @@ function onRunBtnClick(){ AWAITING_BATCH ? continueBatch() : runMacro(); }
 async function runMacro(){
   if(!hasPy()){ notReady('รัน (ต้องเปิดผ่าน .exe)'); return; }
   const poll = (document.getElementById('anchorPoll')||{}).value || '2.0';
-  const pauseBatch = !!(document.getElementById('pauseBatch')||{}).checked;
-  const r = await PY.run(poll, pauseBatch);
+  const mode = (document.getElementById('runMode')||{}).value || 'parallel';
+  // 'sequential' = ยิงทีละจอ (กันแคปช่าเวลาเว็บจับได้ว่ากดพร้อมกันหลายเครื่อง)
+  const r = await PY.run(poll, mode==='batch', mode==='sequential');
   if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }
 }
 async function continueBatch(){
@@ -346,6 +347,7 @@ const STEP_FIELD_MAP = {
   fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set','Block'],
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
   if_image:['Text','Threshold','Timeout','Delay'],
+  tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
 };
 const STEP_TEXT_LABEL = {
   text:'ข้อความที่พิมพ์ (ใช้ {EMAIL} {PASSWORD} {NAME} ได้)',
@@ -359,8 +361,9 @@ const STEP_TEXT_LABEL = {
   fetch_otp:'แพทเทิร์น OTP (regex เช่น \\d{6})',
   screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
   if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
+  tap_until_image:'ไฟล์รูปเป้าหมาย (.png ใน templates) — หรือกด "ตั้งภาพจากจอ (ลากกรอบ)" ในโหมดโฟลว์',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Threshold','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Threshold','Delay'];
 function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];

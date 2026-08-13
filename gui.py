@@ -21,6 +21,7 @@ from mumu_controller import (
 from macro_runner import (
     MacroRunner,
     DEFAULT_STEP_DELAYS as _DEFAULT_STEP_DELAYS,
+    build_sequential_macro_pairs as _build_sequential_macro_pairs,
 )
 from quick_builder import (
     DEFAULT_COORDINATE_PRESETS,
@@ -192,19 +193,9 @@ def build_status_summary(total_devices, selected_devices, total_accounts, select
     )
 
 
-def build_sequential_macro_pairs(devices, accounts):
-    if not devices:
-        return []
-
-    if not accounts:
-        total = len(devices)
-        return [(device, None, idx, total) for idx, device in enumerate(devices)]
-
-    total = len(accounts)
-    return [
-        (devices[idx % len(devices)], account, idx, total)
-        for idx, account in enumerate(accounts)
-    ]
+# จับคู่ (จอ, บัญชี) ของโหมด 'รันทีละจอ' — ตัวจริงอยู่ที่ macro_runner (ใช้ร่วมกับแอปใหม่)
+# ที่นี่แค่ re-export ไว้ให้โค้ด/เทสเดิมที่อ้าง gui.build_sequential_macro_pairs ยังใช้ได้
+build_sequential_macro_pairs = _build_sequential_macro_pairs
 
 
 # จับคู่ข้อความบางส่วนใน dropdown -> ชนิด step ภายใน (ตรวจตามลำดับ)
