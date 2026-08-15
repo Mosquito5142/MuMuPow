@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -221,3 +222,153 @@ def test_resume_paused_continues_with_remaining_queue():
         assert "a2@x.com" in completed_emails
     finally:
         shutil.rmtree(tmp)
+
+
+def _tap(n):
+    return {"type": "tap", "x": str(n), "y": str(n), "delay": 0}
+
+
+def test_resume_keeps_reporting_the_original_step_number():
+    """บั๊กที่ผู้ใช้เจอ: กด 'รันต่อ' แล้วเหมือนไม่ทำอะไร
+
+    ของเดิม resume ตัดสคริปต์ (macro_steps[root_idx:]) ตัวรันเลยนับขั้นใหม่ตั้งแต่ 0
+    จุดที่ค้างรอบสองจึงถูกบันทึกเป็นขั้น 1 ทั้งที่จริงคือขั้น 4 ผลคือ:
+      - แผงโชว์เลขขั้นผิด และปุ่ม 'แก้ไขที่นี่' กระโดดผิดขั้น
+      - กด 'รันต่อ' อีกครั้ง = เริ่มสคริปต์ใหม่ทั้งหมดตั้งแต่ขั้น 1 (ล็อกอินใหม่)
+    """
+    steps = [_tap(1), _tap(2), _tap(3), _pause_step(), _tap(5)]
+    api, tmp = _api_with_temp_accounts(1, steps)
+    try:
+        api.run(anchor_poll="0.01")
+        api._run_thread.join(timeout=10)
+        assert api.list_paused()["items"][0]["step_path"] == "3"
+
+        api.resume_paused(":7555")
+        for _ in range(100):
+            if not api._active_resumes:
+                break
+            time.sleep(0.05)
+
+        items = api.list_paused()["items"]
+        assert items, "ค้างซ้ำแล้วต้องยังอยู่ในแผง"
+        assert items[0]["step_path"] == "3", "เลขขั้นต้องยังเป็นขั้นเดิมของสคริปต์เต็ม"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_resume_starts_at_the_paused_step_not_from_the_beginning():
+    """รันต่อต้องเริ่มที่ขั้นที่ค้าง ไม่ใช่ไล่ขั้น 1-3 ใหม่"""
+    steps = [_tap(1), _tap(2), _tap(3), _pause_step(), _tap(5)]
+    api, tmp = _api_with_temp_accounts(1, steps)
+    try:
+        api.run(anchor_poll="0.01")
+        api._run_thread.join(timeout=10)
+
+        api.controller.taps.clear()
+        api.controller.found = True          # จำลองว่าผู้ใช้แก้แล้ว รอบนี้เจอภาพ
+        api.resume_paused(":7555")
+        for _ in range(100):
+            if not api._active_resumes:
+                break
+            time.sleep(0.05)
+
+        pts = [(t[1], t[2]) for t in api.controller.taps if t[0] == ":7555"]
+        assert (1, 1) not in pts, "ต้องไม่ย้อนไปทำขั้น 1 ใหม่"
+        assert (5, 5) in pts, "ต้องเดินต่อไปถึงขั้นหลังจุดที่ค้าง"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_retry_target_still_points_at_the_right_step_after_resume():
+    """anchor_retry_target เก็บเป็นดัชนีของสคริปต์เต็ม ถ้า resume ตัดลิสต์ เลขนี้จะชี้ผิดขั้น"""
+    stuck = dict(_pause_step(), anchor_on_fail="retry", anchor_retry_target=1, anchor_retry_limit=1)
+    steps = [_tap(1), _tap(2), _tap(3), stuck, _tap(5)]
+    api, tmp = _api_with_temp_accounts(1, steps)
+    try:
+        api.macro_steps = steps
+        runner = web_app.MacroRunner(api.controller, steps, log_cb=lambda t, k="info": None,
+                                     running_check=lambda: True, anchor_poll=0.01)
+        runner.execute_one(":7555", {"email": "a@x.com"}, start_index=3)
+
+        pts = [(t[1], t[2]) for t in api.controller.taps if t[0] == ":7555"]
+        assert (2, 2) in pts, "ต้องวนกลับไปทำขั้นที่ 2 (ดัชนี 1) ตามที่ตั้งไว้"
+        assert (1, 1) not in pts, "ต้องไม่ไปโดนขั้นที่ 1"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_resume_failures_report_a_reason_instead_of_silence():
+    """บั๊กที่ผู้ใช้เจอ: กด 'รันต่อ' แล้วเงียบสนิท ไม่ขยับ ไม่มีข้อความ
+
+    ของเดิมทุกทางที่รันต่อไม่ได้จะ return {"ok": False} เฉย ๆ และเขียน log ลง self._log
+    ซึ่งคอนโซลตอนรันไม่ได้อ่าน (อ่านจาก self._run_log) ผู้ใช้เลยไม่เห็นอะไรสักอย่าง
+    """
+    api, tmp = _api_with_temp_accounts(1)
+    try:
+        r = api.resume_paused(":7555")           # ไม่มีจุดค้างเลย
+        assert r["ok"] is False
+        assert r.get("error"), "ต้องบอกสาเหตุกลับไปให้ UI แสดง"
+        assert any("รันต่อไม่ได้" in e["text"] for e in api._run_log), \
+            "ต้องเขียนลงช่อง log ที่คอนโซลอ่านจริง (_run_log)"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_resume_explains_when_the_loaded_script_is_too_short():
+    """สลับสคริปต์แล้วกดรันต่อ — ต้องบอกว่าสคริปต์ไม่ตรง ไม่ใช่เงียบ"""
+    steps = [_tap(1), _tap(2), _tap(3), _pause_step(), _tap(5)]
+    api, tmp = _api_with_temp_accounts(1, steps)
+    try:
+        api.run(anchor_poll="0.01")
+        api._run_thread.join(timeout=10)
+        assert api.list_paused()["items"][0]["step_path"] == "3"
+
+        api.macro_steps = [_tap(1)]              # ผู้ใช้สลับไปสคริปต์สั้นกว่า
+        r = api.resume_paused(":7555")
+        assert r["ok"] is False
+        assert "สลับสคริปต์" in r["error"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_stale_resume_flag_does_not_block_future_resumes():
+    """ถ้ารอบก่อนตายไปโดยไม่เคลียร์สถานะ จอนั้นจะกดรันต่อไม่ได้อีกเลยทั้งรอบ
+    ต้องตรวจว่าเธรดยังมีชีวิตอยู่จริงไหม ไม่ใช่เชื่อแค่ว่ามีคีย์ค้างอยู่"""
+    steps = [_tap(1), _pause_step(), _tap(5)]
+    api, tmp = _api_with_temp_accounts(1, steps)
+    try:
+        api.run(anchor_poll="0.01")
+        api._run_thread.join(timeout=10)
+
+        api._active_resumes[":7555"] = {"running": False, "thread": None}   # ซากจากรอบก่อน
+        api.controller.found = True
+        r = api.resume_paused(":7555")
+        assert r["ok"] is True, f"ควรรันต่อได้ แต่ได้: {r.get('error')}"
+        for _ in range(100):
+            if not api._active_resumes:
+                break
+            time.sleep(0.05)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_a_genuinely_running_resume_is_still_rejected():
+    """แต่ถ้ากำลังรันต่ออยู่จริง ๆ ต้องไม่ยิงซ้ำ (กันสองเธรดคุมจอเดียวกัน)"""
+    import threading as _t
+    steps = [_tap(1), _pause_step(), _tap(5)]
+    api, tmp = _api_with_temp_accounts(1, steps)
+    try:
+        api.run(anchor_poll="0.01")
+        api._run_thread.join(timeout=10)
+
+        alive = _t.Event()
+        th = _t.Thread(target=alive.wait, daemon=True)
+        th.start()
+        api._active_resumes[":7555"] = {"running": True, "thread": th}
+
+        r = api.resume_paused(":7555")
+        assert r["ok"] is False
+        assert "กำลังรันต่ออยู่แล้ว" in r["error"]
+        alive.set(); th.join(timeout=2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

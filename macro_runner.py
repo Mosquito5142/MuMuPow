@@ -552,7 +552,13 @@ class MacroRunner:
     # ---------- รันมาโคร 1 บัญชี บน 1 จอ ----------
     MAX_BRANCH_DEPTH = 5   # กันกิ่ง if_image ซ้อนวนไม่รู้จบ
 
-    def execute_one(self, device, account):
+    def execute_one(self, device, account, start_index=0):
+        """รัน 1 บัญชีบน 1 จอ — start_index = เริ่มที่ขั้นไหนของเส้นหลัก (ใช้ตอนกด 'รันต่อ')
+
+        ตั้งใจรับเป็น 'ดัชนีเริ่ม' ไม่ใช่ให้ผู้เรียกตัดลิสต์มาให้ เพราะการตัดลิสต์ทำให้เลขขั้น
+        ทั้งหมดเลื่อน: จุดที่ค้างจะถูกรายงานผิดขั้น และ anchor_retry_target (ขั้นเป้าหมายของ
+        'วนกลับ') ที่เก็บเป็นดัชนีของสคริปต์เต็มจะชี้ผิดขั้นทันที
+        """
         who = account_display_name(account)
         self._done.setdefault(device, 0)
         total = len(self.steps)
@@ -564,7 +570,8 @@ class MacroRunner:
             self.progress(device, **base)
 
         prog(step_idx=0, step_total=total, step_desc="กำลังเริ่ม…")
-        status = self._run_steps(device, account, self.steps, prog, path="", depth=0, disp="")
+        status = self._run_steps(device, account, self.steps, prog, path="", depth=0, disp="",
+                                 start_at=start_index)
 
         if status == "paused":
             # รอผู้ใช้แก้ไข+กด 'รันต่อ' เอง — ยังไม่ถือว่าจบ ไม่บันทึกผลบัญชี/ไม่รีเซ็ตจอ/ไม่นับว่าเสร็จ
@@ -600,7 +607,8 @@ class MacroRunner:
             self.log(f"[{device}] {who} ล็อกอิน/ทำงานไม่ผ่าน — ไปบัญชีถัดไป (ไม่รีเซ็ตเกมอัตโนมัติแล้ว)", "err")
         return status
 
-    def _run_steps(self, device, account, steps, prog, path="", depth=0, disp="", block_mode=False):
+    def _run_steps(self, device, account, steps, prog, path="", depth=0, disp="", block_mode=False,
+                   start_at=0):
         """รันลิสต์ขั้นตอน — เรียกซ้ำตัวเองเข้าไปในกิ่ง then/else ของ if_image ได้
         path = ตำแหน่งกิ่ง เช่น "" (เส้นหลัก), "2.then" — ใช้รายงานว่ารันถึงไหน
         disp = เลขขั้นแบบอ่านง่ายสำหรับ log เช่น "" หรือ "4.เจอ." (1-based)
@@ -619,7 +627,8 @@ class MacroRunner:
         retry_counts = {}  # idx ของขั้นนี้ -> จำนวนรอบที่วนไปแล้ว (รีเซ็ตใหม่ทุกครั้งที่เรียกฟังก์ชันนี้)
         pause_self_healed = set()  # idx ที่เคยลองย้อนไปกดขั้นก่อนหน้าซ้ำแล้ว (นโยบาย pause) — กันวนซ้ำไม่รู้จบ
 
-        idx = 0
+        # start_at ใช้เฉพาะการเรียกชั้นบนสุด (กด 'รันต่อ') — กิ่ง/บล็อกเรียกซ้ำโดยไม่ส่งมา = เริ่ม 0 ตามปกติ
+        idx = max(0, min(int(start_at or 0), len(steps)))
         while idx < len(steps):
             if not self.running():
                 return "stopped"

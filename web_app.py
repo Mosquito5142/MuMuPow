@@ -11,6 +11,8 @@ import os
 import sys
 import glob
 import json
+import shutil
+import time
 import threading
 import datetime
 
@@ -121,20 +123,106 @@ class Api:
     def _accounts_path(self):
         return os.path.join(base_dir(), "accounts.json")
 
-    def _accounts(self):
-        try:
-            return json.load(open(self._accounts_path(), encoding="utf-8"))
-        except Exception:
-            return []
+    # ล็อกกันหลายเธรดเขียน accounts.json ทับกัน — ตอนกด 'หยุด' เธรดของทุกจอที่กำลัง resume
+    # จะหลุดออกจากลูปพร้อมกันแล้ววิ่งเข้า _persist_* ทีเดียว ถ้าไม่มีล็อกไฟล์จะพัง
+    _accounts_lock = threading.RLock()
 
-    def _save_accounts(self, accts):
-        try:
-            with open(self._accounts_path(), "w", encoding="utf-8") as f:
-                json.dump(accts, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            self._push_log(f"บันทึกบัญชีล้มเหลว: {e}", "err")
+    def _read_accounts_raw(self):
+        """อ่าน accounts.json — คืน (อ่านสำเร็จไหม, รายการบัญชี)
+
+        แยก 'ไฟล์ว่างจริง' ออกจาก 'อ่านไม่ได้' ให้ชัด เพราะโค้ดที่เขียนทับทั้งไฟล์ต้องรู้ว่า
+        ห้ามเขียนตอนอ่านไม่ได้ ไม่งั้นไฟล์เสียชั่วคราวจะกลายเป็นบัญชีหายถาวร
+        """
+        p = self._accounts_path()
+        # ล็อกร่วมกับฝั่งเขียน — กันอ่านคาบเกี่ยวจังหวะที่กำลังสลับไฟล์อยู่
+        with self._accounts_lock:
+            if not os.path.exists(p):
+                return True, []                  # ยังไม่เคยมีไฟล์ = ว่างจริง
+            # บน Windows ระหว่าง os.replace ไฟล์อาจเปิดไม่ได้ชั่วขณะ (sharing violation)
+            # ซึ่งไม่ใช่ไฟล์เสียจริง — ต้องลองใหม่สั้น ๆ ก่อน ไม่งั้นจะรายงานว่า 'ไม่มีบัญชี' มั่ว
+            last_err = None
+            for attempt in range(4):
+                try:
+                    with open(p, encoding="utf-8") as f:
+                        data = json.load(f)
+                    return (True, data) if isinstance(data, list) else (False, [])
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return False, []             # ไฟล์เสียจริง ลองใหม่ก็ไม่ช่วย
+                except OSError as e:
+                    last_err = e
+                    time.sleep(0.05 * (attempt + 1))
+            self._push_log(f"เปิด accounts.json ไม่ได้: {last_err}", "warn")
+            return False, []
+
+    def _accounts(self):
+        ok, data = self._read_accounts_raw()
+        if not ok:
+            self._push_log("อ่าน accounts.json ไม่ได้ (ไฟล์อาจเสีย) — ดูไฟล์สำรอง accounts.json.bak", "err")
+        return data
+
+    def _save_accounts(self, accts, allow_empty=False):
+        """เขียน accounts.json แบบ 'ทั้งหมดหรือไม่เลย'
+
+        เขียนลงไฟล์ชั่วคราวก่อนแล้วค่อย os.replace ทับ — replace เป็น atomic ระดับ OS
+        ผู้อ่านจึงเห็นได้แค่ไฟล์เก่าเต็ม ๆ หรือไฟล์ใหม่เต็ม ๆ ไม่มีสภาพครึ่ง ๆ กลาง ๆ
+        (ของเดิมใช้ open(...,'w') ซึ่งล้างไฟล์เป็น 0 ไบต์ก่อนเขียน = มีช่วงที่ไฟล์ว่าง)
+
+        allow_empty=False กันเคส 'อ่านไฟล์ไม่ได้เลยได้ลิสต์ว่าง แล้วเขียนทับ' ซึ่งลบบัญชีทิ้งหมด
+        การลบบัญชีจริงจากหน้าจอต้องส่ง allow_empty=True มาเอง
+        """
+        if not isinstance(accts, list):
+            self._push_log("บันทึกบัญชีล้มเหลว: ข้อมูลไม่ใช่รายการ", "err")
             return False
+        with self._accounts_lock:
+            if not accts and not allow_empty:
+                ok, cur = self._read_accounts_raw()
+                if not ok or cur:
+                    self._push_log("ยกเลิกการบันทึก: กำลังจะเขียนทับบัญชีทั้งหมดด้วยข้อมูลว่าง", "err")
+                    return False
+            path = self._accounts_path()
+            tmp = path + ".tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(accts, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())         # ให้ข้อมูลลงดิสก์จริงก่อนสลับไฟล์
+                if os.path.exists(path):
+                    try:
+                        shutil.copy2(path, path + ".bak")   # สำรองตัวเดิมไว้ให้กู้ได้
+                    except Exception:
+                        pass
+                os.replace(tmp, path)
+                return True
+            except Exception as e:
+                self._push_log(f"บันทึกบัญชีล้มเหลว: {e}", "err")
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                return False
+
+    def _update_accounts(self, mutate, log_cb=None):
+        """อ่าน→แก้→เขียน accounts.json ทั้งชุดภายใต้ล็อกเดียว
+
+        ทุกที่ที่แก้บัญชีจากเธรดเบื้องหลัง (ผลรัน/เพชร) ต้องผ่านทางนี้ ไม่งั้นสองเธรดจะอ่าน
+        ไฟล์เดียวกันคนละจังหวะแล้วเขียนทับกัน ทำให้ผลของเธรดที่เขียนก่อนหายไปเงียบ ๆ
+
+        mutate(accts) -> True ถ้ามีการแก้จริง (False = ไม่ต้องเขียน)
+        """
+        say = log_cb or (lambda t, k="info": self._push_log(t, k))
+        with self._accounts_lock:
+            ok, accts = self._read_accounts_raw()
+            if not ok:
+                say("ข้ามการบันทึกลงบัญชี: อ่าน accounts.json ไม่ได้ (กันข้อมูลหาย)", "err")
+                return False
+            try:
+                changed = mutate(accts)
+            except Exception as e:
+                say(f"แก้ข้อมูลบัญชีไม่สำเร็จ: {e}", "warn")
+                return False
+            if not changed:
+                return False
+            return self._save_accounts(accts, allow_empty=True)
 
     @staticmethod
     def _acct_dot(acc):
@@ -273,17 +361,19 @@ class Api:
                 json.dump(rows, f, ensure_ascii=False, indent=2)
         except Exception as e:
             log_cb(f"เขียน {export_name} ไม่ได้: {e}", "warn")
-        try:
-            by_email = {r["email"]: r for r in rows if r.get("email")}
-            accts = self._accounts()
+        by_email = {r["email"]: r for r in rows if r.get("email")}
+
+        def apply_diamonds(accts):
+            hit = False
             for a in accts:
                 r = by_email.get(a.get("email"))
                 if r:
                     a["diamonds"] = r["diamonds"]
                     a["diamond_time"] = r["time"]
-            self._save_accounts(accts)
-        except Exception as e:
-            log_cb(f"อัปเดตเพชรลงบัญชีไม่ได้: {e}", "warn")
+                    hit = True
+            return hit
+
+        self._update_accounts(apply_diamonds, log_cb)
         log_cb(f"บันทึกเพชร {len(rows)} รายการ → {export_name}", "ok")
         self._auto_push_diamonds(rows, cfg, log_cb)
 
@@ -329,8 +419,7 @@ class Api:
             em = (r.get("email") or "").strip().lower()
             if em:
                 by_email[em] = r  # ไอดีเดียวรันหลายรอบ → ใช้ผลล่าสุด
-        try:
-            accts = self._accounts()
+        def apply_results(accts):
             changed = False
             for a in accts:
                 em = (a.get("email") or "").strip().lower()
@@ -341,11 +430,9 @@ class Api:
                     a["last_device"] = r.get("device", "")
                     a["last_run"] = stamp
                     changed = True
-            if changed:
-                self._save_accounts(accts)
-        except Exception as e:
-            log_cb(f"บันทึกผลรายบัญชีไม่ได้: {e}", "warn")
-            return
+            return changed
+
+        self._update_accounts(apply_results, log_cb)
         done = sum(1 for r in results if r.get("status") == "completed")
         stuck = sum(1 for r in results if r.get("status") == "device_error")
         stopped = sum(1 for r in results if r.get("status") == "stopped")
@@ -645,21 +732,43 @@ class Api:
         ครอบจุดที่ค้างไว้ ด้วยบัญชีเดิมบนจอเดิม โดยไม่แตะ self._running กลาง (จอ/บัญชีอื่นที่กำลังรัน
         คู่ขนานอยู่ไม่โดนกระทบ) — ประเมิน if_image ที่บล็อกนั้นใหม่ตั้งแต่ต้น ซึ่งถูกต้องแล้วเพราะผู้ใช้
         เพิ่งแก้/เพิ่มเงื่อนไขเพื่อให้รอบนี้ผ่านไปได้"""
+        def fail(msg):
+            # ต้องส่งออกทาง _run_log_cb ด้วย — คอนโซลตอนรันอ่านจาก self._run_log ไม่ใช่ self._log
+            # ของเดิมใช้ _push_log อย่างเดียว ข้อความเลยไม่โผล่ที่ไหนเลย กดปุ่มแล้วเงียบสนิท
+            self._run_log_cb(f"[{device}] รันต่อไม่ได้: {msg}", "warn")
+            return {"ok": False, "error": msg}
+
         info = self._paused.get(device)
         if not info:
-            self._push_log(f"[{device}] ไม่มีจุดค้างให้รันต่อ", "warn"); return {"ok": False}
-        if device in self._active_resumes:
-            self._push_log(f"[{device}] กำลังรันต่ออยู่แล้ว", "warn"); return {"ok": False}
+            return fail("ไม่มีจุดค้างของจอนี้แล้ว (อาจถูกยกเลิกหรือรันต่อไปแล้ว)")
+
+        # เคลียร์สถานะ 'กำลังรันต่อ' ที่ค้างจากรอบก่อน ถ้าเธรดนั้นตายไปแล้ว
+        # ไม่งั้นจอนี้จะกดรันต่อไม่ได้อีกเลยทั้งรอบ โดยไม่มีอะไรบอก
+        old = self._active_resumes.get(device)
+        if old is not None:
+            th = old.get("thread")
+            if th is None or not th.is_alive():
+                self._active_resumes.pop(device, None)
+            else:
+                return fail("จอนี้กำลังรันต่ออยู่แล้ว รอให้รอบนี้จบก่อน")
+
         try:
             root_idx = max(0, int(str(info.get("step_path", "0")).split(".")[0]))
         except Exception:
             root_idx = 0
-        steps = self.macro_steps[root_idx:]
+        # ส่ง 'สคริปต์เต็ม + ขั้นที่จะเริ่ม' ไม่ใช่ตัดลิสต์มาให้ — ถ้าตัด เลขขั้นจะเลื่อนหมด
+        # ทำให้จุดที่ค้างรอบถัดไปถูกรายงานผิดขั้น (กดรันต่ออีกทีจะเริ่มใหม่ตั้งแต่ขั้น 1)
+        # และ anchor_retry_target ที่อ้างดัชนีของสคริปต์เต็มจะชี้ผิดขั้นด้วย
+        steps = self.macro_steps
         if not steps:
-            self._push_log(f"[{device}] ไม่มีขั้นตอนให้รันต่อจากจุดนี้แล้ว", "warn"); return {"ok": False}
+            return fail("ยังไม่ได้โหลดสคริปต์ — เลือกสคริปต์ที่หน้า 'สคริปต์' ก่อน")
+        if root_idx >= len(steps):
+            return fail(f"สคริปต์ที่โหลดอยู่มีแค่ {len(steps)} ขั้น แต่จุดที่ค้างคือขั้น {root_idx + 1} "
+                        f"— น่าจะสลับสคริปต์ไปแล้ว ให้เลือกสคริปต์เดิมกลับมาก่อน")
         account = info.get("account")
 
-        flag = {"running": True}
+        # เก็บ thread ไว้ด้วย เพื่อให้รอบหน้าตรวจได้ว่า 'กำลังรันต่ออยู่' นั้นจริงหรือค้างเป็นซาก
+        flag = {"running": True, "thread": None}
         self._active_resumes[device] = flag
         self._paused.pop(device, None)
 
@@ -674,7 +783,7 @@ class Api:
         def worker():
             try:
                 self._run_log_cb(f"[{device}] ▶ รันต่อจากขั้น {root_idx + 1} (แก้ไขสคริปต์แล้ว)", "ok")
-                status = runner.execute_one(device, account)
+                status = runner.execute_one(device, account, start_index=root_idx)
                 self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
                 self._persist_run_results(runner.account_results, self._run_log_cb)
                 
@@ -700,7 +809,9 @@ class Api:
             finally:
                 self._active_resumes.pop(device, None)
 
-        threading.Thread(target=worker, daemon=True).start()
+        th = threading.Thread(target=worker, daemon=True)
+        flag["thread"] = th
+        th.start()
         return {"ok": True}
 
     def dismiss_paused(self, device):
@@ -765,7 +876,7 @@ class Api:
 
     def delete_group(self, group):
         accts = [a for a in self._accounts() if (a.get("group") or "ทั่วไป").strip() != group]
-        self._save_accounts(accts)
+        self._save_accounts(accts, allow_empty=True)
         self._push_log(f"ลบกลุ่ม '{group}' ทั้งหมด", "warn")
         return self.get_accounts_grouped()
 
@@ -780,7 +891,7 @@ class Api:
 
     def delete_account(self, email):
         accts = [a for a in self._accounts() if a.get("email") != email]
-        self._save_accounts(accts)
+        self._save_accounts(accts, allow_empty=True)
         self._push_log(f"ลบบัญชี {email}", "info")
         return self.get_accounts_grouped()
 
@@ -788,7 +899,7 @@ class Api:
         accts = self._accounts()
         keep = [a for a in accts if not a.get("checked", True)]
         n = len(accts) - len(keep)
-        self._save_accounts(keep)
+        self._save_accounts(keep, allow_empty=True)
         self._push_log(f"ลบบัญชีที่เลือก {n} รหัส", "warn")
         return self.get_accounts_grouped()
 
@@ -2258,14 +2369,82 @@ class Api:
         except Exception:
             return {"presets": []}
 
-    def quick_add(self, preset_name):
+    def _preset_step(self, preset_name):
+        """สร้าง step 'แตะ' จากพรีเซ็ตพิกัด — คืน None ถ้าไม่พบชื่อนั้น"""
         p = next((x for x in self.get_presets()["presets"] if x.get("name") == preset_name), None)
         if not p:
-            self._push_log(f"ไม่พบพรีเซ็ต '{preset_name}'", "warn"); return self.get_steps()
+            self._push_log(f"ไม่พบพรีเซ็ต '{preset_name}'", "warn")
+            return None
         from quick_builder import build_tap_step_from_preset
-        self.macro_steps.append(build_tap_step_from_preset(p))
+        return build_tap_step_from_preset(p)
+
+    def quick_add(self, preset_name):
+        """เพิ่มขั้นจากพรีเซ็ตต่อท้ายเส้นหลัก (ใช้จากมุมมองลิสต์)"""
+        step = self._preset_step(preset_name)
+        if step is None:
+            return self.get_steps()
+        self.macro_steps.append(step)
         self._push_log(f"เพิ่มขั้นจากพรีเซ็ต '{preset_name}'", "ok")
         return self.get_steps()
+
+    def flow_add_set(self, path, set_name, as_block=False, block_home="", block_retries=""):
+        """แทรกขั้น 'ใช้ชุดคำสั่งย่อย' (run_set) ที่ตำแหน่ง path บนผัง
+
+        เดิมต้องเพิ่มบล็อก run_set เปล่าแล้วพิมพ์ชื่อชุดเองให้ตรงเป๊ะ พิมพ์ผิดตัวเดียว
+        ตอนรันจะเจอ 'ไม่พบชุดคำสั่ง' — เลือกจากรายการชื่อจริงจึงพลาดไม่ได้
+
+        as_block=True → ทำเป็น 'บล็อกกันพัง': ถ้าชุดนี้พัง ให้เล่นชุด block_home
+        แล้วลองใหม่ (ตามจำนวน block_retries) ซึ่งเป็นวิธีที่สคริปต์จริงใช้อยู่แล้ว
+        """
+        name = str(set_name or "").strip()
+        if not name:
+            return {"ok": False, "error": "ยังไม่ได้เลือกชุดคำสั่ง", "flow": self.get_flow()}
+        known = {s["name"] for s in self.list_script_sets()["sets"]}
+        if name not in known:
+            self._push_log(f"ไม่พบชุดคำสั่ง '{name}'", "warn")
+            return {"ok": False, "error": f"ไม่พบชุดคำสั่ง '{name}'", "flow": self.get_flow()}
+
+        step = {"type": "run_set", "set": name, "desc": f"ใช้ชุด: {name}"}
+        if as_block:
+            step["block_on_fail"] = "home_retry"
+            step["desc"] = f"บล็อก: {name}"
+            home = str(block_home or "").strip()
+            if home:
+                step["block_home"] = home
+            try:
+                r = int(block_retries)
+                if r >= 0:
+                    step["block_retries"] = r
+            except (TypeError, ValueError):
+                pass                              # เว้นว่าง = ใช้ค่าเริ่มต้นของตัวรัน (3)
+        try:
+            lst, i = self._locate(list(path or []))
+            i = max(0, min(int(i), len(lst)))
+            lst.insert(i, step)
+            self._push_log(f"แทรกชุดคำสั่ง '{name}' แล้ว", "ok")
+            return {"ok": True, "path": list(path)[:-1] + [i], "flow": self.get_flow()}
+        except Exception as e:
+            self._push_log(f"แทรกชุดคำสั่งไม่ได้: {e}", "warn")
+            return {"ok": False, "error": str(e), "flow": self.get_flow()}
+
+    def flow_add_preset(self, path, preset_name):
+        """แทรกขั้นจากพรีเซ็ตที่ตำแหน่ง path บนผัง — วางในกิ่ง then/else ได้ด้วย
+
+        เดิมพรีเซ็ตต่อท้ายเส้นหลักได้อย่างเดียว (quick_add ใช้ append) ถ้าอยากได้ตรงกลาง
+        หรือในเงื่อนไข ต้องไปแก้ไฟล์ JSON เอง — เมธอดนี้ทำให้วางจากบนผังได้ตรง ๆ
+        """
+        step = self._preset_step(preset_name)
+        if step is None:
+            return {"ok": False, "flow": self.get_flow()}
+        try:
+            lst, i = self._locate(list(path or []))
+            i = max(0, min(int(i), len(lst)))
+            lst.insert(i, step)
+            self._push_log(f"แทรกขั้นจากพรีเซ็ต '{preset_name}' แล้ว", "ok")
+            return {"ok": True, "path": list(path)[:-1] + [i], "flow": self.get_flow()}
+        except Exception as e:
+            self._push_log(f"แทรกพรีเซ็ตไม่ได้: {e}", "warn")
+            return {"ok": False, "error": str(e), "flow": self.get_flow()}
 
     # ---------- ตั้งค่าระบบอ่านเพชร (diamond_ocr.json) ----------
     def _save_diamond_cfg(self, cfg):
