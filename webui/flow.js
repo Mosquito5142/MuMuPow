@@ -404,8 +404,75 @@ async function flowInsertAt(path){
   const items = opts.map(o =>
     '<button class="in" onclick="flowDoInsert(' + pj(path) + ',\'' + o.value + '\')" style="display:flex;gap:9px;align-items:center;width:100%;padding:9px 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;color:#C7D2E0;font-size:12.5px;cursor:pointer;text-align:left">'
     + '<i data-lucide="' + stepIcon(o.value) + '" width="14" height="14" style="color:' + (o.value==='if_image'?'#FBBF24':'#7DD3FC') + ';flex:none"></i>' + esc(o.label) + '</button>').join('');
-  openModal('เลือกชนิดบล็อกที่จะแทรก', 'plus-circle',
-    '<div style="display:flex;flex-direction:column;gap:5px">' + items + '</div>');
+
+  // พรีเซ็ตพิกัดที่ผู้ใช้เก็บไว้ — วางตรงจุดนี้ได้เลย (เดิมต่อท้ายเส้นหลักได้อย่างเดียว)
+  let presetHtml = '';
+  if(hasPy()){
+    const pr = await PY.get_presets();
+    const list = (pr && pr.presets) || [];
+    if(list.length){
+      presetHtml = '<div style="margin-top:12px;font-size:11px;font-weight:600;letter-spacing:1px;color:#7C8CA3;text-transform:uppercase">พรีเซ็ตพิกัดที่บันทึกไว้</div>'
+        + '<div style="display:flex;flex-direction:column;gap:5px;margin-top:6px">'
+        + list.map(p =>
+          '<button class="in" onclick="flowDoInsertPreset(' + pj(path) + ',\'' + jsq(p.name) + '\')" style="display:flex;gap:9px;align-items:center;width:100%;padding:9px 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;color:#C7D2E0;font-size:12.5px;cursor:pointer;text-align:left">'
+          + '<i data-lucide="bookmark" width="14" height="14" style="color:#6EE7B7;flex:none"></i>'
+          + '<span style="flex:1">' + esc(p.name) + '</span>'
+          + '<span style="font-family:\'IBM Plex Mono\',monospace;font-size:10.5px;color:#5C6B82">(' + esc(p.x) + ', ' + esc(p.y) + ')</span></button>').join('')
+        + '</div>';
+    }
+  }
+
+  // ชุดคำสั่งย่อยที่บันทึกไว้ — เลือกจากรายการ ไม่ต้องพิมพ์ชื่อเองให้ผิด
+  let setHtml = '';
+  if(hasPy()){
+    const sr = await PY.list_script_sets();
+    const sets = (sr && sr.sets) || [];
+    if(sets.length){
+      setHtml = '<div style="margin-top:12px;font-size:11px;font-weight:600;letter-spacing:1px;color:#7C8CA3;text-transform:uppercase">ชุดคำสั่งย่อยที่บันทึกไว้</div>'
+        + '<div style="font-size:11px;color:#5C6B82;margin:4px 0 6px">คลิก = ใช้ชุดนั้นตรง ๆ · กด 🛡 = ทำเป็นบล็อกกันพัง (ถ้าพังให้กลับหน้าแรกแล้วลองใหม่)</div>'
+        + '<div style="display:flex;flex-direction:column;gap:5px">'
+        + sets.map(s => {
+            const n = jsq(s.name);
+            return '<div style="display:flex;gap:5px;align-items:center">'
+              + '<button class="in" onclick="flowDoInsertSet(' + pj(path) + ',\'' + n + '\',false)" style="flex:1;display:flex;gap:9px;align-items:center;padding:9px 12px;border-radius:8px;background:#0A0F19;border:1px solid #1B2434;color:#C7D2E0;font-size:12.5px;cursor:pointer;text-align:left">'
+              + '<i data-lucide="layers" width="14" height="14" style="color:#7DD3FC;flex:none"></i>'
+              + '<span style="flex:1">' + esc(s.name) + '</span>'
+              + '<span style="font-size:10.5px;color:#5C6B82">' + s.count + ' ขั้น</span></button>'
+              + '<button class="in" title="แทรกเป็นบล็อกกันพัง (พังแล้วลองใหม่)" onclick="flowDoInsertSet(' + pj(path) + ',\'' + n + '\',true)" style="flex:none;padding:9px 11px;border-radius:8px;background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24;font-size:12.5px;cursor:pointer">🛡</button>'
+              + '</div>';
+          }).join('')
+        + '</div>';
+    }
+  }
+
+  openModal('เลือกสิ่งที่จะแทรกตรงนี้', 'plus-circle',
+    '<div style="font-size:11px;font-weight:600;letter-spacing:1px;color:#7C8CA3;text-transform:uppercase;margin-bottom:6px">บล็อกเปล่า</div>'
+    + '<div style="display:flex;flex-direction:column;gap:5px">' + items + '</div>'
+    + setHtml + presetHtml);
+}
+async function flowDoInsertSet(path, name, asBlock){
+  closeModal();
+  if(!hasPy()) return;
+  // บล็อกกันพัง: ใช้ 'กลับหน้าแรก' เป็นชุดกู้เริ่มต้นถ้ามีอยู่ (แก้ทีหลังได้ในฟอร์ม)
+  let home = '';
+  if(asBlock){
+    const sr = await PY.list_script_sets();
+    const names = ((sr && sr.sets) || []).map(s=>s.name);
+    if(names.includes('กลับหน้าแรก')) home = 'กลับหน้าแรก';
+  }
+  const r = await PY.flow_add_set(path, name, !!asBlock, home, '');
+  if(r && r.flow) FLOW = r.flow;
+  if(r && !r.ok && r.error) notReady(r.error);
+  renderFlow();
+  if(r && r.ok && r.path) await flowSelect(r.path);
+}
+async function flowDoInsertPreset(path, name){
+  closeModal();
+  if(!hasPy()) return;
+  const r = await PY.flow_add_preset(path, name);
+  if(r && r.flow) FLOW = r.flow;
+  renderFlow();
+  if(r && r.ok && r.path) await flowSelect(r.path);
 }
 async function flowDoInsert(path, type){
   closeModal();
@@ -738,7 +805,13 @@ async function resumePaused(device){
   if(r && r.ok){
     if(!RUN_POLL && typeof startRunPoll === 'function') startRunPoll();
     await pollPausedList();
+    return;
   }
+  // ของเดิมไม่บอกอะไรเลยเมื่อรันต่อไม่ได้ ผู้ใช้เลยเห็นเป็น 'กดแล้วไม่มีอะไรเกิดขึ้น'
+  openModal('รันต่อไม่ได้', 'alert-triangle',
+    '<div style="font-size:13px;color:#FCA5A5;line-height:1.7">' + esc((r && r.error) || 'ไม่ทราบสาเหตุ') + '</div>'
+    + '<div style="margin-top:10px;font-size:11.5px;color:#7C8CA3">ถ้าไม่อยากรันต่อจอนี้แล้ว กดกากบาทที่การ์ดเพื่อเอาออกจากแผงได้</div>');
+  await pollPausedList();
 }
 async function dismissPaused(device){
   if(!hasPy()) return;
