@@ -162,7 +162,8 @@ async function runMacro(){
   const poll = (document.getElementById('anchorPoll')||{}).value || '2.0';
   const mode = (document.getElementById('runMode')||{}).value || 'parallel';
   // 'sequential' = ยิงทีละจอ (กันแคปช่าเวลาเว็บจับได้ว่ากดพร้อมกันหลายเครื่อง)
-  const r = await PY.run(poll, mode==='batch', mode==='sequential');
+  const stuck = (document.getElementById('stuckMode')||{}).value || 'next';
+  const r = await PY.run(poll, mode==='batch', mode==='sequential', null, stuck);
   if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }
 }
 async function continueBatch(){
@@ -568,7 +569,14 @@ async function saveCurrentEditingSet(){
 // ---------- boot ----------
 // สแกนหา Emulator ทันทีที่เปิดแอป (แอปเดิม Tkinter ทำแบบนี้ตั้งแต่ __init__ — เว็บเคยลืมทำจุดนี้
 // ต้องกดปุ่มสแกนเองก่อนถึงจะเห็นจอ) ใน DEMO mode (ไม่มี Python) scanPorts() แค่ log เฉยๆ ไม่พัง
-function boot(){ renderNav(); switchPage("home"); if(hasPy()){ scanPorts(); } else { refresh(); } icons(); }
+async function saveStuckMode(v){ if(hasPy()) await PY.save_stuck_mode(v); }
+async function loadStuckMode(){
+  if(!hasPy()) return;
+  const r = await PY.get_stuck_mode();
+  const el = document.getElementById('stuckMode');
+  if(el && r && r.on_stuck) el.value = r.on_stuck;
+}
+function boot(){ renderNav(); switchPage("home"); loadStuckMode(); if(hasPy()){ scanPorts(); } else { refresh(); } icons(); }
 window.addEventListener('pywebviewready', ()=>{ PY = window.pywebview.api; boot(); });
 // เผื่อเปิดในเบราว์เซอร์ธรรมดา (พรีวิว) — ไม่มี pywebviewready
 setTimeout(()=>{ if(!hasPy()) boot(); }, 400);
