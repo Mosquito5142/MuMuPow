@@ -1,7 +1,10 @@
 """เทสระดับ Api (web_app.py) สำหรับฟีเจอร์ 'เรียนรู้ทีละจอ': anchor_on_fail='pause' ทำให้จอค้าง
 โผล่ในแผง 'จอที่รอแก้ไข' (list_paused) แล้วกด 'รันต่อจากขั้นนี้' (resume_paused) ต่อได้จริง
 โดยไม่รบกวนจอ/บัญชีอื่นที่กำลังรันคู่ขนานอยู่ — ต่างจาก tests/test_pause_resume.py ที่เทสแค่
-MacroRunner ตรงๆ ไฟล์นี้เทสการต่อสาย Api<->MacroRunner<->progress_cb ทั้งชุด"""
+MacroRunner ตรงๆ ไฟล์นี้เทสการต่อสาย Api<->MacroRunner<->progress_cb ทั้งชุด
+
+หมายเหตุ: ค่าตั้งต้นของระบบคือ on_stuck='next' (ติดแล้วข้ามไปไอดีถัดไป ตามที่ผู้ใช้ต้องการ)
+ไฟล์นี้จึงต้องส่ง on_stuck='pause' เองทุกครั้ง เพราะกำลังเทสโหมดจอดรอโดยเฉพาะ"""
 import base64
 import json
 import os
@@ -68,7 +71,7 @@ def _api_with_temp_accounts(n_accounts=1, steps=None):
 def test_paused_step_appears_in_list_paused_with_screenshot_and_account():
     api, tmp = _api_with_temp_accounts(1)
     try:
-        r = api.run(anchor_poll="0.01", pause_between_batches=False)
+        r = api.run(anchor_poll="0.01", pause_between_batches=False, on_stuck="pause")
         assert r["ok"] is True
         api._run_thread.join(timeout=5)
 
@@ -95,7 +98,7 @@ def test_paused_step_appears_in_list_paused_with_screenshot_and_account():
 def test_resume_paused_continues_with_same_account_and_clears_from_list():
     api, tmp = _api_with_temp_accounts(1)
     try:
-        api.run(anchor_poll="0.01", pause_between_batches=False)
+        api.run(anchor_poll="0.01", pause_between_batches=False, on_stuck="pause")
         api._run_thread.join(timeout=5)
         assert api.get_run_state()["pausedCount"] == 1
 
@@ -121,7 +124,7 @@ def test_resume_paused_continues_with_same_account_and_clears_from_list():
 def test_dismiss_paused_clears_without_running_further():
     api, tmp = _api_with_temp_accounts(1)
     try:
-        api.run(anchor_poll="0.01", pause_between_batches=False)
+        api.run(anchor_poll="0.01", pause_between_batches=False, on_stuck="pause")
         api._run_thread.join(timeout=5)
         assert api.get_run_state()["pausedCount"] == 1
 
@@ -148,7 +151,7 @@ def test_other_device_keeps_running_while_one_is_paused():
     try:
         api.devices = [":7555", ":7556"]
         api.selected = {":7555", ":7556"}
-        api.run(anchor_poll="0.01", pause_between_batches=False)
+        api.run(anchor_poll="0.01", pause_between_batches=False, on_stuck="pause")
         api._run_thread.join(timeout=5)
 
         paused = api.list_paused()["items"]
@@ -166,7 +169,7 @@ def test_other_device_keeps_running_while_one_is_paused():
 def test_stop_cancels_active_resume():
     api, tmp = _api_with_temp_accounts(1, steps=[_pause_step(), {"type": "sleep", "seconds": 2}])
     try:
-        api.run(anchor_poll="0.01", pause_between_batches=False)
+        api.run(anchor_poll="0.01", pause_between_batches=False, on_stuck="pause")
         api._run_thread.join(timeout=5)
         assert api.get_run_state()["pausedCount"] == 1
 
@@ -183,7 +186,7 @@ def test_resume_paused_continues_with_remaining_queue():
     # 3 บัญชี บน 1 จอ
     api, tmp = _api_with_temp_accounts(3)
     try:
-        r = api.run(anchor_poll="0.01", pause_between_batches=False)
+        r = api.run(anchor_poll="0.01", pause_between_batches=False, on_stuck="pause")
         assert r["ok"] is True
         api._run_thread.join(timeout=5)
         
@@ -239,7 +242,7 @@ def test_resume_keeps_reporting_the_original_step_number():
     steps = [_tap(1), _tap(2), _tap(3), _pause_step(), _tap(5)]
     api, tmp = _api_with_temp_accounts(1, steps)
     try:
-        api.run(anchor_poll="0.01")
+        api.run(anchor_poll="0.01", on_stuck="pause")
         api._run_thread.join(timeout=10)
         assert api.list_paused()["items"][0]["step_path"] == "3"
 
@@ -261,7 +264,7 @@ def test_resume_starts_at_the_paused_step_not_from_the_beginning():
     steps = [_tap(1), _tap(2), _tap(3), _pause_step(), _tap(5)]
     api, tmp = _api_with_temp_accounts(1, steps)
     try:
-        api.run(anchor_poll="0.01")
+        api.run(anchor_poll="0.01", on_stuck="pause")
         api._run_thread.join(timeout=10)
 
         api.controller.taps.clear()
@@ -319,7 +322,7 @@ def test_resume_explains_when_the_loaded_script_is_too_short():
     steps = [_tap(1), _tap(2), _tap(3), _pause_step(), _tap(5)]
     api, tmp = _api_with_temp_accounts(1, steps)
     try:
-        api.run(anchor_poll="0.01")
+        api.run(anchor_poll="0.01", on_stuck="pause")
         api._run_thread.join(timeout=10)
         assert api.list_paused()["items"][0]["step_path"] == "3"
 
@@ -337,7 +340,7 @@ def test_stale_resume_flag_does_not_block_future_resumes():
     steps = [_tap(1), _pause_step(), _tap(5)]
     api, tmp = _api_with_temp_accounts(1, steps)
     try:
-        api.run(anchor_poll="0.01")
+        api.run(anchor_poll="0.01", on_stuck="pause")
         api._run_thread.join(timeout=10)
 
         api._active_resumes[":7555"] = {"running": False, "thread": None}   # ซากจากรอบก่อน
@@ -358,7 +361,7 @@ def test_a_genuinely_running_resume_is_still_rejected():
     steps = [_tap(1), _pause_step(), _tap(5)]
     api, tmp = _api_with_temp_accounts(1, steps)
     try:
-        api.run(anchor_poll="0.01")
+        api.run(anchor_poll="0.01", on_stuck="pause")
         api._run_thread.join(timeout=10)
 
         alive = _t.Event()

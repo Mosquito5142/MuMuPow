@@ -337,6 +337,26 @@ class Api:
         except Exception:
             return {}
 
+    def _load_stuck_mode(self):
+        """โหมดเมื่อจอติด — เก็บใน game_reset.json เพราะเป็นเรื่องเดียวกับการรีเซ็ตเกม
+        'next' = ไปไอดีถัดไป (รีเซ็ตเกมกลับหน้า login ให้) · 'pause' = จอดรอคนมาแก้"""
+        cfg = self._load_reset_cfg()
+        return "next" if str(cfg.get("on_stuck", "next")) == "next" else "pause"
+
+    def save_stuck_mode(self, mode):
+        cfg = self._load_reset_cfg()
+        cfg["on_stuck"] = "next" if str(mode) == "next" else "pause"
+        try:
+            with open(os.path.join(base_dir(), "game_reset.json"), "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            self._push_log("บันทึกโหมดเมื่อจอติดแล้ว", "ok")
+        except Exception as e:
+            self._push_log(f"บันทึกโหมดไม่ได้: {e}", "err")
+        return {"on_stuck": cfg["on_stuck"]}
+
+    def get_stuck_mode(self):
+        return {"on_stuck": self._load_stuck_mode()}
+
     def _load_gemini_key(self):
         """คีย์ Gemini (ตัวกู้จอด้วย AI ของ Story Auto) — ว่างได้ ระบบจะข้ามส่วน AI ไปเอง"""
         try:
@@ -444,7 +464,7 @@ class Api:
         log_cb("สรุปผลรอบนี้: " + " · ".join(parts), "ok" if not stuck else "warn")
 
     def run(self, anchor_poll=None, pause_between_batches=False, sequential=False,
-            sequential_gap=None):
+            sequential_gap=None, on_stuck=None):
         if self._running:
             self._push_log("กำลังรันอยู่แล้ว", "warn")
             return {"ok": False}
@@ -460,6 +480,8 @@ class Api:
         except (TypeError, ValueError):
             poll = 2.0
         self._anchor_poll = poll
+        # จอติดแล้วทำยังไง — จำค่าไว้ใช้กับ runner ที่สร้างทีหลัง (resume/คิวต่อ) ให้เหมือนกันทั้งรอบ
+        self._on_stuck = "next" if str(on_stuck or self._load_stuck_mode()) == "next" else "pause"
 
         self._running = True
         self._run_state = {}
@@ -473,7 +495,8 @@ class Api:
                              progress_cb=self._run_progress_cb, running_check=lambda: self._running,
                              anchor_poll=poll, reset_cfg=self._load_reset_cfg(),
                              diamond_cfg=self._load_diamond_cfg(),
-                             gemini_key=self._load_gemini_key())
+                             gemini_key=self._load_gemini_key(),
+                             on_stuck=self._on_stuck)
         runner.profile_name = self.current_profile or ""
         self._runner = runner
 
@@ -704,7 +727,8 @@ class Api:
                                  progress_cb=self._run_progress_cb, running_check=lambda: flag["running"],
                                  anchor_poll=self._anchor_poll, reset_cfg=self._load_reset_cfg(),
                                  diamond_cfg=self._load_diamond_cfg(),
-                                 gemini_key=self._load_gemini_key())
+                                 gemini_key=self._load_gemini_key(),
+                                 on_stuck=getattr(self, "_on_stuck", "pause"))
             runner.profile_name = self.current_profile or ""
             runner.total_accounts = main_runner.total_accounts
             
@@ -776,7 +800,8 @@ class Api:
                              progress_cb=self._run_progress_cb, running_check=lambda: flag["running"],
                              anchor_poll=self._anchor_poll, reset_cfg=self._load_reset_cfg(),
                              diamond_cfg=self._load_diamond_cfg(),
-                             gemini_key=self._load_gemini_key())
+                             gemini_key=self._load_gemini_key(),
+                             on_stuck=getattr(self, "_on_stuck", "pause"))
         runner.profile_name = self.current_profile or ""
         runner.total_accounts = 1   # รันต่อแค่บัญชีเดียว (ของเดิมที่ค้างไว้) กันการ์ดโชว์ "X / 0" ที่หน้าเว็บ
 

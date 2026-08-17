@@ -340,7 +340,7 @@ class MacroRunner:
 
     def __init__(self, controller, steps, log_cb=None, progress_cb=None,
                  running_check=None, anchor_poll=2.0, reset_cfg=None, diamond_cfg=None,
-                 gemini_key="", script_sets=None):
+                 gemini_key="", script_sets=None, on_stuck="pause"):
         self.controller = controller
         self.log = log_cb or (lambda t, k="info": None)
         # {ชื่อชุด: steps} สำหรับคลี่ run_set — None = ไปอ่านจากโฟลเดอร์ script_sets/ เอง
@@ -356,6 +356,11 @@ class MacroRunner:
         self.reset_cfg = reset_cfg or {}
         self.diamond_cfg = diamond_cfg or {}
         self.gemini_key = gemini_key or ""   # ใช้เฉพาะ step 'story_auto' (ตัวกู้จอด้วย AI)
+        # จอติดแล้วทำยังไง — "pause" = จอดรอคนมาแก้ (เรียนรู้ทีละจอ)
+        #                    "next"  = ปิดเกมเปิดใหม่กลับหน้า login แล้วไปไอดีถัดไปเลย (พฤติกรรมเดิม)
+        # โหมด next เหมาะกับการรันยาวทิ้งไว้: ไอดีที่ติดถูกทำเครื่องหมายไว้ให้ตามเก็บทีหลัง
+        # ไม่ใช่หยุดทั้งจอรอคนมากด ซึ่งทำให้รันข้ามคืนไม่ได้
+        self.on_stuck = "next" if str(on_stuck) == "next" else "pause"
         self.diamond_rows = []          # ผลอ่านเพชร (Api เอาไปเขียนไฟล์/บัญชีตอนจบรัน)
         self.account_results = []       # ผลรายบัญชี (status/error/device) — เขียน last_status ตอนจบรัน
         self.profile_name = ""          # ชื่อสคริปต์ (ใส่ในรายงานจุดที่ติด)
@@ -596,15 +601,17 @@ class MacroRunner:
             self.log(f"[{device}] {who} เสร็จ ({self._done[device]}/{self.total_accounts})", "ok")
             prog(status="running", step_idx=total, step_total=total, step_desc="เสร็จ")
         else:
-            # ติดปัญหาแบบไม่ใช่ pause (เช่น เลือก 'หยุดจอนี้' ตรงๆ, วนครบรอบแล้วยังไม่เจอ, หรือคำสั่งพัง)
-            # เดิมจุดนี้จะรีเซ็ตเกม (ออกแล้วเข้าใหม่) ให้จอสะอาดก่อนไปบัญชีถัดไปเสมอ — เอาออกแล้ว เพราะ
-            # เปลี่ยนไปใช้ระบบ 'เรียนรู้ทีละจอ' (anchor_on_fail='pause', เป็นค่าเริ่มต้นใหม่แทน 'abort') เป็นหลัก
-            # ตั้งแต่นี้ไม่มีขั้นไหนรีเซ็ตเกมอัตโนมัติอีกแล้ว (รวม 'abort' ด้วย) — ปล่อยจอไว้ตามสภาพ ให้ผู้ใช้
-            # ไปดูรายงานปัญหา/แก้สคริปต์เอง
+            # ติดปัญหา (เลือก 'หยุดจอนี้' ตรงๆ, วนครบรอบแล้วยังไม่เจอ, คำสั่งพัง หรือโหมด on_stuck='next')
             self.progress(device, status="stuck", account_name=who,
                           done_count=self._done[device], total_accounts=self.total_accounts,
                           step_desc="ติดปัญหา · บันทึกแล้ว")
-            self.log(f"[{device}] {who} ล็อกอิน/ทำงานไม่ผ่าน — ไปบัญชีถัดไป (ไม่รีเซ็ตเกมอัตโนมัติแล้ว)", "err")
+            if self.on_stuck == "next":
+                # พฤติกรรมเดิมที่ผู้ใช้ต้องการกลับมา: ปิดเกมเปิดใหม่ให้กลับไปหน้า login ก่อน
+                # แล้วค่อยหยิบไอดีถัดไป — ถ้าไม่ล้างจอ ไอดีถัดไปจะเริ่มกลางคันของไอดีเดิม
+                self.log(f"[{device}] {who} ไม่ผ่าน → รีเซ็ตเกมกลับหน้า login แล้วไปไอดีถัดไป", "err")
+                self._reset_device(device)
+            else:
+                self.log(f"[{device}] {who} ล็อกอิน/ทำงานไม่ผ่าน — ไปบัญชีถัดไป (ไม่รีเซ็ตเกมอัตโนมัติ)", "err")
         return status
 
     def _run_steps(self, device, account, steps, prog, path="", depth=0, disp="", block_mode=False,
@@ -721,6 +728,12 @@ class MacroRunner:
                         idx += 1
                         continue
                     elif pol == "pause":
+                        # โหมด 'ไปไอดีถัดไป': ไม่จอดรอคน — ปิดจบบัญชีนี้เป็น 'ติดปัญหา' แล้วให้คิวเดินต่อ
+                        # (execute_one จะรีเซ็ตเกมกลับหน้า login ให้ก่อนหยิบบัญชีถัดไป)
+                        if self.on_stuck == "next":
+                            self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → ข้ามบัญชีนี้ ไปไอดีถัดไป", "err")
+                            self._save_failure_report(device, account, here, step, "anchor_missing")
+                            return "device_error"
                         # ก่อนหยุดรอจริง ลองย้อนไปทำขั้นก่อนหน้าซ้ำอีก 1 ที (เผื่อกดตอนนั้นแล้วจอ/เครื่องค้าง
                         # เลยไม่ขยับมาจอนี้จริง ๆ) แล้วเช็ค anchor ใหม่ — ถ้าลองแล้วยังไม่เจอจริง ๆ ค่อยหยุดรอ
                         if idx > 0 and idx not in pause_self_healed:
