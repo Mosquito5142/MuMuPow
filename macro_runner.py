@@ -951,6 +951,8 @@ class MacroRunner:
             self._wait_for_image(device, step); return
         elif t == "tap_until_image":
             self._tap_until_image(device, step); return
+        elif t == "tap_around_until_image":
+            self._tap_around_until_image(device, step); return
         elif t == "tap_text":
             self._tap_text(device, account, step); return
         elif t == "wait_for_text":
@@ -1136,6 +1138,118 @@ class MacroRunner:
             if not self._interruptible_sleep(interval):
                 return
         self.log(f"[{device}] กดรัวครบ {timeout:g} วิ ({taps} ครั้ง) ยังไม่เจอ '{name}' → ไปต่อ", "warn")
+        self._sleep_delay(step)
+
+    @staticmethod
+    def _template_size(tmpl_bytes):
+        """ขนาด (กว้าง, สูง) ของภาพต้นแบบ — ใช้คำนวณกรอบการ์ดจากจุดกึ่งกลางที่ match คืนมา
+        (match_template_bytes คืนแค่จุดกึ่งกลาง ไม่ได้คืนกรอบ)"""
+        try:
+            import cv2
+            import numpy as np
+            img = cv2.imdecode(np.frombuffer(tmpl_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                return 0, 0
+            h, w = img.shape[:2]
+            return w, h
+        except Exception:
+            return 0, 0
+
+    # จุดที่จะไล่กดในการ์ด (เป็นสัดส่วนของกรอบ 0..1) — เรียงจาก 'น่าจะกดติดที่สุด' ไปหาน้อย
+    # ตั้งใจไม่เริ่มที่กึ่งกลาง เพราะกลางการ์ดมักเป็นตัวรูปไอเทมซึ่งเกมไม่รับการกด
+    # ต้องกดโดนพื้นการ์ด/แถบชื่อ/แถบราคา รอบ ๆ รูปแทน
+    _CARD_TAP_SPOTS = [
+        (0.50, 0.86),   # แถบล่าง (ชื่อ/ราคา)
+        (0.50, 0.12),   # แถบบน
+        (0.12, 0.50),   # ขอบซ้าย
+        (0.88, 0.50),   # ขอบขวา
+        (0.15, 0.85),   # มุมล่างซ้าย
+        (0.85, 0.85),   # มุมล่างขวา
+        (0.15, 0.15),   # มุมบนซ้าย
+        (0.85, 0.15),   # มุมบนขวา
+        (0.50, 0.50),   # กลาง (เผื่อการ์ดนี้กดกลางได้)
+    ]
+
+    def _tap_around_until_image(self, device, step):
+        """หา 'การ์ด' บนจอ แล้วไล่กดหลายจุดรอบ ๆ ในการ์ดนั้น จนกว่า 'ภาพเป้าหมาย' จะขึ้น
+
+        มีไว้สำหรับการ์ดร้านค้าที่กดตรงรูปไอเทมแล้วเกมไม่รับ ต้องกดโดนพื้นการ์ดส่วนอื่น
+        และการ์ดก็ไม่ได้อยู่ตำแหน่งเดิมทุกครั้ง — จึงต้องหาใหม่ทุกรอบแล้วค่อยคำนวณจุดกด
+
+        find_img = ภาพการ์ด (จุดอ้างอิงว่าจะกดรอบ ๆ ตรงไหน)
+        wait_img/text = ภาพเป้าหมายที่บอกว่า 'เปิดได้แล้ว' (เช่นหัว modal)
+        ถ้าไม่ได้ตั้ง find_img จะใช้พิกัด x,y เป็นจุดกึ่งกลางแทน แล้วกดรอบ ๆ ตามรัศมี radius
+        """
+        tgt_bytes, tgt_path = self._step_template(step)
+        if tgt_bytes is None and tgt_path is None:
+            self.log(f"[{device}] กดรอบๆ: ยังไม่ได้ตั้งภาพเป้าหมาย (ภาพที่รอให้ขึ้น) → ข้าม", "warn")
+            return
+
+        find_b64 = step.get("find_img") or ""
+        find_bytes = None
+        if find_b64:
+            try:
+                find_bytes = base64.b64decode(find_b64) or None
+            except Exception:
+                find_bytes = None
+
+        fallback_xy = None
+        if find_bytes is None:
+            try:
+                fallback_xy = (self._as_int(step.get("x")), self._as_int(step.get("y")))
+            except (TypeError, ValueError):
+                self.log(f"[{device}] กดรอบๆ: ต้องตั้งภาพการ์ด หรือพิกัดสำรอง อย่างใดอย่างหนึ่ง → ข้าม", "warn")
+                return
+
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = max(0.05, float(step.get("interval", 0.5) or 0.5))
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+        radius = max(5, int(float(step.get("radius", 60) or 60)))
+        tw, th = self._template_size(find_bytes) if find_bytes else (radius * 2, radius * 2)
+        if tw <= 0 or th <= 0:
+            tw, th = radius * 2, radius * 2
+
+        self.log(f"[{device}] ไล่กดรอบๆ การ์ด ทุก {interval:g} วิ จนกว่าภาพเป้าหมายจะขึ้น "
+                 f"(สูงสุด {timeout:g} วิ)…", "info")
+        deadline = time.time() + timeout
+        spot = 0
+        taps = 0
+        while time.time() < deadline:
+            if not self.running():
+                return
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if not ok:
+                if not self._interruptible_sleep(interval):
+                    return
+                continue
+
+            found, _mx, _my, _m = self._match_step_template(data, step, threshold)
+            if found:
+                self.log(f"[{device}] ภาพเป้าหมายขึ้นแล้ว (กดไป {taps} ครั้ง) → ไปต่อ", "ok")
+                self._sleep_delay(step)
+                return
+
+            # หาการ์ดใหม่ทุกรอบ — รายการร้านค้าเลื่อน/สลับที่ได้ระหว่างกด
+            if find_bytes is not None:
+                cf, cx, cy, _ = self.controller.match_template_bytes(data, find_bytes, threshold)
+                if not cf:
+                    self.log(f"[{device}] ยังไม่เจอการ์ดบนจอ — รอแล้วลองใหม่", "warn")
+                    if not self._interruptible_sleep(interval):
+                        return
+                    continue
+            else:
+                cx, cy = fallback_xy
+
+            fx, fy = self._CARD_TAP_SPOTS[spot % len(self._CARD_TAP_SPOTS)]
+            spot += 1
+            tx = int(round(cx - tw / 2.0 + fx * tw))
+            ty = int(round(cy - th / 2.0 + fy * th))
+            self.controller.tap(device, tx, ty)
+            taps += 1
+            if not self._interruptible_sleep(interval):
+                return
+
+        self.log(f"[{device}] ไล่กดครบ {timeout:g} วิ ({taps} ครั้ง) ภาพเป้าหมายยังไม่ขึ้น → ไปต่อ", "warn")
         self._sleep_delay(step)
 
     # ---------- แตะ element ตามข้อความ/id (พอร์ตจาก _step_tap_text) ----------

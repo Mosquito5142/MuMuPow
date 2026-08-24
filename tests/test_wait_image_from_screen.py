@@ -164,3 +164,62 @@ def test_wait_image_survives_changing_step_type():
                              "wait_region": {"x": 0, "y": 0, "w": 5, "h": 5}})
     assert out["wait_img"] == B64
     assert out["wait_region"] == {"x": 0, "y": 0, "w": 5, "h": 5}
+
+
+# ---------- ปรับความเหมือนได้จากหน้าจอ ----------
+
+def test_threshold_is_editable_for_image_steps():
+    """ไอคอนในร้านมักมีป้ายราคา/ไฮไลต์เปลี่ยนไปมา ต้องลดความเหมือนขั้นต่ำได้
+    ตัวรันอ่าน threshold อยู่แล้ว แต่ตัวแก้ไขไม่เคยมีช่องให้กรอก"""
+    for t in ("wait_for_image", "detect_image"):
+        assert "threshold" in web_app.Api.STEP_FIELDS[t], f"{t} ยังไม่มีช่องปรับความเหมือน"
+        assert web_app.Api.STEP_DEFAULTS[t]["threshold"] == 0.8
+
+
+def test_detect_image_honours_a_custom_threshold():
+    ctl, _ = run({"type": "detect_image", "wait_img": B64, "threshold": 0.55})
+    assert ("match_bytes", b"TEMPLATE-BYTES", 0.55) in ctl.calls
+
+
+def test_found_position_is_where_it_taps_not_a_fixed_coordinate():
+    """หัวใจของสิ่งที่ผู้ใช้ต้องการ: ไอเทมไม่ได้อยู่ที่เดิม ต้องกดตรงที่เจอจริง"""
+    ctl, _ = run({"type": "wait_for_image", "wait_img": B64, "timeout": 2})
+    taps = [c for c in ctl.calls if c[0] == "tap"]
+    assert taps == [("tap", 40, 50)]      # 40,50 = จุดที่ match คืนมา ไม่ใช่พิกัดที่ตั้งไว้ล่วงหน้า
+
+
+# ---------- ปุ่ม 'เจอแล้วกดที่ภาพ' ----------
+
+def test_click_toggle_is_editable_and_defaults_to_on():
+    """ผู้ใช้ถามว่า 'ให้มันกดที่รูปเพชรหน่อย' ทั้งที่มันกดอยู่แล้ว — เพราะหน้าจอไม่เคยบอก
+    ตอนนี้มีช่องติ๊กให้เห็นชัด และเปิดไว้เป็นค่าเริ่มต้นตรงกับพฤติกรรมจริงของตัวรัน"""
+    for t in ("wait_for_image", "detect_image"):
+        assert "click" in web_app.Api.STEP_FIELDS[t]
+        assert web_app.Api.STEP_DEFAULTS[t]["click"] is True
+
+
+def test_click_false_is_preserved_when_editing():
+    """ติ๊กออกแล้วต้องไม่โดนค่าเริ่มต้น True ทับกลับตอนแก้ขั้นอื่น"""
+    a = api([])
+    out = a._canonical_step("wait_for_image", {"text": "x.png", "click": False}, None)
+    assert out["click"] is False
+
+
+def test_click_true_is_preserved_when_editing():
+    a = api([])
+    out = a._canonical_step("wait_for_image", {"text": "x.png", "click": True}, None)
+    assert out["click"] is True
+
+
+def test_missing_click_falls_back_to_tapping():
+    a = api([])
+    out = a._canonical_step("wait_for_image", {"text": "x.png"}, None)
+    assert out["click"] is True
+
+
+def test_step_taps_at_the_found_spot_end_to_end():
+    """เคสจริงของผู้ใช้: ไอคอนเพชรอยู่คนละที่ทุกครั้ง ต้องกดตรงที่เจอเพื่อเปิด modal"""
+    ctl, status = run({"type": "wait_for_image", "wait_img": B64,
+                       "timeout": 30, "threshold": 0.8, "click": True})
+    assert status == "completed"
+    assert [c for c in ctl.calls if c[0] == "tap"] == [("tap", 40, 50)]

@@ -212,7 +212,7 @@ function stepIcon(t){
     start_app:'power',stop_app:'power-off',detect_image:'image',wait_for_image:'image',
     tap_text:'text-cursor-input',wait_for_text:'search',clear_ads_loop:'x-circle',fetch_otp:'mail',
     screenshot:'camera',read_diamond:'gem',run_set:'layers',keyboard:'keyboard',
-    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2'})[t] || 'circle';
+    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2',tap_around_until_image:'scan-search'})[t] || 'circle';
 }
 function stepDetail(s){
   const t = s.type||'tap';
@@ -223,6 +223,10 @@ function stepDetail(s){
   if(t==='run_set') return s.set||'';
   if(t==='keyboard') return (s.key||'')+' ('+(s.action||'')+')';
   if(t==='tap_until_image') return 'กดรัว ('+(s.x||'?')+','+(s.y||'?')+') ทุก '+(s.interval||0.5)+' วิ จนเจอรูป';
+  // บอกให้ชัดว่าเจอแล้วจะกดหรือแค่รอ — เดิมดูจากบล็อกไม่ออก ต้องเดาเอง
+  if(t==='tap_around_until_image') return 'ไล่กดรอบๆ ' + (s.find_img?'การ์ดที่เจอ':'('+(s.x||'?')+','+(s.y||'?')+')') + ' ทุก '+(s.interval||0.5)+' วิ จนเจอเป้าหมาย';
+  if(t==='wait_for_image') return (s.click===false ? 'รอจนเจอภาพ (ไม่กด)' : 'เจอที่ไหนกดที่นั่น') + (s.wait_img?' · ภาพที่ลากไว้':(s.text?' · '+s.text:''));
+  if(t==='detect_image')  return (s.click===false ? 'เช็คภาพ (ไม่กด)' : 'เจอที่ไหนกดที่นั่น') + (s.wait_img?' · ภาพที่ลากไว้':(s.text?' · '+s.text:''));
   return s.text || s.desc || '';
 }
 
@@ -237,6 +241,10 @@ function blockWarning(s){
   if((t === 'detect_image' || t === 'wait_for_image' || t === 'tap_until_image') && !s.wait_img && !String(s.text || '').trim())
     return 'ยังไม่ตั้งภาพ — กด "ตั้งภาพจากจอ (ลากกรอบ)"';
   if(t === 'tap_until_image' && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งพิกัดที่จะกดรัว';
+  if(t === 'tap_around_until_image'){
+    if(!s.wait_img && !String(s.text||'').trim()) return 'ยังไม่ตั้งภาพเป้าหมาย — กด "ตั้งภาพเป้าหมาย (modal)"';
+    if(!s.find_img && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งภาพการ์ด หรือพิกัดสำรอง';
+  }
   if((t === 'tap_text' || t === 'wait_for_text') && !String(s.text || '').trim()) return 'ยังไม่ใส่ข้อความ/id ที่จะหา';
   if(t === 'run_set' && !String(s.set || '').trim()) return 'ยังไม่เลือกชุดคำสั่ง';
   if(t === 'start_app' || t === 'stop_app'){ if(!String(s.text || '').trim()) return 'ยังไม่ใส่ชื่อแพ็กเกจแอป'; }
@@ -326,6 +334,8 @@ function flowBlock(s, path){
     + (hasRetry ? '<i data-lucide="repeat" width="13" height="13" style="color:#FBBF24;flex:none" title="ไม่เจอภาพ → วนกลับไปทำขั้นก่อนหน้าใหม่"></i>' : '')
     + (hasImg ? '<i data-lucide="image" width="13" height="13" style="color:#FBBF24;flex:none" title="มีภาพ anchor"></i>' : '')
     // ภาพต้นแบบที่ขั้นนี้รอ/จะกด (ลากกรอบไว้) — ขอบเหลืองเพราะมีผลต่อการรันจริง
+    + (s.find_img ? '<img src="data:image/png;base64,' + s.find_img + '" title="ภาพการ์ดที่จะไล่กดรอบๆ" '
+        + 'style="flex:none;max-width:52px;height:34px;object-fit:contain;border-radius:5px;border:1px solid #164E72;background:#0A0F19">' : '')
     + (s.wait_img ? '<img src="data:image/png;base64,' + s.wait_img + '" title="ภาพที่ขั้นนี้รอให้เจอ" '
         + 'style="flex:none;max-width:52px;height:34px;object-fit:contain;border-radius:5px;border:1px solid #7A5A1E;background:#0A0F19">' : '')
     // ภาพช่วยจำว่าขั้นนี้กดปุ่มอะไร (กากบาทแดง = จุดที่กดจริง) — ไม่มีผลต่อการรัน
@@ -380,6 +390,12 @@ function renderFlowActions(s, path){
   if(t==='if_image'){
     html += btn('flowPickImage(\'cond\')','image-plus','ตั้งภาพเงื่อนไขจากจอ','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
     html += btn('flowTestMatch()','flask-conical','ทดสอบว่าเจอไหม','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+  }
+  if(t==='tap_around_until_image'){
+    html += btn('flowPickImage(\'find\')','crop','ตั้งภาพการ์ด (ที่จะกดรอบๆ)','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
+    html += btn('flowPickImage(\'wait\')','image-plus','ตั้งภาพเป้าหมาย (modal)','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
+    if(s.wait_img) html += btn('flowTestWaitMatch()','flask-conical','ทดสอบภาพเป้าหมาย','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+    if(s.find_img) html += btn('flowTestFindMatch()','flask-conical','ทดสอบภาพการ์ด','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   }
   if(t==='wait_for_image'||t==='detect_image'||t==='tap_until_image'){
     // ลากกรอบจากจอจริงแทนการพิมพ์ชื่อไฟล์ใน templates/ เอง
@@ -656,6 +672,17 @@ async function flowTestDraft(){
     ? '✅ เจอบนจอตอนนี้ (' + r.x + ',' + r.y + ') — ใช้ได้'
     : '❌ ไม่เจอ/ความเหมือนต่ำ — ลองเลือกบริเวณที่นิ่งกว่านี้';
 }
+async function flowTestFindMatch(){
+  if(!hasPy() || !SEL_PATH) return;
+  const st = (await PY.flow_get_step(SEL_PATH)).step || {};
+  if(!st.find_img){ notReady('ยังไม่ได้ตั้งภาพการ์ด'); return; }
+  const r = await PY.test_anchor_match(st.find_img, st.threshold || 0.8);
+  openModal('ทดสอบภาพการ์ด', 'flask-conical',
+    '<div style="font-size:13px;color:' + (r&&r.found?'#6EE7B7':'#FCA5A5') + '">'
+    + (r&&r.found ? '✅ เจอการ์ดบนจอตอนนี้ ที่ (' + r.x + ',' + r.y + ') — จะไล่กดรอบจุดนี้'
+                  : '❌ ไม่เจอการ์ดบนจอตอนนี้ — ' + esc((r&&(r.msg||r.error))||'')) + '</div>');
+}
+
 async function flowTestWaitMatch(){
   if(!hasPy() || !SEL_PATH) return;
   const st = (await PY.flow_get_step(SEL_PATH)).step || {};

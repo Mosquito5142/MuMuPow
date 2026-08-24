@@ -9,7 +9,21 @@
     {
       "type": "sleep",
       "desc": "",
-      "seconds": 15.0
+      "seconds": 7.0
+    },
+    {
+      "type": "run_set",
+      "set": "ข้ามโฆษณา",
+      "desc": "บล็อก: ข้ามโฆษณา",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "ข้ามโฆษณา",
+      "desc": "บล็อก: ข้ามโฆษณา",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
     },
     {
       "type": "run_set",
