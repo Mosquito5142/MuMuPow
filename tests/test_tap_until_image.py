@@ -155,3 +155,17 @@ def test_dispatch_has_a_real_branch_for_it():
     import inspect
     assert '"tap_until_image"' in inspect.getsource(M.MacroRunner._dispatch)
     assert "tap_until_image" not in M.MacroRunner._UNSUPPORTED
+
+
+def test_interval_and_radius_fields_are_wired_into_the_form():
+    """บั๊กที่เจอ: ช่อง 'กดซ้ำทุกกี่วินาที' ถูกเพิ่มใน index.html และ STEP_FIELD_MAP แล้ว
+    แต่ไม่เคยถูกผูกเข้า fillStepForm/collectStepPatch — ช่องโชว์ได้แต่ค่าไม่โหลดและไม่เซฟ
+    ผู้ใช้จึงปรับจังหวะกดไม่ได้เลยทั้งที่เห็นช่องอยู่ตรงหน้า"""
+    import io
+    import os
+    js = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "webui", "app.js"), encoding="utf-8").read()
+    for fld in ("sfInterval", "sfRadius"):
+        assert js.count(fld) >= 2, f"{fld} ยังไม่ถูกผูกครบทั้งตอนโหลดและตอนบันทึก"
+    assert "p.interval=g('sfInterval')" in js
+    assert "p.radius=g('sfRadius')" in js

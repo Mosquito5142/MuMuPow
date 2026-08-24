@@ -342,13 +342,14 @@ async function renderSteps(){
 const STEP_FIELD_MAP = {
   tap:['XY','Delay'], swipe:['XY','XY2','Duration','Delay'], text:['Text','Delay'],
   keyevent:['Code','Delay'], sleep:['Seconds'], start_app:['Text','Delay'],
-  stop_app:['Text','Delay'], detect_image:['Text','Delay'],
-  wait_for_image:['Text','Timeout','Delay'], tap_text:['Text','Delay'],
+  stop_app:['Text','Delay'], detect_image:['Text','Threshold','Click','Delay'],
+  wait_for_image:['Text','Timeout','Threshold','Click','Delay'], tap_text:['Text','Delay'],
   wait_for_text:['Text','Timeout','Delay'], clear_ads_loop:['Text','Delay'],
   fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set','Block'],
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
   if_image:['Text','Threshold','Timeout','Delay'],
   tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
+  tap_around_until_image:['XY','Text','Radius','Interval','Timeout','Threshold','Delay'],
 };
 const STEP_TEXT_LABEL = {
   text:'ข้อความที่พิมพ์ (ใช้ {EMAIL} {PASSWORD} {NAME} ได้)',
@@ -363,8 +364,9 @@ const STEP_TEXT_LABEL = {
   screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
   if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
   tap_until_image:'ไฟล์รูปเป้าหมาย (.png ใน templates) — หรือกด "ตั้งภาพจากจอ (ลากกรอบ)" ในโหมดโฟลว์',
+  tap_around_until_image:'ไฟล์รูปเป้าหมายที่รอให้ขึ้น (.png) — หรือกด "ตั้งภาพเป้าหมายจากจอ" ในโหมดโฟลว์',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Threshold','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Threshold','Click','Delay'];
 function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
@@ -391,6 +393,10 @@ function fillStepForm(st){
   g('sfKey').value = st.key||''; if(st.action) g('sfAction').value = st.action;
   g('sfSeconds').value = st.seconds||''; g('sfTimeout').value = st.timeout||'';
   g('sfThreshold').value = st.threshold||'';
+  g('sfInterval').value = (st.interval!=null&&st.interval!=='')?st.interval:'';
+  g('sfRadius').value = (st.radius!=null&&st.radius!=='')?st.radius:'';
+  // ไม่ได้ตั้งค่ามา = เปิด (ตัวรันดีฟอลต์ click=True) ต้องโชว์ให้ตรงกับที่จะเกิดขึ้นจริง
+  g('sfClick').checked = (st.click === undefined || st.click === null || st.click === '' ) ? true : !!st.click;
   g('sfDesc').value = st.desc===''||st.desc==='-'?'':st.desc;
   g('sfDelay').value = st.delay===''||st.delay==null?'':String(st.delay).replace('s','');
   applyTypeFields(st.type);
@@ -418,6 +424,9 @@ function collectStepPatch(){
   if(show.includes('Seconds')) p.seconds=g('sfSeconds');
   if(show.includes('Timeout')) p.timeout=g('sfTimeout');
   if(show.includes('Threshold')) p.threshold=g('sfThreshold');
+  if(show.includes('Interval')) p.interval=g('sfInterval');
+  if(show.includes('Radius')) p.radius=g('sfRadius');
+  if(show.includes('Click')) p.click=!!(document.getElementById('sfClick')||{}).checked;
   if(show.includes('Delay')) p.delay=g('sfDelay');
   return p;
 }

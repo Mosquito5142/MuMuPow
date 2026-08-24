@@ -1101,6 +1101,7 @@ class Api:
                 "read_diamond": "อ่านเพชร", "story_auto": "เล่นเนื้อเรื่อง", "run_set": "ชุดคำสั่ง",
                 "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง",
                 "tap_until_image": "กดรัวจนเจอรูป",
+                "tap_around_until_image": "กดรอบๆ การ์ดจนเจอรูป",
                 "if_image": "ทางเลือก (ถ้าเจอภาพ)"}
     _STEP_ICON = {"tap": "mouse-pointer-click", "text": "type", "keyevent": "smartphone", "swipe": "move",
                   "sleep": "clock", "start_app": "power", "stop_app": "power-off", "detect_image": "image",
@@ -1108,7 +1109,8 @@ class Api:
                   "clear_ads_loop": "x-circle", "fetch_otp": "mail", "screenshot": "camera",
                   "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
                   "if_image": "git-branch", "story_auto": "clapperboard",
-                  "tap_until_image": "mouse-pointer-2"}
+                  "tap_until_image": "mouse-pointer-2",
+                  "tap_around_until_image": "scan-search"}
 
     # ชนิด step -> ฟิลด์ที่ใช้จริง (ตัวอื่นถูกล้างทิ้งเมื่อเปลี่ยนชนิด) — อิงจาก _build_step_from_form เดิม
     STEP_FIELDS = {
@@ -1119,9 +1121,10 @@ class Api:
         "sleep": ["seconds"],
         "start_app": ["text", "delay"],
         "stop_app": ["text", "delay"],
-        "detect_image": ["text", "delay"],
-        "wait_for_image": ["text", "timeout", "delay"],
+        "detect_image": ["text", "threshold", "click", "delay"],
+        "wait_for_image": ["text", "timeout", "threshold", "click", "delay"],
         "tap_until_image": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
+        "tap_around_until_image": ["x", "y", "text", "radius", "interval", "timeout", "threshold", "delay"],
         "tap_text": ["text", "delay"],
         "wait_for_text": ["text", "timeout", "delay"],
         "clear_ads_loop": ["text", "delay"],
@@ -1143,11 +1146,15 @@ class Api:
         "sleep": {"seconds": 1.0},
         "start_app": {"text": "", "delay": 1.0},
         "stop_app": {"text": "", "delay": 1.0},
-        "detect_image": {"text": "", "delay": 1.0},
-        "wait_for_image": {"text": "", "timeout": 30, "delay": 0},
+        # click=True: เจอแล้วแตะตรงจุดที่เจอเลย (ตรงกับค่าดีฟอลต์ของตัวรัน)
+        "detect_image": {"text": "", "threshold": 0.8, "click": True, "delay": 1.0},
+        "wait_for_image": {"text": "", "timeout": 30, "threshold": 0.8, "click": True, "delay": 0},
         # กดรัวข้ามโฆษณา: 0.5 วิ/ครั้ง คือจังหวะที่เกมส่วนใหญ่รับไหวโดยไม่หลุด
         "tap_until_image": {"x": "0", "y": "0", "text": "", "interval": 0.5,
                             "timeout": 30, "threshold": 0.8, "delay": 0},
+        # radius = ใช้เมื่อไม่ได้ตั้งภาพการ์ด (กดรอบพิกัด x,y แทน)
+        "tap_around_until_image": {"x": "0", "y": "0", "text": "", "radius": 60, "interval": 0.5,
+                                   "timeout": 30, "threshold": 0.8, "delay": 0},
         "tap_text": {"text": "", "delay": 1.0},
         "wait_for_text": {"text": "", "timeout": 30, "delay": 0},
         "clear_ads_loop": {"text": "", "delay": 1.0},
@@ -1205,7 +1212,8 @@ class Api:
         order = ["tap", "swipe", "text", "if_image", "keyevent", "sleep", "start_app", "stop_app",
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
-                 "screenshot", "find_yellow_stage", "story_auto", "tap_until_image"]
+                 "screenshot", "find_yellow_stage", "story_auto", "tap_until_image",
+                 "tap_around_until_image"]
         return [{"value": t, "label": f"{self._STEP_TH.get(t, t)} ({t})"} for t in order]
 
     def _canonical_step(self, t, merged, existing=None):
@@ -1234,7 +1242,8 @@ class Api:
         # คงค่าที่ไม่ได้อยู่ในฟอร์มไว้ ไม่ให้หายตอนแก้: ภาพ anchor, ภาพช่วยจำจุดที่กด
         # และภาพต้นแบบของ 'รอรูป'/'เจอรูปกด' ที่ลากกรอบไว้
         for k, v in (existing or {}).items():
-            if k.startswith("anchor") or k in ("preview_img", "wait_img", "wait_region"):
+            if k.startswith("anchor") or k in ("preview_img", "wait_img", "wait_region",
+                                               "find_img", "find_region"):
                 step[k] = v
         return step
 
@@ -1713,6 +1722,12 @@ class Api:
         try:
             lst, i = self._locate(path)
             s = lst[i]
+            if mode == "find":
+                s["find_img"] = b64
+                if region:
+                    s["find_region"] = {k: int(region[k]) for k in ("x", "y", "w", "h")}
+                self._push_log("ตั้งภาพการ์ดที่จะกดรอบๆ แล้ว", "ok")
+                return self.get_flow()
             if mode == "wait":
                 s["wait_img"] = b64
                 if region:
