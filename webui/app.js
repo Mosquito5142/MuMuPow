@@ -56,7 +56,9 @@ function switchPage(page){
   });
   renderNav();
   if(page==="acc") renderAccounts();
-  else if(page==="script") renderSteps();
+  // กลับเข้าหน้าสคริปต์ต้องวาดมุมมองที่ค้างไว้ให้ถูก — ถ้าค้างโหมดโฟลว์แล้วเรียกแค่ renderSteps
+  // ผังจะยังเป็นของเดิม (บั๊กคลาสเดียวกับตอนกดแก้ไขชุดคำสั่งย่อย)
+  else if(page==="script"){ if(typeof refreshScriptView==='function') refreshScriptView(); else renderSteps(); }
   else if(page==="tools") initToolTabs();
   else if(page==="set"){ loadSettings(); if(typeof loadResetCfg==='function') loadResetCfg(); }
   icons();
@@ -350,6 +352,7 @@ const STEP_FIELD_MAP = {
   if_image:['Text','Threshold','Timeout','Delay'],
   tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
   tap_around_until_image:['XY','Text','Radius','Interval','Timeout','Threshold','Delay'],
+  answer_quiz:['Points','Submit','Box','Mode','Text','Interval','Timeout','Threshold','Delay'],
 };
 const STEP_TEXT_LABEL = {
   text:'ข้อความที่พิมพ์ (ใช้ {EMAIL} {PASSWORD} {NAME} ได้)',
@@ -365,8 +368,9 @@ const STEP_TEXT_LABEL = {
   if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
   tap_until_image:'ไฟล์รูปเป้าหมาย (.png ใน templates) — หรือกด "ตั้งภาพจากจอ (ลากกรอบ)" ในโหมดโฟลว์',
   tap_around_until_image:'ไฟล์รูปเป้าหมายที่รอให้ขึ้น (.png) — หรือกด "ตั้งภาพเป้าหมายจากจอ" ในโหมดโฟลว์',
+  answer_quiz:'ไฟล์รูปที่บอกว่า "ตอบครบแล้ว" เช่นป๊อปอัพรับรางวัล — หรือกด "ตั้งภาพเป้าหมายจากจอ"',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Threshold','Click','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Box','Mode','Threshold','Click','Delay'];
 function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
@@ -395,6 +399,10 @@ function fillStepForm(st){
   g('sfThreshold').value = st.threshold||'';
   g('sfInterval').value = (st.interval!=null&&st.interval!=='')?st.interval:'';
   g('sfRadius').value = (st.radius!=null&&st.radius!=='')?st.radius:'';
+  g('sfPoints').value = st.points||'';
+  g('sfSubmit').value = st.submit||'';
+  g('sfBox').value = st.box||'';
+  if(st.mode) g('sfMode').value = st.mode;
   // ไม่ได้ตั้งค่ามา = เปิด (ตัวรันดีฟอลต์ click=True) ต้องโชว์ให้ตรงกับที่จะเกิดขึ้นจริง
   g('sfClick').checked = (st.click === undefined || st.click === null || st.click === '' ) ? true : !!st.click;
   g('sfDesc').value = st.desc===''||st.desc==='-'?'':st.desc;
@@ -426,6 +434,10 @@ function collectStepPatch(){
   if(show.includes('Threshold')) p.threshold=g('sfThreshold');
   if(show.includes('Interval')) p.interval=g('sfInterval');
   if(show.includes('Radius')) p.radius=g('sfRadius');
+  if(show.includes('Points')) p.points=g('sfPoints');
+  if(show.includes('Submit')) p.submit=g('sfSubmit');
+  if(show.includes('Box')) p.box=g('sfBox');
+  if(show.includes('Mode')) p.mode=g('sfMode');
   if(show.includes('Click')) p.click=!!(document.getElementById('sfClick')||{}).checked;
   if(show.includes('Delay')) p.delay=g('sfDelay');
   return p;
@@ -471,17 +483,17 @@ async function confirmBlockFromRange(){
   RANGE=null; closeModal(); renderSteps();
 }
 function selectStep(i){ SEL_STEP=i; const st=(window._steps||[])[i]; if(st){ fillStepForm(st.raw||st); } renderSteps(); }
-async function saveProfile(){ if(hasPy()){ await PY.save_profile(document.getElementById('scriptName').value); renderSteps(); refresh(); } }
-async function deleteProfile(){ if(hasPy()){ await PY.delete_profile(); SEL_STEP=null; renderSteps(); refresh(); } }
+async function saveProfile(){ if(hasPy()){ await PY.save_profile(document.getElementById('scriptName').value); await refreshScriptView(); refresh(); } }
+async function deleteProfile(){ if(hasPy()){ await PY.delete_profile(); SEL_STEP=null; await refreshScriptView(); refresh(); } }
 async function updateStep(){
   // โหมดโฟลว์ → บันทึกผ่าน path API (แก้บล็อกในกิ่งได้)
   if(typeof SCRIPT_VIEW!=='undefined' && SCRIPT_VIEW==='flow'){ await flowSaveSel(); return; }
   if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; }
-  await PY.update_step(SEL_STEP, collectStepPatch()); renderSteps();
+  await PY.update_step(SEL_STEP, collectStepPatch()); await refreshScriptView();
 }
-async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; const t=(document.getElementById('sfType')||{}).value||'tap'; await PY.add_step(at, t); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); renderSteps(); selectStep(SEL_STEP); } }
-async function deleteStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.delete_step(SEL_STEP); SEL_STEP=null; renderSteps(); }
-async function moveStep(dir){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.move_step(SEL_STEP,dir); const nj=SEL_STEP+dir; if(nj>=0) SEL_STEP=nj; renderSteps(); }
+async function addStep(){ if(hasPy()){ const at=SEL_STEP===null?9999:SEL_STEP; const t=(document.getElementById('sfType')||{}).value||'tap'; await PY.add_step(at, t); SEL_STEP=(SEL_STEP===null?0:SEL_STEP+1); await refreshScriptView(); selectStep(SEL_STEP); } }
+async function deleteStep(){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.delete_step(SEL_STEP); SEL_STEP=null; await refreshScriptView(); }
+async function moveStep(dir){ if(!hasPy()||SEL_STEP===null){ notReady('เลือกขั้นก่อน'); return; } await PY.move_step(SEL_STEP,dir); const nj=SEL_STEP+dir; if(nj>=0) SEL_STEP=nj; await refreshScriptView(); }
 async function duplicateStep(){
   // โหมดโฟลว์ → คัดลอกบล็อกตาม path (ในกิ่งก็คัดลอกได้ วางต่อท้ายในเลนเดียวกัน)
   if(typeof SCRIPT_VIEW!=='undefined' && SCRIPT_VIEW==='flow'){
@@ -559,20 +571,27 @@ function updateSetEditBanner(){
     banner.style.display = 'none';
   }
 }
-function exitSetEditMode(){
+async function exitSetEditMode(){
   window.CURRENT_SET_EDITING = null;
   updateSetEditBanner();
-  renderSteps();
+  // ให้ backend โหลดสคริปต์ที่ค้างไว้กลับมาเอง แล้วรีเฟรชมุมมองที่เปิดอยู่
+  // เดิมแค่ซ่อนแบนเนอร์ ตัวแก้ไขยังถือขั้นของ 'ชุด' อยู่ ผู้ใช้ต้องไปเลือกสคริปต์เดิมใหม่เอง
+  if(hasPy()){
+    await PY.exit_set_edit();
+    if(typeof refresh === 'function') await refresh();
+  }
+  if(typeof refreshScriptView === 'function') await refreshScriptView();
+  else renderSteps();
 }
 async function saveCurrentEditingSet(){
   if(!window.CURRENT_SET_EDITING) return;
   const name = window.CURRENT_SET_EDITING;
-  if(hasPy()){
-    const r = await PY.save_script_set_steps(name);
-    if(r && r.ok){
-      if(typeof onLog === 'function') onLog({ts: new Date().toLocaleTimeString('th-TH'), text: "บันทึกทับชุดคำสั่งย่อย '" + name + "' สำเร็จ", kind: "ok"});
-    }
-  }
+  if(!hasPy()) return;
+  const r = await PY.save_script_set_steps(name);
+  if(!(r && r.ok)) return;
+  if(typeof onLog === 'function') onLog({ts: new Date().toLocaleTimeString('th-TH'), text: "บันทึกทับชุดคำสั่งย่อย '" + name + "' สำเร็จ", kind: "ok"});
+  // บันทึกเสร็จ = จบงานกับชุดนี้ -> พากลับสคริปต์เดิมให้เลย ไม่ต้องไปเลือกใหม่เอง
+  await exitSetEditMode();
 }
 
 // ---------- boot ----------

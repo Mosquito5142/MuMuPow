@@ -953,6 +953,8 @@ class MacroRunner:
             self._tap_until_image(device, step); return
         elif t == "tap_around_until_image":
             self._tap_around_until_image(device, step); return
+        elif t == "answer_quiz":
+            self._answer_quiz(device, step); return
         elif t == "tap_text":
             self._tap_text(device, account, step); return
         elif t == "wait_for_text":
@@ -1250,6 +1252,132 @@ class MacroRunner:
                 return
 
         self.log(f"[{device}] ไล่กดครบ {timeout:g} วิ ({taps} ครั้ง) ภาพเป้าหมายยังไม่ขึ้น → ไปต่อ", "warn")
+        self._sleep_delay(step)
+
+    # ---------- ตอบคำถามอัตโนมัติ ----------
+    @staticmethod
+    def parse_points(text):
+        """แปลง "x,y | x,y | x,y" เป็น [(x,y), ...] — ยอมรับทั้ง | และ ; และขึ้นบรรทัดใหม่"""
+        out = []
+        for chunk in str(text or "").replace(";", "|").replace(chr(10), "|").split("|"):
+            part = chunk.strip()
+            if not part:
+                continue
+            bits = [b.strip() for b in part.replace(" ", ",").split(",") if b.strip()]
+            if len(bits) >= 2:
+                try:
+                    out.append((int(round(float(bits[0]))), int(round(float(bits[1])))))
+                except ValueError:
+                    continue
+        return out
+
+    @staticmethod
+    def _ink_amount(img):
+        """ปริมาณ 'ตัวอักษร' ในภาพกล่องตัวเลือก — ใช้เทียบว่าข้อไหนข้อความยาวกว่ากัน
+
+        ตั้งใจไม่ใช้ OCR: ข้อความในเกมเป็นภาษาไทย ซึ่ง tesseract ในเครื่องยังไม่มีชุดภาษาไทย
+        พร้อมใช้ (เห็นแค่ eng/osd) และต่อให้อ่านได้ ก็อ่านผิดบ่อยจนนับตัวอักษรไม่น่าเชื่อถือ
+        การนับพิกเซลที่ต่างจากสีพื้นกล่องตรง ๆ ให้ผลเป็นสัดส่วนกับความยาวข้อความ
+        และไม่ขึ้นกับภาษาเลย
+        """
+        try:
+            import cv2
+            import numpy as np
+            if img is None or img.size == 0:
+                return 0
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            bg = int(np.median(gray))                     # สีพื้นกล่อง = ค่าที่พบมากสุด
+            mask = (np.abs(gray.astype(int) - bg) > 40).astype(np.uint8)
+            return int(mask.sum())
+        except Exception:
+            return 0
+
+    def _choice_boxes(self, data, points, box_w, box_h):
+        """ครอปกล่องรอบจุดตัวเลือกแต่ละจุด คืน list ของภาพ (เรียงตาม points)"""
+        try:
+            import cv2
+            import numpy as np
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                return []
+            ih, iw = img.shape[:2]
+            out = []
+            for (cx, cy) in points:
+                x0, y0 = max(0, cx - box_w // 2), max(0, cy - box_h // 2)
+                x1, y1 = min(iw, cx + box_w // 2), min(ih, cy + box_h // 2)
+                out.append(img[y0:y1, x0:x1] if x1 > x0 and y1 > y0 else None)
+            return out
+        except Exception:
+            return []
+
+    def _answer_quiz(self, device, step):
+        """ตอบคำถามในเกมอัตโนมัติจนกว่าจะเจอ 'ภาพเป้าหมาย' (เช่นป๊อปอัพรับรางวัล)
+
+        โหมด longest = เลือกข้อที่ 'ข้อความยาวสุด' (ในเกมนี้ข้อยาวมักเป็นข้อถูก)
+        โหมด cycle   = ไล่ตอบทีละข้อวนไปจนกว่าจะผ่าน (ใช้ตอนไม่เชื่อสูตรข้อยาว)
+
+        แต่ละรอบ: เลือกข้อ -> กดส่ง (ถ้าตั้งไว้) -> เช็คว่าเจอภาพเป้าหมายหรือยัง
+        """
+        points = self.parse_points(step.get("points"))
+        if not points:
+            self.log(f"[{device}] ตอบคำถาม: ยังไม่ได้ตั้งพิกัดตัวเลือก → ข้าม", "warn")
+            return
+        tgt_bytes, tgt_path = self._step_template(step)
+        if tgt_bytes is None and tgt_path is None:
+            self.log(f"[{device}] ตอบคำถาม: ยังไม่ได้ตั้งภาพเป้าหมาย (ที่บอกว่าจบแล้ว) → ข้าม", "warn")
+            return
+
+        submit = self.parse_points(step.get("submit"))
+        submit = submit[0] if submit else None
+        mode = "cycle" if str(step.get("mode", "longest")) == "cycle" else "longest"
+        box = self.parse_points(step.get("box")) or [(220, 50)]
+        box_w, box_h = max(10, box[0][0]), max(10, box[0][1])
+        timeout = float(step.get("timeout", 120) or 120)
+        interval = max(0.2, float(step.get("interval", 1.5) or 1.5))
+        threshold = float(step.get("threshold", 0.8) or 0.8)
+
+        self.log(f"[{device}] เริ่มตอบคำถามอัตโนมัติ ({len(points)} ตัวเลือก · "
+                 f"โหมด {'ข้อยาวสุด' if mode == 'longest' else 'ไล่ทีละข้อ'})…", "info")
+        deadline = time.time() + timeout
+        rounds = 0
+        cyc = 0
+        while time.time() < deadline:
+            if not self.running():
+                return
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if not ok:
+                if not self._interruptible_sleep(interval):
+                    return
+                continue
+
+            found, _x, _y, _m = self._match_step_template(data, step, threshold)
+            if found:
+                self.log(f"[{device}] เจอภาพเป้าหมายแล้ว (ตอบไป {rounds} ข้อ) → ไปต่อ", "ok")
+                self._sleep_delay(step)
+                return
+
+            if mode == "longest":
+                boxes = self._choice_boxes(data, points, box_w, box_h)
+                scores = [self._ink_amount(b) for b in boxes] if boxes else []
+                pick = int(max(range(len(scores)), key=lambda i: scores[i])) if scores else 0
+                self.log(f"[{device}] ข้อ {pick + 1} ข้อความยาวสุด "
+                         f"({', '.join(str(v) for v in scores)}) → เลือกข้อนี้", "info")
+            else:
+                pick = cyc % len(points)
+                cyc += 1
+                self.log(f"[{device}] ลองตอบข้อ {pick + 1}", "info")
+
+            px, py = points[pick]
+            self.controller.tap(device, px, py)
+            rounds += 1
+            if not self._interruptible_sleep(0.4):
+                return
+            if submit:
+                self.controller.tap(device, submit[0], submit[1])
+            if not self._interruptible_sleep(interval):
+                return
+
+        self.log(f"[{device}] ตอบครบ {timeout:g} วิ ({rounds} ข้อ) ยังไม่เจอภาพเป้าหมาย → ไปต่อ", "warn")
         self._sleep_delay(step)
 
     # ---------- แตะ element ตามข้อความ/id (พอร์ตจาก _step_tap_text) ----------

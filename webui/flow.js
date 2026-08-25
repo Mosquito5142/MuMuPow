@@ -62,6 +62,14 @@ const DEMO_FLOW = { name: 'ล็อกอิน + เก็บของ', typeO
 ]};
 
 // ---------- สลับมุมมอง ----------
+// รีเฟรช "มุมมองที่กำลังเปิดอยู่" — ลิสต์กับโฟลว์วาดด้วยคนละฟังก์ชัน (renderSteps / renderFlow)
+// ทุกที่ที่ข้อมูลสคริปต์เปลี่ยนต้องเรียกตัวนี้ ไม่ใช่ renderSteps() ตรง ๆ
+// ไม่งั้นคนที่อยู่โหมดโฟลว์จะเห็นของเก่าค้าง แล้วต้องกดสลับลิสต์↔โฟลว์เองเพื่อบังคับให้วาดใหม่
+async function refreshScriptView(){
+  if(typeof renderSteps === 'function') await renderSteps();
+  if(SCRIPT_VIEW === 'flow') await renderFlow();
+}
+
 function setScriptView(v){
   SCRIPT_VIEW = v;
   const chipL = document.getElementById('viewChipList'), chipF = document.getElementById('viewChipFlow');
@@ -212,7 +220,7 @@ function stepIcon(t){
     start_app:'power',stop_app:'power-off',detect_image:'image',wait_for_image:'image',
     tap_text:'text-cursor-input',wait_for_text:'search',clear_ads_loop:'x-circle',fetch_otp:'mail',
     screenshot:'camera',read_diamond:'gem',run_set:'layers',keyboard:'keyboard',
-    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2',tap_around_until_image:'scan-search'})[t] || 'circle';
+    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2',tap_around_until_image:'scan-search',answer_quiz:'list-checks'})[t] || 'circle';
 }
 function stepDetail(s){
   const t = s.type||'tap';
@@ -224,6 +232,10 @@ function stepDetail(s){
   if(t==='keyboard') return (s.key||'')+' ('+(s.action||'')+')';
   if(t==='tap_until_image') return 'กดรัว ('+(s.x||'?')+','+(s.y||'?')+') ทุก '+(s.interval||0.5)+' วิ จนเจอรูป';
   // บอกให้ชัดว่าเจอแล้วจะกดหรือแค่รอ — เดิมดูจากบล็อกไม่ออก ต้องเดาเอง
+  if(t==='answer_quiz'){
+    const n = (String(s.points||'').match(/\d+\s*,\s*\d+/g)||[]).length;
+    return (s.mode==='cycle'?'ไล่ตอบทีละข้อ':'ตอบข้อที่ยาวสุด') + ' · ' + n + ' ตัวเลือก';
+  }
   if(t==='tap_around_until_image') return 'ไล่กดรอบๆ ' + (s.find_img?'การ์ดที่เจอ':'('+(s.x||'?')+','+(s.y||'?')+')') + ' ทุก '+(s.interval||0.5)+' วิ จนเจอเป้าหมาย';
   if(t==='wait_for_image') return (s.click===false ? 'รอจนเจอภาพ (ไม่กด)' : 'เจอที่ไหนกดที่นั่น') + (s.wait_img?' · ภาพที่ลากไว้':(s.text?' · '+s.text:''));
   if(t==='detect_image')  return (s.click===false ? 'เช็คภาพ (ไม่กด)' : 'เจอที่ไหนกดที่นั่น') + (s.wait_img?' · ภาพที่ลากไว้':(s.text?' · '+s.text:''));
@@ -241,6 +253,10 @@ function blockWarning(s){
   if((t === 'detect_image' || t === 'wait_for_image' || t === 'tap_until_image') && !s.wait_img && !String(s.text || '').trim())
     return 'ยังไม่ตั้งภาพ — กด "ตั้งภาพจากจอ (ลากกรอบ)"';
   if(t === 'tap_until_image' && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งพิกัดที่จะกดรัว';
+  if(t === 'answer_quiz'){
+    if(!String(s.points||'').trim()) return 'ยังไม่ตั้งพิกัดตัวเลือก — กด "เก็บพิกัดตัวเลือกจากจอ"';
+    if(!s.wait_img && !String(s.text||'').trim()) return 'ยังไม่ตั้งภาพที่บอกว่าตอบครบแล้ว';
+  }
   if(t === 'tap_around_until_image'){
     if(!s.wait_img && !String(s.text||'').trim()) return 'ยังไม่ตั้งภาพเป้าหมาย — กด "ตั้งภาพเป้าหมาย (modal)"';
     if(!s.find_img && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งภาพการ์ด หรือพิกัดสำรอง';
@@ -390,6 +406,11 @@ function renderFlowActions(s, path){
   if(t==='if_image'){
     html += btn('flowPickImage(\'cond\')','image-plus','ตั้งภาพเงื่อนไขจากจอ','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
     html += btn('flowTestMatch()','flask-conical','ทดสอบว่าเจอไหม','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+  }
+  if(t==='answer_quiz'){
+    html += btn('flowPickChoices()','mouse-pointer-click','เก็บพิกัดตัวเลือกจากจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
+    html += btn('flowPickImage(\'wait\')','image-plus','ตั้งภาพ "ตอบครบแล้ว"','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
+    if(s.wait_img) html += btn('flowTestWaitMatch()','flask-conical','ทดสอบภาพเป้าหมาย','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   }
   if(t==='tap_around_until_image'){
     html += btn('flowPickImage(\'find\')','crop','ตั้งภาพการ์ด (ที่จะกดรอบๆ)','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
@@ -672,6 +693,37 @@ async function flowTestDraft(){
     ? '✅ เจอบนจอตอนนี้ (' + r.x + ',' + r.y + ') — ใช้ได้'
     : '❌ ไม่เจอ/ความเหมือนต่ำ — ลองเลือกบริเวณที่นิ่งกว่านี้';
 }
+
+// เก็บพิกัดตัวเลือกด้วยการคลิกบนภาพจอทีละข้อ — พิมพ์เลขเองก็ได้ แต่คลิกเร็วกว่าและไม่พลาด
+async function flowPickChoices(){
+  if(!hasPy() || !SEL_PATH) return;
+  const shot = await PY.screenshot_b64();
+  if(!shot || !shot.ok){ notReady('แคปจอไม่ได้ — เลือกจอก่อน'); return; }
+  window._qPts = [];
+  openModal('เก็บพิกัดตัวเลือก · ' + esc(shot.device||''), 'mouse-pointer-click',
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:6px">คลิกกลางกล่องตัวเลือกทีละข้อ (กี่ข้อก็ได้) แล้วกด "ใช้พิกัดนี้"</div>'
+    + '<div id="qInfo" style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6EE7B7;margin-bottom:8px">ยังไม่ได้คลิก</div>'
+    + '<div style="position:relative;display:inline-block;max-width:100%"><img id="qImg" src="' + shot.img + '" data-w="' + shot.w + '" data-h="' + shot.h + '" style="max-width:100%;border-radius:10px;border:1px solid #24344B;cursor:crosshair;display:block"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+    + '<button class="in" onclick="flowSaveChoices()" style="flex:1;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer">ใช้พิกัดนี้</button>'
+    + '<button class="in" onclick="window._qPts=[];document.getElementById(\'qInfo\').textContent=\'ล้างแล้ว\'" style="flex:none;padding:0 14px;height:40px;border-radius:9px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer">ล้าง</button></div>');
+  const img = document.getElementById('qImg');
+  img.addEventListener('click', ev => {
+    const rc = img.getBoundingClientRect();
+    const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h;
+    const x = Math.round((ev.clientX-rc.left)/rc.width*rw), y = Math.round((ev.clientY-rc.top)/rc.height*rh);
+    window._qPts.push(x + ',' + y);
+    document.getElementById('qInfo').textContent = 'เก็บแล้ว ' + window._qPts.length + ' ข้อ: ' + window._qPts.join(' | ');
+  });
+}
+async function flowSaveChoices(){
+  const pts = (window._qPts||[]).join(' | ');
+  closeModal();
+  if(!pts || !hasPy() || !SEL_PATH){ return; }
+  FLOW = await PY.flow_update(SEL_PATH, {points: pts});
+  await flowSelect(SEL_PATH);
+}
+
 async function flowTestFindMatch(){
   if(!hasPy() || !SEL_PATH) return;
   const st = (await PY.flow_get_step(SEL_PATH)).step || {};

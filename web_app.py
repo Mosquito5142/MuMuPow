@@ -73,6 +73,8 @@ class Api:
         self._anchor_poll = 2.0
         # โหมด 'หยุดรอตรวจทานทีละชุด' (pause_between_batches)
         self._awaiting_next_batch = False
+        self.editing_set = None            # ชื่อชุดคำสั่งย่อยที่กำลังแก้อยู่ (None = แก้สคริปต์ปกติ)
+        self._set_edit_prev_profile = ""   # สคริปต์ที่ค้างไว้ก่อนเข้าโหมดแก้ชุด — ไว้กลับไปทีหลัง
         self._batch_devices = []
         self._batch_pending = []
         self._runner = None
@@ -1102,6 +1104,7 @@ class Api:
                 "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง",
                 "tap_until_image": "กดรัวจนเจอรูป",
                 "tap_around_until_image": "กดรอบๆ การ์ดจนเจอรูป",
+                "answer_quiz": "ตอบคำถามอัตโนมัติ",
                 "if_image": "ทางเลือก (ถ้าเจอภาพ)"}
     _STEP_ICON = {"tap": "mouse-pointer-click", "text": "type", "keyevent": "smartphone", "swipe": "move",
                   "sleep": "clock", "start_app": "power", "stop_app": "power-off", "detect_image": "image",
@@ -1110,7 +1113,8 @@ class Api:
                   "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
                   "if_image": "git-branch", "story_auto": "clapperboard",
                   "tap_until_image": "mouse-pointer-2",
-                  "tap_around_until_image": "scan-search"}
+                  "tap_around_until_image": "scan-search",
+                  "answer_quiz": "list-checks"}
 
     # ชนิด step -> ฟิลด์ที่ใช้จริง (ตัวอื่นถูกล้างทิ้งเมื่อเปลี่ยนชนิด) — อิงจาก _build_step_from_form เดิม
     STEP_FIELDS = {
@@ -1125,6 +1129,7 @@ class Api:
         "wait_for_image": ["text", "timeout", "threshold", "click", "delay"],
         "tap_until_image": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
         "tap_around_until_image": ["x", "y", "text", "radius", "interval", "timeout", "threshold", "delay"],
+        "answer_quiz": ["points", "submit", "box", "mode", "text", "interval", "timeout", "threshold", "delay"],
         "tap_text": ["text", "delay"],
         "wait_for_text": ["text", "timeout", "delay"],
         "clear_ads_loop": ["text", "delay"],
@@ -1155,6 +1160,9 @@ class Api:
         # radius = ใช้เมื่อไม่ได้ตั้งภาพการ์ด (กดรอบพิกัด x,y แทน)
         "tap_around_until_image": {"x": "0", "y": "0", "text": "", "radius": 60, "interval": 0.5,
                                    "timeout": 30, "threshold": 0.8, "delay": 0},
+        # points/submit/box กรอกเป็นข้อความ "x,y | x,y" — ตัวเลือกมีกี่ข้อก็ได้ ไม่ต้องมี UI พิเศษ
+        "answer_quiz": {"points": "", "submit": "", "box": "220,50", "mode": "longest",
+                        "text": "", "interval": 1.5, "timeout": 120, "threshold": 0.8, "delay": 0},
         "tap_text": {"text": "", "delay": 1.0},
         "wait_for_text": {"text": "", "timeout": 30, "delay": 0},
         "clear_ads_loop": {"text": "", "delay": 1.0},
@@ -1213,7 +1221,7 @@ class Api:
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
                  "screenshot", "find_yellow_stage", "story_auto", "tap_until_image",
-                 "tap_around_until_image"]
+                 "tap_around_until_image", "answer_quiz"]
         return [{"value": t, "label": f"{self._STEP_TH.get(t, t)} ({t})"} for t in order]
 
     def _canonical_step(self, t, merged, existing=None):
@@ -1248,6 +1256,12 @@ class Api:
         return step
 
     def save_profile(self, name):
+        # อยู่ในโหมดแก้ชุดคำสั่งย่อย = macro_steps คือขั้นของ 'ชุด' ไม่ใช่ของสคริปต์
+        # ถ้าปล่อยให้เขียนต่อ สคริปต์จริง (เป็นร้อยขั้น) จะโดนทับด้วยชุดสั้น ๆ ทันทีแบบกู้ไม่ได้
+        if getattr(self, "editing_set", None):
+            self._push_log(f"ตอนนี้กำลังแก้ชุดคำสั่งย่อย '{self.editing_set}' อยู่ — "
+                           f"กด 'บันทึกทับชุดนี้' แทน หรือออกจากโหมดก่อนค่อยบันทึกสคริปต์", "warn")
+            return self.get_steps()
         name = (name or self.current_profile or "").strip()
         if not name:
             self._push_log("ต้องระบุชื่อสคริปต์", "warn"); return self.get_steps()
@@ -2377,12 +2391,33 @@ class Api:
             return {"ok": False, "name": name, "steps": []}
 
     def load_set_to_editor(self, name):
+        """เอาขั้นตอนของชุดคำสั่งย่อยมาแก้ในตัวแก้ไข — จำสคริปต์ที่เปิดค้างไว้เพื่อกลับไปทีหลัง
+
+        ของเดิมเขียนทับ macro_steps โดยไม่จำอะไรเลย พอบันทึกชุดเสร็จผู้ใช้ไม่มีทางกลับ
+        ต้องไปเลือกสคริปต์เดิมใหม่เองทุกครั้ง
+        """
         res = self.get_script_set(name)
         if not res["ok"]:
             return res
+        # จำไว้เฉพาะครั้งแรกที่เข้าโหมดนี้ — กดแก้ชุดอื่นต่อจากในโหมดต้องไม่ทับค่าเดิมทิ้ง
+        if not getattr(self, "editing_set", None):
+            self._set_edit_prev_profile = self.current_profile
+        self.editing_set = name
         self.macro_steps = res["steps"]
         self._push_log(f"โหลดชุดคำสั่ง '{name}' ({len(self.macro_steps)} ขั้น) เข้าสู่ Editor", "ok")
-        return {"ok": True, "name": name, "steps": self.macro_steps, "state": self.get_state()}
+        return {"ok": True, "name": name, "steps": self.macro_steps,
+                "prevProfile": self._set_edit_prev_profile, "state": self.get_state()}
+
+    def exit_set_edit(self):
+        """ออกจากโหมดแก้ชุดคำสั่งย่อย แล้วโหลดสคริปต์ที่ค้างไว้กลับมาให้อัตโนมัติ"""
+        prev = getattr(self, "_set_edit_prev_profile", "") or ""
+        self.editing_set = None
+        self._set_edit_prev_profile = ""
+        if prev and self._load_profile_steps(prev):
+            self._push_log(f"กลับสู่สคริปต์ '{prev}' ({len(self.macro_steps)} สเต็ป)", "ok")
+            return {"ok": True, "profile": prev, "state": self.get_state()}
+        self._push_log("ออกจากโหมดแก้ชุดคำสั่งย่อยแล้ว (ไม่มีสคริปต์เดิมให้กลับ)", "info")
+        return {"ok": True, "profile": "", "state": self.get_state()}
 
     def save_script_set_steps(self, name, steps=None):
         name = (name or "").strip()
