@@ -15,7 +15,7 @@ document.addEventListener('keydown', e => { if(e.key === 'Escape') closeModal();
 
 // ---- ปุ่มง่ายๆ (ไม่ต้องมี modal) ----
 async function exportProfile(){ if(needPy('Export')) await PY.export_profile(); }
-async function importProfile(){ if(needPy('Import')){ await PY.import_profile(); renderSteps(); refresh(); } }
+async function importProfile(){ if(needPy('Import')){ await PY.import_profile(); await refreshScriptView(); refresh(); } }
 async function setupKeyboard(){ if(needPy('เปิดคีย์บอร์ดไทย')) await PY.setup_adb_keyboard(); }
 async function restoreKeyboard(){ if(needPy('คืนคีย์บอร์ด')) await PY.restore_keyboard(); }
 
@@ -178,9 +178,14 @@ async function editSetInEditor(name){
   if(res && res.ok){
     window.CURRENT_SET_EDITING = name;
     closeModal();
-    if(typeof showPage === 'function') showPage('script');
+    // เดิมเรียก showPage() ซึ่ง "ไม่มีฟังก์ชันนี้ในโปรแกรม" (ตัวจริงชื่อ switchPage)
+    // แถมมี typeof ครอบไว้ มันเลยข้ามไปเงียบ ๆ ไม่ error -> ไม่เคยพาไปหน้าสคริปต์เลยสักครั้ง
+    switchPage('script');
     if(typeof updateSetEditBanner === 'function') updateSetEditBanner();
-    if(typeof renderSteps === 'function') renderSteps();
+    // ต้องรีเฟรชตามมุมมองที่เปิดอยู่ ไม่ใช่ renderSteps() อย่างเดียว
+    // (อยู่โหมดโฟลว์แล้วเรียกแค่ renderSteps จะเห็นผังของสคริปต์เดิมค้าง)
+    if(typeof refreshScriptView === 'function') await refreshScriptView();
+    else if(typeof renderSteps === 'function') renderSteps();
   }
 }
 async function viewSetDetail(name){
@@ -214,7 +219,7 @@ async function extractRangeToBlock(){
   const block=(document.getElementById('exBlock')||{}).checked;
   if(hasPy()){
     await PY.extract_range_to_block(from, to, name, block?g('exHome'):'', block?g('exRetries'):'', block);
-    closeModal(); renderSteps();
+    closeModal(); await refreshScriptView();
   }
 }
 
@@ -232,7 +237,7 @@ async function openQuickBuilder(){
     '<div style="font-size:12px;color:#7C8CA3;margin-bottom:10px">คลิกพรีเซ็ตเพื่อเพิ่มเป็นขั้น “แตะ” ต่อท้ายสคริปต์ทันที</div>'
     + '<div style="display:flex;flex-direction:column;gap:6px">' + items + '</div>');
 }
-async function quickAdd(name){ if(hasPy()){ await PY.quick_add(name); renderSteps(); } }
+async function quickAdd(name){ if(hasPy()){ await PY.quick_add(name); await refreshScriptView(); } }
 
 // ==================================================================
 //  ระบบเพิ่มเติม: เพชร / รายงานจุดที่ติด / พรีเซ็ต / รีเซ็ตเกม
