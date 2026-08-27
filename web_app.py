@@ -1129,7 +1129,8 @@ class Api:
         "wait_for_image": ["text", "timeout", "threshold", "click", "delay"],
         "tap_until_image": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
         "tap_around_until_image": ["x", "y", "text", "radius", "interval", "timeout", "threshold", "delay"],
-        "answer_quiz": ["points", "submit", "box", "mode", "text", "interval", "timeout", "threshold", "delay"],
+        "answer_quiz": ["points", "submit", "refresh", "box", "mode", "text",
+                        "interval", "timeout", "threshold", "delay"],
         "tap_text": ["text", "delay"],
         "wait_for_text": ["text", "timeout", "delay"],
         "clear_ads_loop": ["text", "delay"],
@@ -1161,8 +1162,10 @@ class Api:
         "tap_around_until_image": {"x": "0", "y": "0", "text": "", "radius": 60, "interval": 0.5,
                                    "timeout": 30, "threshold": 0.8, "delay": 0},
         # points/submit/box กรอกเป็นข้อความ "x,y | x,y" — ตัวเลือกมีกี่ข้อก็ได้ ไม่ต้องมี UI พิเศษ
-        "answer_quiz": {"points": "", "submit": "", "box": "220,50", "mode": "longest",
-                        "text": "", "interval": 1.5, "timeout": 120, "threshold": 0.8, "delay": 0},
+        # refresh = ปุ่ม 'รีเฟรช' ที่ต้องกดเมื่อตอบผิดเพื่อเปลี่ยนคำถาม (กติกาของเกม)
+        "answer_quiz": {"points": "", "submit": "", "refresh": "", "box": "220,50",
+                        "mode": "longest", "text": "", "interval": 1.5, "timeout": 120,
+                        "threshold": 0.8, "delay": 0},
         "tap_text": {"text": "", "delay": 1.0},
         "wait_for_text": {"text": "", "timeout": 30, "delay": 0},
         "clear_ads_loop": {"text": "", "delay": 1.0},
