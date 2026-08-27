@@ -1316,7 +1316,8 @@ class MacroRunner:
         โหมด longest = เลือกข้อที่ 'ข้อความยาวสุด' (ในเกมนี้ข้อยาวมักเป็นข้อถูก)
         โหมด cycle   = ไล่ตอบทีละข้อวนไปจนกว่าจะผ่าน (ใช้ตอนไม่เชื่อสูตรข้อยาว)
 
-        แต่ละรอบ: เลือกข้อ -> กดส่ง (ถ้าตั้งไว้) -> เช็คว่าเจอภาพเป้าหมายหรือยัง
+        แต่ละรอบ: เลือกข้อ -> กดส่ง -> ถูกไหม? -> ผิดก็กดรีเฟรชเปลี่ยนคำถาม -> ตอบใหม่
+        (ตรงกับกติกาในเกม: ตอบผิดต้องกดรีเฟรชถึงจะได้คำถามใหม่ ไม่งั้นค้างคำถามเดิม)
         """
         points = self.parse_points(step.get("points"))
         if not points:
@@ -1329,6 +1330,8 @@ class MacroRunner:
 
         submit = self.parse_points(step.get("submit"))
         submit = submit[0] if submit else None
+        refresh = self.parse_points(step.get("refresh"))
+        refresh = refresh[0] if refresh else None
         mode = "cycle" if str(step.get("mode", "longest")) == "cycle" else "longest"
         box = self.parse_points(step.get("box")) or [(220, 50)]
         box_w, box_h = max(10, box[0][0]), max(10, box[0][1])
@@ -1376,6 +1379,23 @@ class MacroRunner:
                 self.controller.tap(device, submit[0], submit[1])
             if not self._interruptible_sleep(interval):
                 return
+
+            # เช็คซ้ำหลังกดส่ง — ถ้าตอบถูกรางวัลจะขึ้นตรงนี้ ไม่ต้องไปกดรีเฟรชทับ
+            ok2, data2 = self.controller.capture_screenshot_bytes(device)
+            if ok2:
+                done2, _a, _b, _c = self._match_step_template(data2, step, threshold)
+                if done2:
+                    self.log(f"[{device}] ตอบถูก! (ตอบไป {rounds} ข้อ) → ไปต่อ", "ok")
+                    self._sleep_delay(step)
+                    return
+
+            # ตอบผิด -> กดรีเฟรชเพื่อ 'เปลี่ยนคำถาม' แล้วค่อยตอบใหม่
+            # ถ้าไม่กด เกมจะค้างคำถามเดิม แล้วรอบหน้าก็เลือกคำตอบเดิมซ้ำไปเรื่อย ๆ ไม่มีวันผ่าน
+            if refresh:
+                self.log(f"[{device}] ตอบผิด → กดรีเฟรชเปลี่ยนคำถาม", "info")
+                self.controller.tap(device, refresh[0], refresh[1])
+                if not self._interruptible_sleep(interval):
+                    return
 
         self.log(f"[{device}] ตอบครบ {timeout:g} วิ ({rounds} ข้อ) ยังไม่เจอภาพเป้าหมาย → ไปต่อ", "warn")
         self._sleep_delay(step)

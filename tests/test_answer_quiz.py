@@ -84,7 +84,7 @@ def run(step, ctl):
 def base(pts, **kw):
     step = {"type": "answer_quiz", "wait_img": DONE, "box": "220,50",
             "points": " | ".join(f"{x},{y}" for x, y in pts),
-            "submit": "790,425", "timeout": 8, "interval": 1.0}
+            "submit": "790,425", "refresh": "596,425", "timeout": 8, "interval": 1.0}
     step.update(kw)
     return step
 
@@ -214,3 +214,49 @@ def test_form_fields_are_wired_both_ways():
                                "webui", "app.js"), encoding="utf-8").read()
     for fld in ("sfPoints", "sfSubmit", "sfBox", "sfMode"):
         assert js.count(fld) >= 2, f"{fld} ยังไม่ถูกผูกครบทั้งตอนโหลดและตอนบันทึก"
+
+
+# ---------- ตอบผิดต้องกดรีเฟรชเปลี่ยนคำถาม ----------
+
+REFRESH = (596, 425)
+SUBMIT = (790, 425)
+
+
+def test_wrong_answer_presses_refresh_to_change_the_question():
+    """กติกาของเกม: ตอบผิดต้องกดรีเฟรชถึงจะได้คำถามใหม่
+    ถ้าไม่กด เกมค้างคำถามเดิม แล้วรอบหน้าก็เลือกคำตอบเดิมซ้ำไปเรื่อย ๆ ไม่มีวันผ่าน"""
+    screen, pts = quiz_screen([3, 9])
+    ctl, _ = run(base(pts), Ctl(screen, answer_after=3, choice_pts=pts))
+    assert ctl.taps.count(REFRESH) >= 2, f"ไม่ได้กดรีเฟรชหลังตอบผิด: {ctl.taps}"
+
+
+def test_order_is_choose_then_submit_then_refresh():
+    screen, pts = quiz_screen([3, 9])
+    ctl, _ = run(base(pts), Ctl(screen, answer_after=2, choice_pts=pts))
+
+    seq = [("ตอบ" if t in pts else "ส่ง" if t == SUBMIT else "รีเฟรช" if t == REFRESH else "?")
+           for t in ctl.taps]
+    assert seq[:3] == ["ตอบ", "ส่ง", "รีเฟรช"], f"ลำดับผิด: {seq}"
+
+
+def test_correct_answer_does_not_press_refresh():
+    """ตอบถูกแล้วต้องไม่กดรีเฟรชทับ ไม่งั้นรางวัลที่เพิ่งได้จะโดนเปลี่ยนคำถามทิ้ง"""
+    screen, pts = quiz_screen([3, 9])
+    ctl, _ = run(base(pts), Ctl(screen, answer_after=1, choice_pts=pts))
+    assert REFRESH not in ctl.taps
+
+
+def test_works_without_a_refresh_button():
+    """ไม่ได้ตั้งปุ่มรีเฟรชก็ต้องไม่พัง (ควิซบางแบบไม่มีปุ่มนี้)"""
+    screen, pts = quiz_screen([3, 9])
+    ctl, status = run(base(pts, refresh=""), Ctl(screen, answer_after=2, choice_pts=pts))
+    assert status == "completed"
+    assert REFRESH not in ctl.taps
+
+
+def test_refresh_field_is_registered_and_wired():
+    import io as _io
+    assert "refresh" in web_app.Api.STEP_FIELDS["answer_quiz"]
+    js = _io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "webui", "app.js"), encoding="utf-8").read()
+    assert js.count("sfRefresh") >= 2, "ช่องรีเฟรชยังไม่ถูกผูกครบทั้งโหลดและบันทึก"

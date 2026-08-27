@@ -352,7 +352,7 @@ const STEP_FIELD_MAP = {
   if_image:['Text','Threshold','Timeout','Delay'],
   tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
   tap_around_until_image:['XY','Text','Radius','Interval','Timeout','Threshold','Delay'],
-  answer_quiz:['Points','Submit','Box','Mode','Text','Interval','Timeout','Threshold','Delay'],
+  answer_quiz:['Points','Submit','Refresh','Box','Mode','Text','Interval','Timeout','Threshold','Delay'],
 };
 const STEP_TEXT_LABEL = {
   text:'ข้อความที่พิมพ์ (ใช้ {EMAIL} {PASSWORD} {NAME} ได้)',
@@ -370,7 +370,7 @@ const STEP_TEXT_LABEL = {
   tap_around_until_image:'ไฟล์รูปเป้าหมายที่รอให้ขึ้น (.png) — หรือกด "ตั้งภาพเป้าหมายจากจอ" ในโหมดโฟลว์',
   answer_quiz:'ไฟล์รูปที่บอกว่า "ตอบครบแล้ว" เช่นป๊อปอัพรับรางวัล — หรือกด "ตั้งภาพเป้าหมายจากจอ"',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Box','Mode','Threshold','Click','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Refresh','Box','Mode','Threshold','Click','Delay'];
 function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
@@ -401,6 +401,7 @@ function fillStepForm(st){
   g('sfRadius').value = (st.radius!=null&&st.radius!=='')?st.radius:'';
   g('sfPoints').value = st.points||'';
   g('sfSubmit').value = st.submit||'';
+  g('sfRefresh').value = st.refresh||'';
   g('sfBox').value = st.box||'';
   if(st.mode) g('sfMode').value = st.mode;
   // ไม่ได้ตั้งค่ามา = เปิด (ตัวรันดีฟอลต์ click=True) ต้องโชว์ให้ตรงกับที่จะเกิดขึ้นจริง
@@ -436,6 +437,7 @@ function collectStepPatch(){
   if(show.includes('Radius')) p.radius=g('sfRadius');
   if(show.includes('Points')) p.points=g('sfPoints');
   if(show.includes('Submit')) p.submit=g('sfSubmit');
+  if(show.includes('Refresh')) p.refresh=g('sfRefresh');
   if(show.includes('Box')) p.box=g('sfBox');
   if(show.includes('Mode')) p.mode=g('sfMode');
   if(show.includes('Click')) p.click=!!(document.getElementById('sfClick')||{}).checked;
