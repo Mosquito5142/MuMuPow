@@ -52,5 +52,6 @@
       "delay": 2.0
     }
   ],
-  "on_stuck": "next"
+  "on_stuck": "next",
+  "retry_rounds": 1
 }

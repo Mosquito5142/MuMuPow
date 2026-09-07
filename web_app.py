@@ -73,6 +73,8 @@ class Api:
         self._anchor_poll = 2.0
         # โหมด 'หยุดรอตรวจทานทีละชุด' (pause_between_batches)
         self._awaiting_next_batch = False
+        # สั่ง 'หยุดเมื่อจบรหัสที่ทำอยู่' ไว้แล้วหรือยัง — ต่างจาก stop() ที่ตัดกลางคันทันที
+        self._graceful_stop = False
         self.editing_set = None            # ชื่อชุดคำสั่งย่อยที่กำลังแก้อยู่ (None = แก้สคริปต์ปกติ)
         self._set_edit_prev_profile = ""   # สคริปต์ที่ค้างไว้ก่อนเข้าโหมดแก้ชุด — ไว้กลับไปทีหลัง
         self._batch_devices = []
@@ -359,6 +361,33 @@ class Api:
     def get_stuck_mode(self):
         return {"on_stuck": self._load_stuck_mode()}
 
+    def _load_retry_rounds(self):
+        """จบรอบแล้ววนกลับมาทำ 'รหัสที่พลาด' ซ้ำได้อีกกี่รอบ (0 = ไม่ทำซ้ำ)
+        เก็บที่เดียวกับ on_stuck เพราะเป็นเรื่อง 'ทำยังไงเมื่อพลาด' เหมือนกัน"""
+        try:
+            n = int(self._load_reset_cfg().get("retry_rounds", 2))
+        except (TypeError, ValueError):
+            n = 2
+        return max(0, min(5, n))
+
+    def save_retry_rounds(self, rounds):
+        cfg = self._load_reset_cfg()
+        try:
+            n = max(0, min(5, int(rounds)))
+        except (TypeError, ValueError):
+            n = 2
+        cfg["retry_rounds"] = n
+        try:
+            with open(os.path.join(base_dir(), "game_reset.json"), "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            self._push_log(f"ตั้งจำนวนรอบทำซ้ำอันที่พลาด = {n}", "ok")
+        except Exception as e:
+            self._push_log(f"บันทึกไม่ได้: {e}", "err")
+        return {"retry_rounds": n}
+
+    def get_retry_rounds(self):
+        return {"retry_rounds": self._load_retry_rounds()}
+
     def _load_gemini_key(self):
         """คีย์ Gemini (ตัวกู้จอด้วย AI ของ Story Auto) — ว่างได้ ระบบจะข้ามส่วน AI ไปเอง"""
         try:
@@ -430,7 +459,7 @@ class Api:
         except Exception as e:
             log_cb(f"ส่งเพชรเข้าเว็บล้มเหลว: {e}", "err")
 
-    def _persist_run_results(self, results, log_cb):
+    def _persist_run_results(self, results, log_cb, attempts=None):
         """เขียนผลรายบัญชีลง accounts.json (last_status/last_error/last_device/last_run)
         + สรุปยอดลง log — พอร์ตจาก finalize_run_results ของแอปเดิม"""
         if not results:
@@ -451,13 +480,15 @@ class Api:
                     a["last_error"] = r.get("error", "")
                     a["last_device"] = r.get("device", "")
                     a["last_run"] = stamp
+                    if attempts and attempts.get(em):
+                        a["last_attempts"] = int(attempts[em])
                     changed = True
             return changed
 
         self._update_accounts(apply_results, log_cb)
-        done = sum(1 for r in results if r.get("status") == "completed")
-        stuck = sum(1 for r in results if r.get("status") == "device_error")
-        stopped = sum(1 for r in results if r.get("status") == "stopped")
+        done = sum(1 for r in by_email.values() if r.get("status") == "completed")
+        stuck = sum(1 for r in by_email.values() if r.get("status") == "device_error")
+        stopped = sum(1 for r in by_email.values() if r.get("status") == "stopped")
         parts = [f"เสร็จ {done}"]
         if stuck:
             parts.append(f"ติดปัญหา {stuck} (ดูรายงานจุดที่ติดได้)")
@@ -465,8 +496,74 @@ class Api:
             parts.append(f"ถูกหยุด {stopped}")
         log_cb("สรุปผลรอบนี้: " + " · ".join(parts), "ok" if not stuck else "warn")
 
+    def _run_with_retries(self, runner, accounts, run_once, max_rounds, log_cb):
+        """รันหนึ่งรอบ แล้ววนกลับมาทำเฉพาะรหัสที่ 'ติดปัญหา' จนหมดหรือครบเพดาน
+
+        run_once(accts) = ฟังก์ชันรันหนึ่งรอบ (run_queue / run_sequential) — ตัว MacroRunner
+        ไม่รู้เรื่องรอบซ่อมเลย แค่ถูกเรียกซ้ำด้วยลิสต์ที่สั้นลง ตรรกะการรันจึงไม่เปลี่ยน
+
+        คืน {email: ลองไปกี่รอบ} ไว้เขียนลงบัญชีให้เห็นว่าตัวไหนวนไปกี่รอบแล้ว
+        """
+        attempts = {}
+        pending = list(accounts)
+        prev_failed = None
+        total_rounds = max(0, int(max_rounds or 0)) + 1   # รอบปกติ 1 + รอบซ่อม N
+        rnd = 0
+
+        while pending and rnd < total_rounds and self._running:
+            rnd += 1
+            runner.attempt_no = rnd
+            for a in pending:
+                em = (a.get("email") or "").strip().lower()
+                if em:
+                    attempts[em] = rnd
+            if rnd > 1:
+                names = ", ".join(account_display_name(a) for a in pending[:6])
+                more = f" และอีก {len(pending) - 6}" if len(pending) > 6 else ""
+                log_cb(f"🔁 รอบซ่อม {rnd - 1}/{total_rounds - 1} · ลองใหม่ "
+                       f"{len(pending)} รหัส: {names}{more}", "warn")
+
+            mark = len(runner.account_results)
+            run_once(pending)
+            fresh = runner.account_results[mark:]
+
+            # เขียนผลทุกรอบ ให้จุดสีในลิสต์ตรงกับความจริงระหว่างทาง ไม่ต้องรอจบทั้งหมด
+            self._persist_run_results(runner.account_results, log_cb, attempts)
+
+            failed = {(r.get("email") or "").strip().lower()
+                      for r in fresh if r.get("status") == "device_error"}
+            passed = sum(1 for r in fresh if r.get("status") == "completed")
+
+            if not failed or not self._running:
+                break
+            # สั่งหยุดเมื่อจบรหัสไว้ = ไม่ขึ้นรอบซ่อมใหม่ (รอบซ่อมคือการหยิบบัญชีมาทำเพิ่ม)
+            if self._graceful_stop:
+                log_cb(f"สั่งหยุดเมื่อจบรหัสไว้ — ไม่ขึ้นรอบซ่อม (ยังเหลือ {len(failed)} รหัสที่พลาด)", "warn")
+                break
+            if rnd >= total_rounds:
+                # ปิดการทำซ้ำอยู่ (total_rounds == 1) ไม่ต้องพูดถึงเพดาน — ไม่ได้ตั้งใจจะซ่อมอยู่แล้ว
+                if total_rounds > 1:
+                    log_cb(f"ครบเพดาน {total_rounds - 1} รอบซ่อมแล้ว ยังเหลือ {len(failed)} รหัสที่พลาด "
+                           f"— กด 'เลือกด่วน: ที่พลาด' แล้วรันเองได้", "warn")
+                break
+            # มีจอจอดรอคนแก้อยู่ อย่าไปรันทับ ปล่อยให้คนจัดการก่อน
+            if self._paused:
+                log_cb(f"มีจอรอแก้ไข {len(self._paused)} จอ — ไม่ขึ้นรอบซ่อม", "warn")
+                break
+            # อาการเดิมซ้ำ: รอบนี้ไม่มีใครผ่านเลย และตัวที่พลาดเป็นชุดเดิมเป๊ะ
+            # แปลว่าไม่ใช่ปัญหาชั่วคราว (เมลตาย/บัญชีมีปัญหาจริง) ลองอีกก็เท่าเดิม
+            if rnd > 1 and passed == 0 and failed == prev_failed:
+                log_cb(f"รอบซ่อมแล้วยังพลาดชุดเดิมทั้ง {len(failed)} รหัส "
+                       f"— ไม่ใช่ปัญหาชั่วคราว หยุดวนแค่นี้", "warn")
+                break
+            prev_failed = failed
+            pending = [a for a in pending
+                       if (a.get("email") or "").strip().lower() in failed]
+
+        return attempts
+
     def run(self, anchor_poll=None, pause_between_batches=False, sequential=False,
-            sequential_gap=None, on_stuck=None):
+            sequential_gap=None, on_stuck=None, retry_rounds=None):
         if self._running:
             self._push_log("กำลังรันอยู่แล้ว", "warn")
             return {"ok": False}
@@ -484,11 +581,19 @@ class Api:
         self._anchor_poll = poll
         # จอติดแล้วทำยังไง — จำค่าไว้ใช้กับ runner ที่สร้างทีหลัง (resume/คิวต่อ) ให้เหมือนกันทั้งรอบ
         self._on_stuck = "next" if str(on_stuck or self._load_stuck_mode()) == "next" else "pause"
+        # เพดาน 'รอบซ่อม' — จบเซ็ตแล้ววนกลับมาทำเฉพาะรหัสที่พลาดได้อีกกี่รอบ
+        try:
+            retries = int(retry_rounds) if retry_rounds not in (None, "") else self._load_retry_rounds()
+        except (TypeError, ValueError):
+            retries = self._load_retry_rounds()
+        retries = max(0, min(5, retries))
+        retry_tail = f" · ทำซ้ำอันที่พลาดได้อีก {retries} รอบ" if retries else ""
 
         self._running = True
         self._run_state = {}
         self._run_log = []
         self._awaiting_next_batch = False
+        self._graceful_stop = False        # รอบใหม่ = เริ่มจากยังไม่ได้สั่งหยุด
         self._sequential = bool(sequential)
         self._batch_devices = devices
         self._batch_pending = list(accounts)
@@ -513,12 +618,18 @@ class Api:
                 try:
                     self._run_log_cb(f"เริ่มรันแบบทีละจอ '{self.current_profile}' · {len(accounts)} รหัส "
                                      f"บน {len(devices)} จอ (ยิงทีละเครื่อง เว้นจังหวะ "
-                                     f"{gap[0]:g}–{gap[1]:g} วิ กันแคปช่า)", "ok")
-                    runner.run_sequential(devices, accounts, gap=gap)
+                                     f"{gap[0]:g}–{gap[1]:g} วิ กันแคปช่า){retry_tail}", "ok")
+                    self._run_with_retries(
+                        runner, accounts,
+                        lambda accts: runner.run_sequential(devices, accts, gap=gap),
+                        retries, self._run_log_cb)
+                    # เพชรเขียนครั้งเดียวหลังจบทุกรอบ — เรียกทุกรอบจะยิงแถวเดิมเข้าเว็บซ้ำ
                     self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
-                    self._persist_run_results(runner.account_results, self._run_log_cb)
                     if self._running:
-                        if self._paused:
+                        if self._graceful_stop:
+                            self._run_log_cb("หยุดแล้วตามที่สั่ง — รหัสที่ค้างอยู่ทำจนจบเรียบร้อย "
+                                             "กด 'เลือกด่วน: ยังไม่เสร็จ' แล้วรันต่อได้เลย", "warn")
+                        elif self._paused:
                             self._run_log_cb(f"หยุดรอผู้ใช้แก้ไข {len(self._paused)} จอ — ดูแผง 'จอที่รอแก้ไข' ด้านบน", "warn")
                         else:
                             self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
@@ -534,12 +645,18 @@ class Api:
         else:
             def worker():
                 try:
-                    self._run_log_cb(f"เริ่มรัน '{self.current_profile}' · {len(accounts)} รหัส บน {len(devices)} จอ", "ok")
-                    runner.run_queue(devices, accounts)
+                    self._run_log_cb(f"เริ่มรัน '{self.current_profile}' · {len(accounts)} รหัส "
+                                     f"บน {len(devices)} จอ{retry_tail}", "ok")
+                    self._run_with_retries(
+                        runner, accounts,
+                        lambda accts: runner.run_queue(devices, accts),
+                        retries, self._run_log_cb)
                     self._persist_diamonds(runner.diamond_rows, self._run_log_cb)
-                    self._persist_run_results(runner.account_results, self._run_log_cb)
                     if self._running:
-                        if self._paused:
+                        if self._graceful_stop:
+                            self._run_log_cb("หยุดแล้วตามที่สั่ง — รหัสที่ค้างอยู่ทำจนจบเรียบร้อย "
+                                             "กด 'เลือกด่วน: ยังไม่เสร็จ' แล้วรันต่อได้เลย", "warn")
+                        elif self._paused:
                             self._run_log_cb(f"หยุดรอผู้ใช้แก้ไข {len(self._paused)} จอ — ดูแผง 'จอที่รอแก้ไข' ด้านบน", "warn")
                         else:
                             self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
@@ -595,7 +712,10 @@ class Api:
             else:
                 self._persist_diamonds(self._runner.diamond_rows, self._run_log_cb)
                 self._persist_run_results(self._runner.account_results, self._run_log_cb)
-                if self._paused:
+                if self._graceful_stop:
+                    self._run_log_cb("หยุดแล้วตามที่สั่ง — ชุดที่ค้างอยู่ทำจนจบเรียบร้อย "
+                                     "กด 'เลือกด่วน: ยังไม่เสร็จ' แล้วรันต่อได้เลย", "warn")
+                elif self._paused:
                     self._run_log_cb(f"หยุดรอผู้ใช้แก้ไข {len(self._paused)} จอ — ดูแผง 'จอที่รอแก้ไข' ด้านบน", "warn")
                 else:
                     self._run_log_cb("รันครบทุกบัญชีแล้ว 🎉", "ok")
@@ -615,10 +735,37 @@ class Api:
         self._run_thread.start()
         return {"ok": True}
 
+    def stop_after_current(self):
+        """หยุดแบบ 'ทำรหัสที่ค้างอยู่ให้จบก่อน' แล้วค่อยหยุด
+
+        ต่างจาก stop() ที่ตัดกลางขั้นทันที: จอที่กำลังทำอยู่จะเดินสคริปต์จนจบบัญชีนั้น
+        (สถานะถูกบันทึกครบ) แล้วถึงเลิกหยิบบัญชีใหม่ — กลับมารันต่อได้สะอาด
+        ไม่มีบัญชีค้างครึ่ง ๆ กลาง ๆ ที่ต้องมานั่งไล่ดูว่าทำถึงไหนแล้ว
+        """
+        if not (self._running or self._awaiting_next_batch):
+            self._push_log("ยังไม่ได้รันอยู่", "warn")
+            return {"ok": False}
+        if self._graceful_stop:
+            self._push_log("สั่งหยุดเมื่อจบรหัสไว้แล้ว — กำลังรอรหัสที่ค้างอยู่ให้จบ", "info")
+            return {"ok": True, "already": True}
+
+        self._graceful_stop = True
+        r = self._runner
+        if r is not None:
+            r.stop_after_current = True
+        # โหมดทีละชุด: ไม่ต้องขึ้นชุดใหม่หลังชุดนี้จบ
+        left = len(self._batch_pending)
+        self._batch_pending = []
+        tail = f" (ยังไม่ได้ทำอีก {left} รหัส)" if left else ""
+        self._push_log("สั่งหยุดเมื่อจบรหัสที่ทำอยู่ — จอที่กำลังทำจะเดินจนจบบัญชีนั้นก่อน "
+                       f"แล้วจะไม่หยิบรหัสใหม่{tail}", "warn")
+        return {"ok": True}
+
     def stop(self):
         if self._running or self._awaiting_next_batch:
             self._running = False
             self._awaiting_next_batch = False
+            self._graceful_stop = False
             self._batch_pending = []
             self._push_log("สั่งหยุด — กำลังยุติการทำงาน…", "warn")
         if self._active_resumes:
@@ -687,6 +834,7 @@ class Api:
                 "awaitingNextBatch": self._awaiting_next_batch,
                 "remainingBatch": len(self._batch_pending),
                 "pausedCount": len(self._paused),
+                "gracefulStop": self._graceful_stop,
                 "activeResumes": len(self._active_resumes)}
 
     def list_paused(self):
@@ -847,19 +995,92 @@ class Api:
         return {"ok": True}
 
     # ================= หน้าบัญชี =================
-    def get_accounts_grouped(self, search=""):
-        accts = self._accounts()
+    # ---------- ตัวกรองบัญชี (ใช้ร่วมกันระหว่าง 'วาดลิสต์' กับ 'ติ๊กทั้งชุด') ----------
+    # ทั้งสองทางต้องเรียกฟังก์ชันเดียวกันเป๊ะ ไม่งั้นปุ่ม "ติ๊กทั้งหมดที่เห็น" จะไปโดนบัญชี
+    # ที่ไม่ได้อยู่บนจอ — แปลว่าเผลอฟาร์มตัวที่ตั้งใจข้ามไปแล้ว
+    @staticmethod
+    def _acct_cards(acc):
+        """ลิสต์การ์ดของบัญชี — กันข้อมูลเพี้ยน (บางบัญชี cards เป็น None หรือไม่ใช่ list)"""
+        cards = acc.get("cards")
+        if not isinstance(cards, list):
+            return []
+        return [c for c in cards if isinstance(c, dict)]
+
+    @classmethod
+    def _acct_card_text(cls, acc):
+        """ข้อความการ์ดไว้โชว์ใต้ชื่อบัญชี เช่น 'คางุระ ×15 · อาคาชิ ×12'"""
+        parts = []
+        for c in cls._acct_cards(acc):
+            label = str(c.get("label") or c.get("key") or "").strip()
+            if not label:
+                continue
+            qty = c.get("qty")
+            parts.append(f"{label} ×{qty}" if isinstance(qty, int) and qty > 0 else label)
+        return " · ".join(parts)
+
+    @classmethod
+    def _filter_accounts(cls, accts, search="", card="", card_mode="all"):
+        """กรองบัญชีตามคำค้น + การ์ด แล้วคืนลิสต์ใหม่ (อ้างอ็อบเจกต์เดิม ไม่ก็อป)
+
+        card_mode:
+          all    = ไม่กรองการ์ด (ค่าเริ่มต้น = พฤติกรรมเดิมก่อนมีฟีเจอร์นี้)
+          has    = มีการ์ด key นี้
+          not    = ไม่มีการ์ด key นี้ 'เฉพาะบัญชีที่มีข้อมูลการ์ดแล้ว'
+          nodata = ยังไม่มีข้อมูลการ์ดเลย (ไม่สนค่า card)
+
+        'not' จงใจไม่รวมบัญชีที่ยังไม่มีข้อมูลการ์ด เพราะ "ไม่มีข้อมูล" ไม่เท่ากับ "ไม่มีการ์ด"
+        — ถ้าเหมารวมจะเผลอฟาร์มบัญชีที่จริง ๆ มีการ์ดนั้นอยู่แต่ยังไม่ได้ import ข้อมูลเข้ามา
+        """
         q = (search or "").strip().lower()
-        groups = {}
+        card = (card or "").strip()
+        mode = (card_mode or "all").strip()
+        out = []
         for a in accts:
+            if q:
+                hay = (account_display_name(a) + " " + a.get("email", "") + " "
+                       + (a.get("group") or "ทั่วไป").strip()).lower()
+                if q not in hay:
+                    continue
+            if mode == "nodata":
+                if cls._acct_cards(a):
+                    continue
+            elif mode in ("has", "not") and card:
+                cards = cls._acct_cards(a)
+                owned = any(str(c.get("key") or "") == card for c in cards)
+                if mode == "has" and not owned:
+                    continue
+                if mode == "not" and (owned or not cards):
+                    continue
+            out.append(a)
+        return out
+
+    @classmethod
+    def _card_catalog(cls, accts):
+        """รายชื่อการ์ดทั้งหมดที่มีในไฟล์ + จำนวนบัญชีที่ถือ — เอาไว้เติมดรอปดาวน์
+        อ่านจากข้อมูลจริง ไม่ฮาร์ดโค้ดชื่อตัวละคร เกมออกตัวใหม่มาก็ขึ้นเองอัตโนมัติ"""
+        seen = {}
+        for a in accts:
+            for c in cls._acct_cards(a):
+                key = str(c.get("key") or "").strip()
+                if not key:
+                    continue
+                if key not in seen:
+                    seen[key] = {"key": key,
+                                 "label": str(c.get("label") or key).strip() or key,
+                                 "count": 0}
+                seen[key]["count"] += 1
+        return sorted(seen.values(), key=lambda c: (-c["count"], c["label"]))
+
+    def get_accounts_grouped(self, search="", card="", card_mode="all"):
+        accts = self._accounts()
+        groups = {}
+        for a in self._filter_accounts(accts, search, card, card_mode):
             # ลำดับต้องตรงกับ gui.py's account_display_name เป๊ะ: ชื่อที่ตั้งบนเว็บ (save_web_game_title,
             # ค่าดิบตอน import ไม่โดนแก้ทับ) ก่อนเสมอ แล้วค่อย title/ingamename/name/email
             # (เดิมเรียงผิด เอา ingamename ขึ้นก่อน เลยเห็นชื่อในเกมแทนชื่อที่ตั้งในเว็บ)
             name = (a.get("save_web_game_title") or a.get("title") or a.get("ingamename")
                     or a.get("name") or a.get("email", ""))
             grp = (a.get("group") or "ทั่วไป").strip()
-            if q and q not in (name + " " + a.get("email", "") + " " + grp).lower():
-                continue
             tok = (a.get("refresh_token") or "")[:14]
             # 'name'/'tok' = ค่าไว้ "โชว์" ในลิสต์เท่านั้น (name อาจมาจาก save_web_game_title,
             # tok ถูกหั่นให้สั้น) — ห้ามเอาไปเขียนกลับลงไฟล์เด็ดขาด
@@ -871,6 +1092,8 @@ class Api:
                 "password": a.get("password", ""),
                 "token": a.get("refresh_token") or "",
                 "checked": a.get("checked", True), "dot": self._acct_dot(a),
+                "cardText": self._acct_card_text(a),
+                "attempts": int(a.get("last_attempts") or 1),
             })
         group_names = sorted({(a.get("group") or "ทั่วไป").strip() for a in accts}) or ["ทั่วไป"]
         accounts_checked = sum(1 for a in accts if a.get("checked", True))
@@ -879,7 +1102,41 @@ class Api:
                            for g, items in groups.items()],
                 "groupNames": group_names,
                 "accountsTotal": len(accts),
-                "accountsChecked": accounts_checked}
+                "accountsChecked": accounts_checked,
+                # ข้อมูลตัวกรองการ์ด — คิดจาก 'บัญชีทั้งหมด' เสมอ ไม่ใช่เฉพาะที่กรองติด
+                # ไม่งั้นพอกรองแล้วดรอปดาวน์จะเหลือตัวเลือกเดียวจนกลับไปเลือกตัวอื่นไม่ได้
+                "cardNames": self._card_catalog(accts),
+                "shownCount": sum(len(v) for v in groups.values()),
+                "noCardDataCount": sum(1 for a in accts if not self._acct_cards(a))}
+
+    def set_checked_filtered(self, checked, search="", card="", card_mode="all"):
+        """ติ๊ก / เอาติ๊กออก 'เฉพาะบัญชีที่ตัวกรองปัจจุบันแสดงอยู่'
+
+        ใช้ตัดบัญชีที่ได้การ์ดตัวนั้นแล้วออกจากรอบฟาร์ม โดยไม่ต้องไล่ติ๊กทีละอัน
+        กรองใหม่ข้างใน mutate เสมอ (ไม่ส่งลิสต์อีเมลมาจากฝั่ง JS) เพราะไฟล์อาจถูกเขียน
+        ระหว่างทาง — ต้องตัดสินจากข้อมูลชุดเดียวกับที่กำลังจะเขียนกลับ
+        """
+        want = bool(checked)
+        hit = 0
+
+        def apply(accts):
+            nonlocal hit
+            picked = self._filter_accounts(accts, search, card, card_mode)
+            # อ้างด้วย id() ได้ เพราะ picked เป็นอ็อบเจกต์ตัวเดียวกันกับที่อยู่ใน accts
+            # (ใช้อีเมลเป็นคีย์ไม่ได้ เผื่อมีอีเมลซ้ำในไฟล์)
+            ids = {id(a) for a in picked}
+            hit = len(picked)
+            n = 0
+            for a in accts:
+                if id(a) in ids and bool(a.get("checked", True)) != want:
+                    a["checked"] = want
+                    n += 1
+            return n > 0
+
+        self._update_accounts(apply)
+        verb = "ติ๊กเลือก" if want else "เอาติ๊กออก"
+        self._push_log(f"{verb}บัญชีที่กรองอยู่ {hit} รหัส", "ok" if hit else "warn")
+        return self.get_accounts_grouped(search, card, card_mode)
 
     def toggle_group(self, group, checked):
         accts = self._accounts()
@@ -1140,7 +1397,9 @@ class Api:
         "keyboard": ["key", "action", "delay"],
         "screenshot": ["text", "delay"],
         "find_yellow_stage": ["delay"],
-        "if_image": ["text", "threshold", "timeout", "delay"],
+        # tap_mode/x/y/radius/interval = กดไปด้วยระหว่างรอภาพเงื่อนไข (ไม่ตั้ง = รอเฉย ๆ เหมือนเดิม)
+        "if_image": ["text", "tap_mode", "x", "y", "radius", "interval",
+                     "threshold", "timeout", "delay"],
         "story_auto": ["text", "threshold", "max_stages", "delay"],
     }
     # ค่าเริ่มต้นเมื่อสร้างขั้นใหม่/เปลี่ยนชนิด
@@ -1175,7 +1434,10 @@ class Api:
         "keyboard": {"key": "space", "action": "press", "delay": 0.1},
         "screenshot": {"text": "screenshots/{DATE}/{NAME}_{TIME}.png", "delay": 1.0},
         "find_yellow_stage": {"delay": 1.0},
-        "if_image": {"text": "", "threshold": 0.8, "timeout": 2.0, "then": [], "else": []},
+        # ไม่ตั้ง x/y ดีฟอลต์ — ถ้าเลือกโหมดกดแล้วลืมตั้งพิกัด ตัวรันจะเตือนแล้วถอยไป
+        # 'รอเฉย ๆ' แทนที่จะไปกดมั่วที่ (0,0)
+        "if_image": {"text": "", "tap_mode": "none", "radius": 60, "interval": 0.5,
+                     "threshold": 0.8, "timeout": 2.0, "then": [], "else": []},
         # text = รายชื่อไฟล์ปุ่มที่จะกวาด (คั่นด้วย ,) เว้นว่าง = ใช้ templates/story_*.png ทั้งหมด
         "story_auto": {"text": "", "threshold": 0.78, "max_stages": 30, "delay": 1.0},
     }

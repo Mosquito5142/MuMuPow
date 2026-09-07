@@ -165,7 +165,9 @@ async function runMacro(){
   const mode = (document.getElementById('runMode')||{}).value || 'parallel';
   // 'sequential' = ยิงทีละจอ (กันแคปช่าเวลาเว็บจับได้ว่ากดพร้อมกันหลายเครื่อง)
   const stuck = (document.getElementById('stuckMode')||{}).value || 'next';
-  const r = await PY.run(poll, mode==='batch', mode==='sequential', null, stuck);
+  // จบเซ็ตแล้ววนกลับมาทำเฉพาะรหัสที่พลาดอีกกี่รอบ (0 = ไม่ทำ)
+  const retry = (document.getElementById('retryRounds')||{}).value || '2';
+  const r = await PY.run(poll, mode==='batch', mode==='sequential', null, stuck, retry);
   if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }
 }
 async function continueBatch(){
@@ -173,7 +175,23 @@ async function continueBatch(){
   const r = await PY.continue_batch();
   if(r && r.ok){ LAST_PROGRESS_SIG = null; setRunBtn('running'); startRunPoll(); }
 }
-async function stopMacro(){ if(hasPy()) await PY.stop(); AWAITING_BATCH=false; setRunBtn('idle'); }
+async function stopMacro(){ if(hasPy()) await PY.stop(); AWAITING_BATCH=false; setSoftStopArmed(false); setRunBtn('idle'); }
+// หยุดแบบสุภาพ: ไม่ปิดปุ่มรันทันที เพราะจอที่ค้างยังต้องเดินจนจบบัญชีก่อน
+// ตัว poll จะเห็น rs.running เป็น false เองตอนมันหยุดจริง แล้วค่อยคืนปุ่มเป็น 'รัน'
+async function stopAfterCurrent(){
+  if(!hasPy()){ notReady('หยุดเมื่อจบรหัส (ต้องเปิดผ่าน .exe)'); return; }
+  const r = await PY.stop_after_current();
+  if(r && r.ok) setSoftStopArmed(true);
+}
+function setSoftStopArmed(on){
+  const b = document.getElementById('stopSoftBtn'); if(!b) return;
+  b.style.opacity = on ? '0.55' : '1';
+  b.style.cursor  = on ? 'default' : 'pointer';
+  b.innerHTML = on
+    ? '<i data-lucide="hourglass" width="14" height="14" stroke-width="2" style="animation:pulse 1.6s ease-in-out infinite"></i>รอรหัสที่ค้างอยู่จบ…'
+    : '<i data-lucide="hourglass" width="14" height="14" stroke-width="2"></i>หยุดเมื่อจบรหัสที่ทำอยู่';
+  icons();
+}
 function startRunPoll(){
   if(RUN_POLL) clearInterval(RUN_POLL);
   RUN_POLL = setInterval(async ()=>{
@@ -186,8 +204,9 @@ function startRunPoll(){
     // มีจอรอแก้ไข/กำลังรันต่อ (resume) อยู่ -> ต้อง poll ต่อแม้ rs.running จะเป็น false แล้ว
     // (จอที่เหลือรันจบ/ค้างหมดแล้ว แต่ยังมีจอรอผู้ใช้อยู่ ไม่งั้นแผงจะหยุดอัปเดตทันทีที่จอสุดท้ายค้าง)
     const stillActive = (rs.pausedCount||0) > 0 || (rs.activeResumes||0) > 0;
+    setSoftStopArmed(!!rs.gracefulStop && !!rs.running);
     if(rs.running){
-      setRunBtn('running');
+      setRunBtn(rs.gracefulStop ? 'stopping' : 'running');
     } else if(stillActive){
       setRunBtn('idle');
     } else {
@@ -203,6 +222,9 @@ function setRunBtn(state, remaining){
   AWAITING_BATCH = (state === 'awaiting');
   if(state === 'running'){
     b.innerHTML = '<i data-lucide="loader" width="18" height="18" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังรัน…';
+    b.style.cursor = 'default';
+  } else if(state === 'stopping'){
+    b.innerHTML = '<i data-lucide="loader" width="18" height="18" stroke-width="2.25" style="animation:spin 1.4s linear infinite"></i>กำลังจบรหัสที่ค้าง…';
     b.style.cursor = 'default';
   } else if(state === 'awaiting'){
     b.innerHTML = '<i data-lucide="play" width="18" height="18" stroke-width="2.25"></i>รันชุดถัดไป (เหลือ '+(remaining||0)+')';
@@ -232,11 +254,41 @@ const DEMO_ACC = {groupNames:["หลัก (A)","สำรอง (B)"], groups:
 // เก็บข้อมูลบัญชีดิบไว้ฝั่ง JS แล้วให้ปุ่มดินสออ้างด้วยอีเมล — ไม่ยัด JSON (ที่มีรหัสผ่าน/โทเคน)
 // ลงใน onclick attribute เพราะอักขระอย่าง & หรือ ' จะทำ HTML พังแล้วฟอร์มเติมค่าเพี้ยน
 let ACCT_CACHE = {};
-async function renderAccounts(){
+// ค่าตัวกรองที่หน้าจอกำลังใช้อยู่ — ทั้ง renderAccounts และปุ่มติ๊กทั้งชุดต้องอ่านจากตัวนี้
+// ตัวเดียวกัน ไม่งั้น "ติ๊กทั้งหมดที่เห็น" จะไปโดนบัญชีที่ไม่ได้อยู่บนจอ
+// ยังไม่เลือกการ์ด => โหมด มี/ไม่มี ไม่มีความหมาย ส่ง 'all' ไปแทน (ลิสต์เต็มเหมือนเดิม)
+function accFilterArgs(){
   const q = (document.getElementById('accSearch')||{}).value || "";
-  const s = hasPy() ? await PY.get_accounts_grouped(q) : DEMO_ACC;
+  const card = (document.getElementById('accCardKey')||{}).value || "";
+  let mode = (document.getElementById('accCardMode')||{}).value || "has";
+  if(mode !== 'nodata' && !card) mode = 'all';
+  return [q, card, mode];
+}
+async function setCheckedFiltered(v){
+  if(!hasPy()){ notReady('ต้องเปิดจากตัวโปรแกรม'); return; }
+  const [q, card, mode] = accFilterArgs();
+  await PY.set_checked_filtered(v, q, card, mode);
+  renderAccounts();
+}
+async function renderAccounts(){
+  const [q, card, mode] = accFilterArgs();
+  const s = hasPy() ? await PY.get_accounts_grouped(q, card, mode) : DEMO_ACC;
   ACCT_CACHE = {};
   (s.groups||[]).forEach(g=>(g.accounts||[]).forEach(a=>{ ACCT_CACHE[a.email] = a; }));
+  // เติมดรอปดาวน์การ์ดจากข้อมูลจริง — cardNames นับจากบัญชี "ทั้งหมด" ไม่ใช่เฉพาะที่กรองติด
+  // (ถ้านับเฉพาะที่กรองติด พอเลือกคางุระแล้วตัวเลือกอื่นจะหาย กลับไปเลือกตัวอื่นไม่ได้)
+  const cardSel = document.getElementById('accCardKey');
+  if(cardSel && s.cardNames){
+    const keep = cardSel.value;
+    const html = '<option value="">— ทุกตัว —</option>'
+      + s.cardNames.map(c=>'<option value="'+esc(c.key)+'">'+esc(c.label)+' ('+c.count+')</option>').join("");
+    if(cardSel.innerHTML !== html){ cardSel.innerHTML = html; cardSel.value = keep; }
+  }
+  const fc = document.getElementById('accFilterCount');
+  if(fc) fc.textContent = (typeof s.shownCount === 'number')
+    ? ('เห็นอยู่ ' + s.shownCount + ' / ' + (s.accountsTotal||0) + ' รหัส'
+       + (mode === 'nodata' ? '' : ' · ยังไม่มีข้อมูลการ์ด ' + (s.noCardDataCount||0)))
+    : '';
   const dl = document.getElementById('groupNamesList');
   if(dl) dl.innerHTML = (s.groupNames||[]).map(n=>'<option value="'+esc(n)+'">').join("");
   const box = document.getElementById('accGroups');
@@ -251,7 +303,10 @@ async function renderAccounts(){
         '<div style="display:flex;align-items:center;gap:11px;padding:11px 12px;margin-left:8px;border-radius:10px;background:#121A28;border:1px solid #1B2434">'
         + '<span style="width:9px;height:9px;border-radius:50%;background:'+a.dot+';flex:none"></span>'
         + '<span onclick="toggleAccount(\''+a.email+'\')" style="width:16px;height:16px;border-radius:5px;flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;background:'+(a.checked?'#10B981':'transparent')+';border:1.5px solid '+(a.checked?'#10B981':'#2A3547')+'"><i data-lucide="check" width="11" height="11" stroke-width="3" style="color:#04120C;opacity:'+(a.checked?'1':'0')+'"></i></span>'
-        + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">'+esc(a.name)+'</div><div style="font-size:11px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">กลุ่ม '+esc(a.grp)+' · '+esc(a.tok)+'</div></div>'
+        + '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">'+esc(a.name)+'</div><div style="font-size:11px;color:#5C6B82;font-family:\'IBM Plex Mono\',monospace">กลุ่ม '+esc(a.grp)+' · '+esc(a.tok)+'</div>'
+        + (a.cardText ? '<div style="font-size:11px;color:#8B95A8;margin-top:3px">การ์ด: '+esc(a.cardText)+'</div>' : '')
+        + (a.attempts > 1 ? '<div style="font-size:11px;color:#FBBF24;margin-top:3px">ลองไป '+a.attempts+' รอบ</div>' : '')
+        + '</div>'
         + '<i data-lucide="pencil" width="15" height="15" stroke-width="1.75" style="color:#7C8CA3;cursor:pointer" onclick="editAccount(\''+jsq(a.email)+'\')"></i>'
         + '<i data-lucide="x" width="15" height="15" stroke-width="2" style="color:#455266;cursor:pointer" onclick="deleteAccount(\''+a.email+'\')"></i>'
         + '</div>')).join("")
@@ -349,7 +404,7 @@ const STEP_FIELD_MAP = {
   wait_for_text:['Text','Timeout','Delay'], clear_ads_loop:['Text','Delay'],
   fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set','Block'],
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
-  if_image:['Text','Threshold','Timeout','Delay'],
+  if_image:['Text','TapMode','XY','Radius','Interval','Threshold','Timeout','Delay'],
   tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
   tap_around_until_image:['XY','Text','Radius','Interval','Timeout','Threshold','Delay'],
   answer_quiz:['Points','Submit','Refresh','Box','Mode','Text','Interval','Timeout','Threshold','Delay'],
@@ -370,7 +425,7 @@ const STEP_TEXT_LABEL = {
   tap_around_until_image:'ไฟล์รูปเป้าหมายที่รอให้ขึ้น (.png) — หรือกด "ตั้งภาพเป้าหมายจากจอ" ในโหมดโฟลว์',
   answer_quiz:'ไฟล์รูปที่บอกว่า "ตอบครบแล้ว" เช่นป๊อปอัพรับรางวัล — หรือกด "ตั้งภาพเป้าหมายจากจอ"',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Refresh','Box','Mode','Threshold','Click','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Refresh','Box','Mode','TapMode','Threshold','Click','Delay'];
 function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
@@ -381,6 +436,18 @@ function applyTypeFields(t){
     el.style.display = on ? (f==='XY'||f==='XY2' ? 'flex' : 'flex') : 'none';
   });
   if(show.includes('Text')){ const lbl=document.getElementById('sfTextLabel'); if(lbl) lbl.textContent = STEP_TEXT_LABEL[t] || 'ข้อความ'; }
+  onTapModeChange();
+}
+// if_image ที่เลือก 'รอเฉย ๆ' ไม่ได้ใช้พิกัด/รัศมี/จังหวะกด — ซ่อนไว้กันสับสน
+// (เรียกทั้งตอนสลับชนิดขั้น และตอนสลับโหมดในดรอปดาวน์)
+function onTapModeChange(){
+  if(((document.getElementById('sfType')||{}).value) !== 'if_image') return;
+  const m = (document.getElementById('sfTapMode')||{}).value || 'none';
+  const vis = {XY: m !== 'none', Radius: m === 'around', Interval: m !== 'none'};
+  Object.keys(vis).forEach(f=>{
+    const el = document.getElementById('fld'+f);
+    if(el) el.style.display = vis[f] ? 'flex' : 'none';
+  });
 }
 function fillStepForm(st){
   const g=id=>document.getElementById(id);
@@ -404,6 +471,7 @@ function fillStepForm(st){
   g('sfRefresh').value = st.refresh||'';
   g('sfBox').value = st.box||'';
   if(st.mode) g('sfMode').value = st.mode;
+  g('sfTapMode').value = st.tap_mode || 'none';
   // ไม่ได้ตั้งค่ามา = เปิด (ตัวรันดีฟอลต์ click=True) ต้องโชว์ให้ตรงกับที่จะเกิดขึ้นจริง
   g('sfClick').checked = (st.click === undefined || st.click === null || st.click === '' ) ? true : !!st.click;
   g('sfDesc').value = st.desc===''||st.desc==='-'?'':st.desc;
@@ -440,6 +508,7 @@ function collectStepPatch(){
   if(show.includes('Refresh')) p.refresh=g('sfRefresh');
   if(show.includes('Box')) p.box=g('sfBox');
   if(show.includes('Mode')) p.mode=g('sfMode');
+  if(show.includes('TapMode')) p.tap_mode=g('sfTapMode');
   if(show.includes('Click')) p.click=!!(document.getElementById('sfClick')||{}).checked;
   if(show.includes('Delay')) p.delay=g('sfDelay');
   return p;
@@ -605,7 +674,11 @@ async function loadStuckMode(){
   const r = await PY.get_stuck_mode();
   const el = document.getElementById('stuckMode');
   if(el && r && r.on_stuck) el.value = r.on_stuck;
+  const q = await PY.get_retry_rounds();
+  const el2 = document.getElementById('retryRounds');
+  if(el2 && q && q.retry_rounds != null) el2.value = String(q.retry_rounds);
 }
+async function saveRetryRounds(v){ if(hasPy()) await PY.save_retry_rounds(v); }
 function boot(){ renderNav(); switchPage("home"); loadStuckMode(); if(hasPy()){ scanPorts(); } else { refresh(); } icons(); }
 window.addEventListener('pywebviewready', ()=>{ PY = window.pywebview.api; boot(); });
 // เผื่อเปิดในเบราว์เซอร์ธรรมดา (พรีวิว) — ไม่มี pywebviewready

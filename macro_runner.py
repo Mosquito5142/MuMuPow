@@ -366,6 +366,14 @@ class MacroRunner:
         self.profile_name = ""          # ชื่อสคริปต์ (ใส่ในรายงานจุดที่ติด)
         self._dlock = threading.Lock()
         self.total_accounts = 0
+        # รอบที่เท่าไหร่ของ 'รอบซ่อม' (1 = รอบปกติ) — ตั้งจากฝั่ง Api ก่อนเรียก run_queue/run_sequential
+        # มีไว้บอกใน log อย่างเดียว ไม่เปลี่ยนตรรกะการรัน
+        self.attempt_no = 1
+
+        # หยุดแบบ 'จบรหัสที่ทำอยู่ก่อน' — ตั้งจากฝั่ง Api ระหว่างที่กำลังรัน
+        # ต่างจาก running_check ตรงที่ไม่ตัดกลางขั้น: บัญชีที่ค้างอยู่จะเดินจนจบสคริปต์
+        # แล้วค่อยเลิกหยิบบัญชีใหม่ ทำให้ไม่มีบัญชีค้างครึ่ง ๆ กลาง ๆ ไว้ตอนกลับมารันต่อ
+        self.stop_after_current = False
         self._done = {}
         self.queue = None
 
@@ -451,6 +459,11 @@ class MacroRunner:
             return steps
 
     # ---------- orchestration ----------
+    def _attempt_tag(self):
+        """ข้อความต่อท้าย log บอกว่านี่คือการลองรอบที่เท่าไหร่ — รอบแรกไม่ต้องบอก"""
+        n = int(getattr(self, "attempt_no", 1) or 1)
+        return f" (รอบซ่อมที่ {n})" if n > 1 else ""
+
     def run_queue(self, devices, accounts):
         """กระจายบัญชีลงจอแบบคิวต่อเนื่อง (จอว่าง = หยิบบัญชีถัดไป) เหมือน device_worker เดิม"""
         self.total_accounts = len(accounts)
@@ -471,11 +484,17 @@ class MacroRunner:
         def worker(dev):
             paused = False
             while self.running():
+                # หยุดแบบสุภาพ: บัญชีที่เพิ่งจบไปแล้วถือว่าเสร็จสมบูรณ์ แค่ไม่หยิบตัวใหม่ต่อ
+                # (เช็คหัวลูปพอ — ตัวที่กำลังทำอยู่จะเดินจนจบเองก่อนวนมาถึงตรงนี้)
+                if self.stop_after_current:
+                    self.log(f"[{dev}] สั่งหยุดเมื่อจบรหัส — ไม่หยิบรหัสใหม่แล้ว "
+                             f"(เหลือในคิว {self.queue.qsize()} รหัส)", "warn")
+                    break
                 try:
                     acc = self.queue.get_nowait()
                 except queue.Empty:
                     break
-                self.log(f"[{dev}] เริ่มบัญชี: {account_display_name(acc)}", "info")
+                self.log(f"[{dev}] เริ่มบัญชี: {account_display_name(acc)}{self._attempt_tag()}", "info")
                 status = self.execute_one(dev, acc)
                 if status == "paused":
                     # จอนี้ค้างรอผู้ใช้แก้ไข — เลิกหยิบคิวต่อ (บัญชีนี้ยังไม่เสร็จ รอกด 'รันต่อ' เอง)
@@ -522,7 +541,8 @@ class MacroRunner:
                 continue
 
             self.log(f"เริ่มคิวที่ {idx + 1}/{total} บน [{dev}]"
-                     + (f": {account_display_name(acc)}" if acc else ""), "info")
+                     + (f": {account_display_name(acc)}" if acc else "")
+                     + self._attempt_tag(), "info")
             status = self.execute_one(dev, acc)
             if status == "paused":
                 paused_devices.add(dev)
@@ -531,6 +551,11 @@ class MacroRunner:
                     break
                 continue
             if status == "stopped" or not self.running():
+                break
+            # หยุดแบบสุภาพ: บัญชีนี้จบสมบูรณ์แล้ว เลิกตรงนี้เลย ไม่ต้องรอเว้นจังหวะต่อ
+            if self.stop_after_current:
+                self.log(f"สั่งหยุดเมื่อจบรหัส — จบ {account_display_name(acc)} แล้วหยุด "
+                         f"(ยังไม่ได้ทำอีก {total - idx - 1} รหัส)", "warn")
                 break
             self.progress(dev, status="running", step_desc="พักก่อนบัญชีถัดไป…")
 
@@ -808,7 +833,16 @@ class MacroRunner:
 
     def _eval_if_image(self, device, step):
         """ประเมินเงื่อนไข if_image: เจอภาพภายใน timeout → 'then' ไม่เจอ → 'else'
-        ภาพเงื่อนไขมาจาก anchor_img (base64 ที่ลากกรอบ) หรือ text (ไฟล์ใน templates/)"""
+        ภาพเงื่อนไขมาจาก anchor_img (base64 ที่ลากกรอบ) หรือ text (ไฟล์ใน templates/)
+
+        tap_mode = กดไปด้วยระหว่างที่รอภาพ (ไม่ตั้ง = 'none' = รอเฉย ๆ เหมือนเดิมทุกอย่าง)
+          point  = กดพิกัด x,y ซ้ำ ๆ ทุก interval วินาที
+          around = ไล่กดรอบ ๆ การ์ด (find_img หรือ x,y + radius) เหมือนขั้น 'กดรอบๆ การ์ด'
+
+        ต่างจากขั้น tap_around_until_image ตรงที่ครบเวลาแล้วยังไม่เจอ จะแยกไปทำกิ่ง 'ไม่เจอ'
+        แทนที่จะเตือนแล้วไหลไปขั้นถัดไปเฉย ๆ — ใช้กับหน้าที่กดแล้วอาจเปิดไม่ติด
+        แล้วต้องไปทำอีกทางหนึ่ง (เช่นปิดหน้าต่างแล้วข้ามไป)
+        """
         threshold = float(step.get("threshold", 0.8) or 0.8)
         timeout = float(step.get("timeout", 2.0) or 2.0)
 
@@ -828,7 +862,36 @@ class MacroRunner:
             self.log(f"[{device}] if_image: ไม่ได้ตั้งภาพเงื่อนไข → ถือว่า 'ไม่เจอ'", "warn")
             return "else"
 
+        name = step.get("desc") or "if_image"
+
+        # ---- โหมดกดระหว่างรอ — ตั้งค่าไม่ครบให้ถอยไปเป็น 'รอเฉย ๆ' ไม่ใช่ล้มทั้งขั้น ----
+        tap_mode = str(step.get("tap_mode") or "none").strip().lower()
+        around, point_xy = None, None
+        if tap_mode == "around":
+            around = self._around_cfg(step)
+            if around is None:
+                self.log(f"[{device}] เงื่อนไข '{name}': โหมดกดรอบๆ ต้องตั้งภาพการ์ด "
+                         f"หรือพิกัด x,y → รอเฉย ๆ แทน", "warn")
+                tap_mode = "none"
+        elif tap_mode == "point":
+            try:
+                point_xy = (self._as_int(step.get("x")), self._as_int(step.get("y")))
+            except (TypeError, ValueError):
+                self.log(f"[{device}] เงื่อนไข '{name}': โหมดกดซ้ำ ต้องตั้งพิกัด x,y → รอเฉย ๆ แทน", "warn")
+                tap_mode = "none"
+        else:
+            tap_mode = "none"
+
+        # รอเฉย ๆ ต้องคง 0.4 วิไว้เท่าเดิม — สคริปต์เก่าอิงจังหวะนี้อยู่ ห้ามเปลี่ยน
+        poll = max(0.05, float(step.get("interval", 0.5) or 0.5)) if tap_mode != "none" else 0.4
+        if tap_mode != "none":
+            how = "รอบๆ การ์ด" if tap_mode == "around" else f"ที่ ({point_xy[0]},{point_xy[1]})"
+            self.log(f"[{device}] เงื่อนไข '{name}': กด{how} ทุก {poll:g} วิ "
+                     f"รอภาพสูงสุด {timeout:g} วิ…", "info")
+
         deadline = time.time() + timeout
+        spot = 0
+        taps = 0
         while True:
             if not self.running():
                 return "stopped"
@@ -839,12 +902,28 @@ class MacroRunner:
                 else:
                     found, _x, _y, _m = self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
                 if found:
-                    self.log(f"[{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' → ✅ เจอ", "info")
+                    extra = f" (กดไป {taps} ครั้ง)" if tap_mode != "none" else ""
+                    self.log(f"[{device}] เงื่อนไข '{name}' → ✅ เจอ{extra}", "info")
                     return "then"
             if time.time() >= deadline:
-                self.log(f"[{device}] เงื่อนไข '{step.get('desc') or 'if_image'}' → ❌ ไม่เจอ", "info")
+                extra = f" (กดไป {taps} ครั้ง)" if tap_mode != "none" else ""
+                self.log(f"[{device}] เงื่อนไข '{name}' → ❌ ไม่เจอ{extra}", "info")
                 return "else"
-            if not self._interruptible_sleep(0.4):
+
+            # ยังไม่เจอ และยังไม่หมดเวลา → กดตามโหมดที่ตั้งไว้ แล้วค่อยวนไปเช็คใหม่
+            if tap_mode == "point":
+                self.controller.tap(device, point_xy[0], point_xy[1])
+                taps += 1
+            elif tap_mode == "around" and ok:
+                pt = self._around_next_tap(data, around, spot, threshold)
+                if pt is None:
+                    self.log(f"[{device}] ยังไม่เจอการ์ดบนจอ — รอแล้วลองใหม่", "warn")
+                else:
+                    self.controller.tap(device, pt[0], pt[1])
+                    spot += 1
+                    taps += 1
+
+            if not self._interruptible_sleep(poll):
                 return "stopped"
 
     def _save_failure_report(self, device, account, step_path, step, reason):
@@ -1172,26 +1251,20 @@ class MacroRunner:
         (0.50, 0.50),   # กลาง (เผื่อการ์ดนี้กดกลางได้)
     ]
 
-    def _tap_around_until_image(self, device, step):
-        """หา 'การ์ด' บนจอ แล้วไล่กดหลายจุดรอบ ๆ ในการ์ดนั้น จนกว่า 'ภาพเป้าหมาย' จะขึ้น
+    def _around_cfg(self, step):
+        """เตรียมค่าที่ใช้ 'ไล่กดรอบ ๆ การ์ด' — คืน dict หรือ None ถ้าตั้งค่าไม่ครบ
 
-        มีไว้สำหรับการ์ดร้านค้าที่กดตรงรูปไอเทมแล้วเกมไม่รับ ต้องกดโดนพื้นการ์ดส่วนอื่น
-        และการ์ดก็ไม่ได้อยู่ตำแหน่งเดิมทุกครั้ง — จึงต้องหาใหม่ทุกรอบแล้วค่อยคำนวณจุดกด
-
-        find_img = ภาพการ์ด (จุดอ้างอิงว่าจะกดรอบ ๆ ตรงไหน)
-        wait_img/text = ภาพเป้าหมายที่บอกว่า 'เปิดได้แล้ว' (เช่นหัว modal)
+        find_img = ภาพการ์ด (จุดอ้างอิงว่าจะกดรอบ ๆ ตรงไหน) — ต้องหาใหม่ทุกรอบเพราะการ์ดเลื่อนที่ได้
         ถ้าไม่ได้ตั้ง find_img จะใช้พิกัด x,y เป็นจุดกึ่งกลางแทน แล้วกดรอบ ๆ ตามรัศมี radius
-        """
-        tgt_bytes, tgt_path = self._step_template(step)
-        if tgt_bytes is None and tgt_path is None:
-            self.log(f"[{device}] กดรอบๆ: ยังไม่ได้ตั้งภาพเป้าหมาย (ภาพที่รอให้ขึ้น) → ข้าม", "warn")
-            return
 
-        find_b64 = step.get("find_img") or ""
+        แยกออกมาเป็นเมธอดของตัวเองเพราะใช้ทั้งขั้น tap_around_until_image และ
+        if_image ที่ตั้ง tap_mode='around' — ต้องคำนวณจุดกดเหมือนกันเป๊ะทั้งสองทาง
+        """
         find_bytes = None
-        if find_b64:
+        b64 = step.get("find_img") or ""
+        if b64:
             try:
-                find_bytes = base64.b64decode(find_b64) or None
+                find_bytes = base64.b64decode(b64) or None
             except Exception:
                 find_bytes = None
 
@@ -1200,16 +1273,49 @@ class MacroRunner:
             try:
                 fallback_xy = (self._as_int(step.get("x")), self._as_int(step.get("y")))
             except (TypeError, ValueError):
-                self.log(f"[{device}] กดรอบๆ: ต้องตั้งภาพการ์ด หรือพิกัดสำรอง อย่างใดอย่างหนึ่ง → ข้าม", "warn")
-                return
+                return None
 
-        timeout = float(step.get("timeout", 30) or 30)
-        interval = max(0.05, float(step.get("interval", 0.5) or 0.5))
-        threshold = float(step.get("threshold", 0.8) or 0.8)
         radius = max(5, int(float(step.get("radius", 60) or 60)))
         tw, th = self._template_size(find_bytes) if find_bytes else (radius * 2, radius * 2)
         if tw <= 0 or th <= 0:
             tw, th = radius * 2, radius * 2
+        return {"find": find_bytes, "xy": fallback_xy, "tw": tw, "th": th}
+
+    def _around_next_tap(self, data, cfg, spot, threshold):
+        """จุดถัดไปที่จะกดรอบ ๆ การ์ด — คืน None ถ้ารอบนี้ยังหาการ์ดบนจอไม่เจอ"""
+        if cfg["find"] is not None:
+            cf, cx, cy, _m = self.controller.match_template_bytes(data, cfg["find"], threshold)
+            if not cf:
+                return None
+        else:
+            cx, cy = cfg["xy"]
+        fx, fy = self._CARD_TAP_SPOTS[spot % len(self._CARD_TAP_SPOTS)]
+        tw, th = cfg["tw"], cfg["th"]
+        return (int(round(cx - tw / 2.0 + fx * tw)),
+                int(round(cy - th / 2.0 + fy * th)))
+
+    def _tap_around_until_image(self, device, step):
+        """หา 'การ์ด' บนจอ แล้วไล่กดหลายจุดรอบ ๆ ในการ์ดนั้น จนกว่า 'ภาพเป้าหมาย' จะขึ้น
+
+        มีไว้สำหรับการ์ดร้านค้าที่กดตรงรูปไอเทมแล้วเกมไม่รับ ต้องกดโดนพื้นการ์ดส่วนอื่น
+        และการ์ดก็ไม่ได้อยู่ตำแหน่งเดิมทุกครั้ง — จึงต้องหาใหม่ทุกรอบแล้วค่อยคำนวณจุดกด
+
+        wait_img/text = ภาพเป้าหมายที่บอกว่า 'เปิดได้แล้ว' (เช่นหัว modal)
+        ครบเวลาแล้วภาพยังไม่ขึ้น = เตือนแล้วไหลไปขั้นถัดไป
+        ถ้าอยากให้ 'ไม่ขึ้น' แยกไปทำอีกทางหนึ่ง ใช้ if_image ที่ตั้ง tap_mode='around' แทน
+        """
+        tgt_bytes, tgt_path = self._step_template(step)
+        if tgt_bytes is None and tgt_path is None:
+            self.log(f"[{device}] กดรอบๆ: ยังไม่ได้ตั้งภาพเป้าหมาย (ภาพที่รอให้ขึ้น) → ข้าม", "warn")
+            return
+        cfg = self._around_cfg(step)
+        if cfg is None:
+            self.log(f"[{device}] กดรอบๆ: ต้องตั้งภาพการ์ด หรือพิกัดสำรอง อย่างใดอย่างหนึ่ง → ข้าม", "warn")
+            return
+
+        timeout = float(step.get("timeout", 30) or 30)
+        interval = max(0.05, float(step.get("interval", 0.5) or 0.5))
+        threshold = float(step.get("threshold", 0.8) or 0.8)
 
         self.log(f"[{device}] ไล่กดรอบๆ การ์ด ทุก {interval:g} วิ จนกว่าภาพเป้าหมายจะขึ้น "
                  f"(สูงสุด {timeout:g} วิ)…", "info")
@@ -1232,22 +1338,13 @@ class MacroRunner:
                 return
 
             # หาการ์ดใหม่ทุกรอบ — รายการร้านค้าเลื่อน/สลับที่ได้ระหว่างกด
-            if find_bytes is not None:
-                cf, cx, cy, _ = self.controller.match_template_bytes(data, find_bytes, threshold)
-                if not cf:
-                    self.log(f"[{device}] ยังไม่เจอการ์ดบนจอ — รอแล้วลองใหม่", "warn")
-                    if not self._interruptible_sleep(interval):
-                        return
-                    continue
+            pt = self._around_next_tap(data, cfg, spot, threshold)
+            if pt is None:
+                self.log(f"[{device}] ยังไม่เจอการ์ดบนจอ — รอแล้วลองใหม่", "warn")
             else:
-                cx, cy = fallback_xy
-
-            fx, fy = self._CARD_TAP_SPOTS[spot % len(self._CARD_TAP_SPOTS)]
-            spot += 1
-            tx = int(round(cx - tw / 2.0 + fx * tw))
-            ty = int(round(cy - th / 2.0 + fy * th))
-            self.controller.tap(device, tx, ty)
-            taps += 1
+                self.controller.tap(device, pt[0], pt[1])
+                spot += 1
+                taps += 1
             if not self._interruptible_sleep(interval):
                 return
 
