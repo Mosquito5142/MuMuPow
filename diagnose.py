@@ -363,7 +363,10 @@ def check_extras():
         else:
             warn("ไม่เจอ Tesseract — เฉพาะฟีเจอร์อ่านเพชร/อ่านชื่อกิลด์จะใช้ไม่ได้ "
                  "(ขั้นเช็ครูปไม่เกี่ยว)",
-                 "โหลดจาก https://github.com/UB-Mannheim/tesseract/wiki")
+                 "ทางที่ 1: ลงจาก https://github.com/UB-Mannheim/tesseract/wiki\n"
+                 "ทางที่ 2 (ไม่ต้องติดตั้ง): ก็อปโฟลเดอร์ Tesseract-OCR ทั้งอัน "
+                 "มาวางข้างโปรแกรม แล้วตั้งชื่อโฟลเดอร์ว่า tesseract\n"
+                 "         (ต้องมี tesseract.exe + ไฟล์ .dll ครบ) โปรแกรมจะหาที่นี่ก่อนเสมอ")
     except Exception:
         pass
 
