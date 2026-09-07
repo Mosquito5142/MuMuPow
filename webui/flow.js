@@ -237,6 +237,13 @@ function stepDetail(s){
     return (s.mode==='cycle'?'ไล่ตอบทีละข้อ':'ตอบข้อที่ยาวสุด') + ' · ' + n + ' ตัวเลือก';
   }
   if(t==='tap_around_until_image') return 'ไล่กดรอบๆ ' + (s.find_img?'การ์ดที่เจอ':'('+(s.x||'?')+','+(s.y||'?')+')') + ' ทุก '+(s.interval||0.5)+' วิ จนเจอเป้าหมาย';
+  // if_image ที่ตั้งโหมดกด = กดไปด้วยระหว่างรอ ครบเวลาแล้วแยกไปกิ่ง 'ไม่เจอ'
+  if(t==='if_image'){
+    const tail = ' ใน '+(s.timeout||2)+' วิ · เจอ→ทำกิ่ง "เจอ" / ไม่เจอ→กิ่ง "ไม่เจอ"';
+    if(s.tap_mode==='around') return 'ไล่กดรอบๆ '+(s.find_img?'การ์ดที่เจอ':'('+(s.x||'?')+','+(s.y||'?')+')')+tail;
+    if(s.tap_mode==='point')  return 'กดรัว ('+(s.x||'?')+','+(s.y||'?')+')'+tail;
+    return s.anchor_img ? 'ภาพที่ลากไว้' : (s.text || 'ยังไม่ตั้งภาพเงื่อนไข');
+  }
   if(t==='wait_for_image') return (s.click===false ? 'รอจนเจอภาพ (ไม่กด)' : 'เจอที่ไหนกดที่นั่น') + (s.wait_img?' · ภาพที่ลากไว้':(s.text?' · '+s.text:''));
   if(t==='detect_image')  return (s.click===false ? 'เช็คภาพ (ไม่กด)' : 'เจอที่ไหนกดที่นั่น') + (s.wait_img?' · ภาพที่ลากไว้':(s.text?' · '+s.text:''));
   return s.text || s.desc || '';
@@ -256,6 +263,13 @@ function blockWarning(s){
   if(t === 'answer_quiz'){
     if(!String(s.points||'').trim()) return 'ยังไม่ตั้งพิกัดตัวเลือก — กด "เก็บพิกัดตัวเลือกจากจอ"';
     if(!s.wait_img && !String(s.text||'').trim()) return 'ยังไม่ตั้งภาพที่บอกว่าตอบครบแล้ว';
+  }
+  if(t === 'if_image'){
+    // เลือกโหมดกดแล้วแต่ยังไม่ตั้งเป้า = ตัวรันจะถอยไป 'รอเฉย ๆ' เงียบ ๆ ต้องเตือนตั้งแต่บนผัง
+    if(s.tap_mode === 'around' && !s.find_img && (empty(s.x) || empty(s.y)))
+      return 'โหมดกดรอบๆ: ยังไม่ตั้งภาพการ์ด หรือพิกัดสำรอง';
+    if(s.tap_mode === 'point' && (empty(s.x) || empty(s.y)))
+      return 'โหมดกดรัว: ยังไม่ตั้งพิกัดที่จะกด';
   }
   if(t === 'tap_around_until_image'){
     if(!s.wait_img && !String(s.text||'').trim()) return 'ยังไม่ตั้งภาพเป้าหมาย — กด "ตั้งภาพเป้าหมาย (modal)"';
@@ -406,6 +420,11 @@ function renderFlowActions(s, path){
   if(t==='if_image'){
     html += btn('flowPickImage(\'cond\')','image-plus','ตั้งภาพเงื่อนไขจากจอ','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
     html += btn('flowTestMatch()','flask-conical','ทดสอบว่าเจอไหม','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+    // โหมด 'ไล่กดรอบๆ' ต้องมีภาพการ์ดไว้เล็งจุดกด — ใช้ตัวเลือกภาพเดียวกับขั้น tap_around
+    if(s.tap_mode==='around'){
+      html += btn('flowPickImage(\'find\')','crop','ตั้งภาพการ์ด (ที่จะกดรอบๆ)','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
+      if(s.find_img) html += btn('flowTestFindMatch()','flask-conical','ทดสอบภาพการ์ด','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
+    }
   }
   if(t==='answer_quiz'){
     html += btn('flowPickChoices()','mouse-pointer-click','เก็บพิกัดตัวเลือกจากจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');

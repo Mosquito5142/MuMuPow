@@ -143,7 +143,19 @@ Steps with no `delay` key fall back to `DEFAULT_STEP_DELAYS[type]` (in `macro_ru
 }
 ```
 
-Evaluated **once** per arrival (screenshot → match → pick a branch); it does not loop itself. After the branch finishes, execution rejoins the main line. Nesting is capped at `MAX_BRANCH_DEPTH = 5` (defined identically in both engines). Flat legacy scripts must keep running unchanged — `if_image` is additive.
+Polls for the image until `timeout`, then picks a branch; it does not loop the branch itself. After the branch finishes, execution rejoins the main line.
+
+`tap_mode` (default `"none"`) makes it tap *while* it waits — the "spam-tap for N seconds, then fork" shape:
+
+| `tap_mode` | behavior | needs |
+|---|---|---|
+| `none` | wait only — polls every 0.4 s | — |
+| `point` | tap `x,y` every `interval` s | `x`, `y` |
+| `around` | walk `_CARD_TAP_SPOTS` around a card found by `find_img` (or `x,y` + `radius`) | `find_img` **or** `x,y` |
+
+Misconfigured (mode set but no coordinates/card image) degrades to `none` with a warning rather than tapping `(0,0)`. The poll interval stays **0.4 s** when `tap_mode` is `none` — old scripts depend on that cadence.
+
+This is the branching counterpart to `tap_around_until_image`: that step warns and falls through on timeout, `if_image` sends you down the `else` branch. Tap-point maths lives in `_around_cfg()` / `_around_next_tap()`, shared by both. Nesting is capped at `MAX_BRANCH_DEPTH = 5` (defined identically in both engines). Flat legacy scripts must keep running unchanged — `if_image` is additive.
 
 Blocks are addressed by **path**: `[2]` = third block of the main line, `[2, "then", 0]` = first block inside its "found" branch (`Api._locate`). At runtime paths are logged as dotted strings (`"2.then"`, `"3.set"`, `"3.home"`).
 

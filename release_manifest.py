@@ -18,6 +18,7 @@ SHIP_FILES = [
     "MuMupow_new.exe",      # แอปใหม่ (pywebview)
     "game_reset.json",      # แพ็กเกจ/ขั้นตอนรีเซ็ตเกม — เราตั้งให้
     "README.md",
+    "diagnose.py",          # ตัวตรวจว่าเครื่องปลายทางเซ็ตครบไหม (README ขั้นที่ 7 สั่งให้รัน)
 ]
 SHIP_DIRS = [
     "macros",               # สคริปต์หลัก
