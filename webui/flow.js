@@ -380,11 +380,11 @@ async function flowSelect(path){
   const r = hasPy() ? await PY.flow_get_step(path) : { ok:true, step: _demoAt(path) };
   if(r && r.ok && r.step){
     const s = r.step;
-    fillStepForm({ type:s.type||'tap', desc:s.desc||'', x:s.x||'', y:s.y||'', x2:s.x2||'', y2:s.y2||'',
-      duration:s.duration||'', text:s.text||'', code:s.code||'', key:s.key||'', action:s.action||'',
-      seconds:s.seconds||'', timeout:s.timeout||'', set:s.set||'', threshold:s.threshold||'',
-      block_on_fail:s.block_on_fail||'', block_home:s.block_home||'', block_retries:(s.block_retries!=null?s.block_retries:''),
-      delay:(s.delay!=null?s.delay:'') });
+    // ส่งทั้งอ็อบเจกต์ไปเลย ห้ามไล่พิมพ์ชื่อฟิลด์เอง — เดิมไล่พิมพ์แล้วตกหล่นไป 9 ตัว
+    // (points/submit/refresh/box/mode/tap_mode/interval/radius/click) ทำให้ช่องพวกนั้น
+    // ขึ้นว่างเสมอในโหมดผังงาน แล้วโดน collectStepPatch เขียนทับค่าจริงหายตอนกดอัปเดต
+    // fillStepForm อ่านเฉพาะคีย์ที่มันรู้จัก คีย์ส่วนเกิน (anchor_img/then/else) ไม่กระทบอะไร
+    fillStepForm(Object.assign({ type: 'tap' }, s));
     renderFlowActions(s, path);
   }
   renderFlow();
@@ -427,7 +427,7 @@ function renderFlowActions(s, path){
     }
   }
   if(t==='answer_quiz'){
-    html += btn('flowPickChoices()','mouse-pointer-click','เก็บพิกัดตัวเลือกจากจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
+    html += btn('pickPoints(\'sfPoints\')','mouse-pointer-click','เก็บพิกัดตัวเลือกจากจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
     html += btn('flowPickImage(\'wait\')','image-plus','ตั้งภาพ "ตอบครบแล้ว"','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
     if(s.wait_img) html += btn('flowTestWaitMatch()','flask-conical','ทดสอบภาพเป้าหมาย','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   }
@@ -741,6 +741,172 @@ async function flowSaveChoices(){
   if(!pts || !hasPy() || !SEL_PATH){ return; }
   FLOW = await PY.flow_update(SEL_PATH, {points: pts});
   await flowSelect(SEL_PATH);
+}
+
+// ================= ตัวเลือกพิกัดจากจอ (ใช้ได้ทั้งโหมดลิสต์และโหมดผังงาน) =================
+// ต่างจากปุ่มเดิมใน #flowActions ที่โผล่เฉพาะโหมดผังงาน — ชุดนี้ติดอยู่ข้างช่องในฟอร์ม
+// จึงกดได้ทุกโหมด วิธีทำงาน: เขียนค่าลงช่อง แล้วเรียก updateStep() ซึ่งแยกทางบันทึกให้เอง
+// (ผังงาน -> flowSaveSel ตาม path · ลิสต์ -> PY.update_step ตาม index) ไม่ต้องมี API ใหม่
+
+function _setField(id, val){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.value = val;
+  // ไฮไลต์แวบนึงให้เห็นว่าช่องไหนเพิ่งถูกเติม (เลือกทีเดียวอาจเปลี่ยน 2 ช่อง)
+  el.style.transition = 'background .25s';
+  el.style.background = 'rgba(16,185,129,.22)';
+  setTimeout(() => { el.style.background = '#0A0F19'; }, 700);
+}
+
+async function _pickCommit(){
+  closeModal();
+  if(typeof updateStep === 'function') await updateStep();
+}
+
+function _pickOkBtn(label){
+  return '<div style="display:flex;gap:8px;margin-top:12px">'
+    + '<button class="in" id="pkOk" style="flex:1;height:40px;border-radius:9px;background:#10B981;color:#04120C;font-size:13px;font-weight:600;cursor:pointer">' + label + '</button>'
+    + '<button class="in" id="pkClear" style="flex:none;padding:0 14px;height:40px;border-radius:9px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12.5px;cursor:pointer">ล้าง</button></div>';
+}
+
+// แคปจอ + เปิดหน้าต่างเลือก — คืน {shot, img} หรือ null ถ้าแคปไม่ได้
+async function _pickShot(title, icon, hint, extraHtml){
+  if(!hasPy()){ notReady('เลือกพิกัดจากจอ (ต้องเปิดผ่านตัวโปรแกรม)'); return null; }
+  const shot = await PY.screenshot_b64();
+  if(!shot || !shot.ok){
+    openModal(title, icon, '<div style="font-size:12.5px;color:#FCA5A5">แคปจอไม่ได้ — ติ๊กเลือกจอทางซ้ายก่อน แล้วลองใหม่</div>');
+    return null;
+  }
+  openModal(title + ' · ' + esc(shot.device || ''), icon,
+    '<div style="font-size:12px;color:#7C8CA3;margin-bottom:6px">' + hint + ' (จอ ' + shot.w + '×' + shot.h + ')</div>'
+    + '<div id="pkInfo" style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:#6EE7B7;margin-bottom:8px">—</div>'
+    + '<div style="position:relative;display:inline-block;max-width:100%">'
+    + '<img id="pkImg" src="' + shot.img + '" data-w="' + shot.w + '" data-h="' + shot.h + '" style="max-width:100%;border-radius:10px;border:1px solid #24344B;cursor:crosshair;display:block;user-select:none">'
+    + '<div id="pkRect" style="position:absolute;border:2px solid #FBBF24;background:rgba(251,191,36,.15);display:none;pointer-events:none"></div></div>'
+    + (extraHtml || ''));
+  icons();
+  return { shot: shot, img: document.getElementById('pkImg') };
+}
+
+// แปลงจุดที่คลิกบนภาพ (ซึ่งถูกย่อให้พอดีหน้าต่าง) กลับเป็นพิกัดจริงบนจอ
+function _toReal(img, ev){
+  const rc = img.getBoundingClientRect();
+  const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h;
+  return { x: Math.round((ev.clientX - rc.left) / rc.width * rw),
+           y: Math.round((ev.clientY - rc.top) / rc.height * rh) };
+}
+
+// ลากกรอบบนภาพ — คืนฟังก์ชันที่เรียกแล้วได้กรอบล่าสุด (พิกัดจริง)
+function _dragRect(p, onChange){
+  const img = p.img, rect = document.getElementById('pkRect');
+  let sx = 0, sy = 0, drag = false, cur = null;
+  const rel = ev => { const rc = img.getBoundingClientRect(); return { x: ev.clientX - rc.left, y: ev.clientY - rc.top }; };
+  img.addEventListener('mousedown', ev => {
+    ev.preventDefault();
+    const q = rel(ev); sx = q.x; sy = q.y; drag = true;
+    rect.style.display = 'block'; rect.style.left = sx + 'px'; rect.style.top = sy + 'px';
+    rect.style.width = '0'; rect.style.height = '0';
+  });
+  // ผูกที่ window เพื่อให้ลากออกนอกภาพได้ — แต่ต้องกันตัวที่ค้างจากหน้าต่างเก่า
+  // (หน้าต่างถูกปิดไปแล้ว img หลุดจาก DOM แต่ listener ยังอยู่) ไม่งั้นจะทำงานทับกัน
+  window.addEventListener('mousemove', ev => {
+    if(!drag || !document.body.contains(img)) return;
+    const q = rel(ev);
+    const x = Math.min(sx, q.x), y = Math.min(sy, q.y), w = Math.abs(q.x - sx), h = Math.abs(q.y - sy);
+    rect.style.left = x + 'px'; rect.style.top = y + 'px';
+    rect.style.width = w + 'px'; rect.style.height = h + 'px';
+    const rc = img.getBoundingClientRect();
+    const rw = img.naturalWidth || +img.dataset.w, rh = img.naturalHeight || +img.dataset.h;
+    cur = { x: Math.round(x / rc.width * rw), y: Math.round(y / rc.height * rh),
+            w: Math.round(w / rc.width * rw), h: Math.round(h / rc.height * rh) };
+    onChange(cur);
+  });
+  window.addEventListener('mouseup', () => { drag = false; });
+  return () => cur;
+}
+
+// ---- คลิกจุดเดียว -> ลง 2 ช่องแยก (พิกัด X กับ Y) ----
+async function pickXY(xId, yId){
+  const p = await _pickShot('เลือกพิกัดจากจอ', 'crosshair', 'คลิกตำแหน่งที่จะให้กด');
+  if(!p) return;
+  p.img.addEventListener('click', async ev => {
+    const q = _toReal(p.img, ev);
+    _setField(xId, q.x); _setField(yId, q.y);
+    await _pickCommit();
+  }, { once: true });
+}
+
+// ---- คลิกจุดเดียว -> ลงช่องเดียวในรูปแบบ "x,y" ----
+async function pickPoint(id, what){
+  const p = await _pickShot('เลือกพิกัดจากจอ', 'crosshair', 'คลิก' + (what || 'ตำแหน่งที่ต้องการ'));
+  if(!p) return;
+  p.img.addEventListener('click', async ev => {
+    const q = _toReal(p.img, ev);
+    _setField(id, q.x + ',' + q.y);
+    await _pickCommit();
+  }, { once: true });
+}
+
+// ---- คลิกได้หลายจุด -> "x,y | x,y | ..." ----
+async function pickPoints(id){
+  const p = await _pickShot('เก็บพิกัดตัวเลือก', 'mouse-pointer-click',
+    'คลิกกลางกล่องตัวเลือกทีละข้อ (กี่ข้อก็ได้) แล้วกด "ใช้พิกัดนี้"',
+    _pickOkBtn('ใช้พิกัดนี้'));
+  if(!p) return;
+  let pts = [];
+  const info = document.getElementById('pkInfo');
+  p.img.addEventListener('click', ev => {
+    const q = _toReal(p.img, ev);
+    pts.push(q.x + ',' + q.y);
+    info.textContent = 'เก็บแล้ว ' + pts.length + ' ข้อ: ' + pts.join(' | ');
+  });
+  document.getElementById('pkClear').onclick = () => { pts = []; info.textContent = 'ล้างแล้ว'; };
+  document.getElementById('pkOk').onclick = async () => {
+    if(!pts.length){ info.textContent = '⚠ ยังไม่ได้คลิกสักข้อ'; return; }
+    _setField(id, pts.join(' | '));
+    await _pickCommit();
+  };
+}
+
+// ---- ลากกรอบ -> เอาเฉพาะ "กว้าง,สูง" (ไม่เอาตำแหน่ง) ----
+async function pickSize(id){
+  const p = await _pickShot('เลือกขนาดจากจอ', 'crop',
+    'ลากกรอบคลุมกล่องตัวเลือก 1 ข้อ — เอาแค่ขนาด ไม่เกี่ยวว่าลากตรงไหน',
+    _pickOkBtn('ใช้ขนาดนี้'));
+  if(!p) return;
+  const info = document.getElementById('pkInfo');
+  const get = _dragRect(p, g => { info.textContent = 'กว้าง ' + g.w + ' × สูง ' + g.h; });
+  document.getElementById('pkClear').onclick = () => {
+    const r = document.getElementById('pkRect'); if(r) r.style.display = 'none';
+    info.textContent = 'ล้างแล้ว — ลากใหม่ได้';
+  };
+  document.getElementById('pkOk').onclick = async () => {
+    const g = get();
+    if(!g || g.w < 8 || g.h < 8){ info.textContent = '⚠ ลากกรอบให้ใหญ่กว่านี้ก่อน'; return; }
+    _setField(id, g.w + ',' + g.h);
+    await _pickCommit();
+  };
+}
+
+// ---- ลากกรอบ -> คิดเป็นรัศมี (ครึ่งหนึ่งของด้านที่สั้นกว่า) ----
+async function pickRadius(id){
+  const p = await _pickShot('เลือกรัศมีจากจอ', 'crop',
+    'ลากกรอบคลุมการ์ด/ปุ่มที่จะไล่กดรอบ ๆ — ระบบคิดรัศมีให้เอง',
+    _pickOkBtn('ใช้รัศมีนี้'));
+  if(!p) return;
+  const info = document.getElementById('pkInfo');
+  const rad = g => Math.max(5, Math.round(Math.min(g.w, g.h) / 2));
+  const get = _dragRect(p, g => { info.textContent = 'กรอบ ' + g.w + '×' + g.h + ' → รัศมี ' + rad(g) + ' px'; });
+  document.getElementById('pkClear').onclick = () => {
+    const r = document.getElementById('pkRect'); if(r) r.style.display = 'none';
+    info.textContent = 'ล้างแล้ว — ลากใหม่ได้';
+  };
+  document.getElementById('pkOk').onclick = async () => {
+    const g = get();
+    if(!g || g.w < 8 || g.h < 8){ info.textContent = '⚠ ลากกรอบให้ใหญ่กว่านี้ก่อน'; return; }
+    _setField(id, rad(g));
+    await _pickCommit();
+  };
 }
 
 async function flowTestFindMatch(){

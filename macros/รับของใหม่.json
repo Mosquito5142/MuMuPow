@@ -31,7 +31,7 @@
       "desc": "ใช้ชุด: ส่งรถบัส",
       "set": "ส่งรถบัส",
       "block_on_fail": "home_retry",
-      "block_retries": "3"
+      "block_home": "กลับหน้าแรก"
     },
     {
       "type": "run_set",
@@ -42,8 +42,10 @@
     },
     {
       "type": "run_set",
+      "desc": "ใช้ชุด: รับลูกบอล",
       "set": "รับลูกบอล",
-      "desc": "ใช้ชุด: รับลูกบอล"
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
     },
     {
       "type": "run_set",
@@ -56,13 +58,6 @@
       "type": "run_set",
       "desc": "ใช้ชุด: ตอบคำถาม",
       "set": "ตอบคำถาม",
-      "block_on_fail": "home_retry",
-      "block_retries": "1"
-    },
-    {
-      "type": "run_set",
-      "set": "กลับหน้าแรก",
-      "desc": "บล็อก: กลับหน้าแรก",
       "block_on_fail": "home_retry",
       "block_home": "กลับหน้าแรก"
     },
@@ -103,8 +98,9 @@
     },
     {
       "type": "run_set",
+      "desc": "ใช้ชุด: รูน",
       "set": "รูน",
-      "desc": "ใช้ชุด: รูน"
+      "block_on_fail": "home_retry"
     },
     {
       "type": "run_set",
@@ -115,6 +111,18 @@
       "type": "run_set",
       "set": "รับเควส",
       "desc": "บล็อก: รับเควส",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "ใช้ชุด: กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "รับเมล",
+      "desc": "บล็อก: รับเมล",
       "block_on_fail": "home_retry",
       "block_home": "กลับหน้าแรก"
     },

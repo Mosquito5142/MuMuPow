@@ -366,6 +366,10 @@ const FALLBACK_TYPE_OPTIONS = [
   {value:'keyboard',label:'คีย์บอร์ด (keyboard)'},{value:'screenshot',label:'ถ่ายภาพ (screenshot)'},
   {value:'find_yellow_stage',label:'ด่านเหลือง (find_yellow_stage)'},
   {value:'if_image',label:'ทางเลือก ถ้าเจอภาพ (if_image)'},
+  {value:'tap_until_image',label:'กดรัวจนเจอรูป (tap_until_image)'},
+  {value:'tap_around_until_image',label:'กดรอบๆ การ์ดจนเจอรูป (tap_around_until_image)'},
+  {value:'answer_quiz',label:'ตอบคำถามอัตโนมัติ (answer_quiz)'},
+  {value:'story_auto',label:'เล่นเนื้อเรื่อง (story_auto)'},
 ];
 function ensureTypeOptions(opts){
   const sel=document.getElementById('sfType');
