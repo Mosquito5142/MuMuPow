@@ -34,6 +34,18 @@ def resource_dir():
     return getattr(sys, "_MEIPASS", None) or base_dir()
 
 
+def _farming_day_start(now=None):
+    """จุดเริ่มรอบฟาร์มของ 'วันนี้' — เขต 05:00 (ก่อนตีห้าถือว่ายังเป็นรอบของเมื่อวาน)
+
+    ใช้ร่วมกันทุกที่ที่ต้องเช็คว่า timestamp หนึ่งอยู่ใน 'รอบวันนี้' ไหม
+    (สถานะบัญชี, ได้เพชรวันนี้หรือยัง) — เขียนตรรกะนี้ซ้ำที่ละจุดเสี่ยงสองจุดเพี้ยนไม่ตรงกัน"""
+    now = now or datetime.datetime.now()
+    if now.hour >= 5:
+        return now.replace(hour=5, minute=0, second=0, microsecond=0)
+    yesterday = now - datetime.timedelta(days=1)
+    return yesterday.replace(hour=5, minute=0, second=0, microsecond=0)
+
+
 def _get_effective_status(acc):
     st = (acc.get("last_status") or "").lower()
     last_run_str = acc.get("last_run")
@@ -43,15 +55,8 @@ def _get_effective_status(acc):
         last_run_dt = datetime.datetime.strptime(last_run_str, "%Y-%m-%d %H:%M:%S")
     except Exception:
         return st
-    
-    now = datetime.datetime.now()
-    if now.hour >= 5:
-        farming_start = now.replace(hour=5, minute=0, second=0, microsecond=0)
-    else:
-        yesterday = now - datetime.timedelta(days=1)
-        farming_start = yesterday.replace(hour=5, minute=0, second=0, microsecond=0)
-        
-    if last_run_dt < farming_start:
+
+    if last_run_dt < _farming_day_start():
         return ""
     return st
 
@@ -229,7 +234,26 @@ class Api:
             return self._save_accounts(accts, allow_empty=True)
 
     @staticmethod
+    def _diamond_today(acc):
+        """True ถ้าอ่านเพชรบัญชีนี้สำเร็จแล้วในรอบฟาร์มวันนี้ (diamond_time ตั้งโดย _persist_diamonds)
+
+        นับตั้งแต่ตอน 'อ่านเพชรสำเร็จ' เท่านั้น — ไม่รอผลส่งเข้าเว็บ เพราะถือว่าเป้าหมายหลัก
+        (ได้ตัวเลขเพชรมาบันทึก) สำเร็จแล้ว ต่อให้ส่งเว็บพังทีหลังก็ไม่ต้องอ่านซ้ำ"""
+        t = acc.get("diamond_time")
+        if not t:
+            return False
+        try:
+            dt = datetime.datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return False
+        return dt >= _farming_day_start()
+
+    @staticmethod
     def _acct_dot(acc):
+        # ได้เพชรวันนี้แล้ว = ผ่านแล้ว ชนะทุกสถานะอื่นรวมถึง 'พลาด' — ยืนยันจากผู้ใช้ว่า
+        # ถ้าส่งเพชรไปแล้ว ต่อให้ขั้นตอนหลังจากนั้นพัง (เช่นออกเกมไม่สำเร็จ) ก็ถือว่าผ่าน
+        if Api._diamond_today(acc):
+            return "#A78BFA"
         st = _get_effective_status(acc)
         if st == "completed":
             return "#38BDF8"
@@ -1191,8 +1215,14 @@ class Api:
         fail = {"device_error", "macro_error", "error"}
         accts = self._accounts()
         for a in accts:
-            st = _get_effective_status(a)
-            a["checked"] = (st in fail) if kind == "failed" else (st != "completed")
+            if kind == "failed":
+                a["checked"] = _get_effective_status(a) in fail
+            elif kind == "no_diamond":
+                # ตอบตรงเคส 'ปล่อยฟาร์มเช้า แล้วรันรับเพชรถูกหยุดกลางคัน' — ติ๊กเฉพาะ
+                # บัญชีที่ยังไม่ได้เพชรวันนี้ ไม่ต้องไล่หาทีละแถวว่าใครได้ไปแล้วบ้าง
+                a["checked"] = not self._diamond_today(a)
+            else:
+                a["checked"] = _get_effective_status(a) != "completed"
         self._save_accounts(accts)
         return self.get_accounts_grouped()
 
