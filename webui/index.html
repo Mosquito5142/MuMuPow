@@ -140,13 +140,14 @@
               <span style="font-size:12px;color:#7C8CA3">เลือกด่วน:</span>
               <button class="in" onclick="selAccByStatus('failed')" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><span style="width:8px;height:8px;border-radius:50%;background:#F87171"></span>ที่พลาด</button>
               <button class="in" onclick="selAccByStatus('pending')" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><span style="width:8px;height:8px;border-radius:50%;background:#58677E"></span>ยังไม่เสร็จ</button>
+              <button class="in" onclick="selAccByStatus('no_diamond')" title="ติ๊กเฉพาะบัญชีที่ยังไม่ได้เพชรในรอบวันนี้ — ใช้ตอนรันรับเพชรค้างไว้ครึ่งทาง" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#121A28;border:1px solid #24344B;color:#C7D2E0;font-size:12px;cursor:pointer"><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA"></span>ยังไม่ได้เพชร</button>
               <div style="width:1px;height:20px;background:#1B2434"></div>
               <span style="font-size:12px;color:#7C8CA3">ย้ายที่เลือกไปกลุ่ม:</span>
               <input id="moveGroupInput" class="in" list="groupNamesList" placeholder="ชื่อกลุ่ม…" style="width:130px;height:32px;border-radius:8px;background:#0A0F19;border:1px solid #24344B;padding:0 10px;font-size:12px;color:#C7D2E0">
               <datalist id="groupNamesList"></datalist>
               <button class="in" onclick="moveSelectedGroup()" style="display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:8px;background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC;font-size:12px;cursor:pointer"><i data-lucide="folder-symlink" width="13" height="13" stroke-width="1.75"></i>ย้ายกลุ่ม</button>
             </div>
-            <div style="display:flex;align-items:center;gap:16px;font-size:11.5px;color:#7C8CA3;padding:0 2px"><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#38BDF8"></span>เสร็จ</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#F87171"></span>พลาด</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#34D399"></span>กำลังทำ</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#58677E"></span>ยังไม่ทำ</span></div>
+            <div style="display:flex;align-items:center;gap:16px;font-size:11.5px;color:#7C8CA3;padding:0 2px"><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#38BDF8"></span>เสร็จ</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#F87171"></span>พลาด</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA"></span>ได้เพชรแล้ว</span><span style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#58677E"></span>ยังไม่ทำ</span></div>
             <div id="accGroups" class="sc" style="display:flex;flex-direction:column;gap:14px;flex:1;min-height:0;overflow-y:auto"></div>
           </div>
           <div class="sc sidepanel" style="border-radius:13px;background:#0E1420;border:1px solid #1B2434;padding:18px;display:flex;flex-direction:column;gap:13px">
@@ -322,8 +323,8 @@
 </div>
 
 <!-- ?v= กันแคชเก่า (WebView2/เบราว์เซอร์แคชไฟล์ .js ข้ามเวอร์ชัน ทำปุ่มใหม่หาย) — บัมพ์เลขทุกครั้งที่แก้ JS -->
-<script src="app.js?v=20260907c"></script>
-<script src="tools.js?v=20260907c"></script>
-<script src="flow.js?v=20260907c"></script>
+<script src="app.js?v=20260909a"></script>
+<script src="tools.js?v=20260909a"></script>
+<script src="flow.js?v=20260909a"></script>
 </body>
 </html>
