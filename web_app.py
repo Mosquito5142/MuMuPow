@@ -1258,6 +1258,60 @@ class Api:
         self._push_log(f"{'แก้ไข' if found else 'เพิ่ม'}บัญชี {email}", "ok")
         return self.get_accounts_grouped()
 
+    def test_otp_credentials(self, email, password="", refresh_token="", client_id="", pattern=""):
+        """ทดสอบดึง OTP ของบัญชีเดียว — ให้ผู้ใช้กดเช็คว่าเมลยังใช้ได้ไหมโดยไม่ต้องรันสคริปต์
+
+        ฟอร์มบัญชีในเว็บไม่มีช่อง client_id → ถ้าไม่ได้ส่งมา ดึงจาก accounts.json ตาม email
+        (รวมถึงรหัสผ่าน/token ที่ปล่อยว่างไว้ = ใช้ของที่บันทึกไว้แล้ว)
+
+        คืน {ok, code, source, detail} ให้ JS โชว์สีตามสถานะ
+        """
+        from macro_runner import (fetch_otp_from_mail, _fetch_otp_via_microsoft,
+                                   _fetch_otp_via_readmail_api)
+        email = (email or "").strip()
+        if not email:
+            return {"ok": False, "code": "", "source": "", "detail": "ยังไม่ได้กรอกอีเมล"}
+
+        # เติมค่าที่ว่างจากบัญชีที่บันทึกไว้ (โดยเฉพาะ client_id ที่ฟอร์มไม่มีช่อง)
+        saved = next((a for a in self._accounts() if a.get("email") == email), {})
+        password = (password or "").strip() or (saved.get("password") or "")
+        refresh_token = (refresh_token or "").strip() or (saved.get("refresh_token") or "")
+        client_id = (client_id or "").strip() or (saved.get("client_id") or "")
+        pattern = (pattern or "").strip()
+
+        logs = []
+        log = lambda t, k="info": logs.append(t)
+
+        # ยิงตรง Microsoft ก่อนเพื่อแยกสถานะให้ละเอียด (token_dead vs no_otp_yet) แล้วรายงาน source
+        if refresh_token and client_id:
+            code, reason = _fetch_otp_via_microsoft(log, email, refresh_token, client_id,
+                                                    pattern or r"\b\d{6}\b")
+            if code:
+                return {"ok": True, "code": code, "source": "microsoft",
+                        "detail": f"ดึง OTP ได้: {code} (ผ่าน Microsoft ตรง)"}
+            if reason == "token_dead":
+                return {"ok": False, "code": "", "source": "microsoft",
+                        "detail": "token ใช้ไม่ได้แล้ว — Microsoft ปฏิเสธ (เมลนี้หมดอายุ ต้องเปลี่ยนแหล่งเมล)"}
+            # ลอง read-mail.me สำรอง
+            rc = _fetch_otp_via_readmail_api(log, email, refresh_token, client_id,
+                                             pattern or r"\b\d{6}\b")
+            if rc:
+                return {"ok": True, "code": rc, "source": "readmail",
+                        "detail": f"ดึง OTP ได้: {rc} (ผ่าน read-mail.me สำรอง)"}
+            if reason == "no_otp_yet":
+                return {"ok": False, "code": "", "source": "microsoft",
+                        "detail": "ล็อกอินเมลได้ แต่ยังไม่มี OTP ในกล่อง (ลองส่ง OTP ใหม่แล้วเช็คอีกที)"}
+            return {"ok": False, "code": "", "source": "",
+                    "detail": "ต่อ Microsoft/read-mail ไม่ได้ชั่วคราว — เช็คเน็ตแล้วลองใหม่"}
+
+        # ไม่มี token → IMAP (มักใช้ไม่ได้แล้วเพราะ Microsoft ปิด basic auth)
+        code = fetch_otp_from_mail(log, email, password, pattern, refresh_token, client_id)
+        if code:
+            return {"ok": True, "code": code, "source": "imap",
+                    "detail": f"ดึง OTP ได้: {code} (ผ่าน IMAP)"}
+        return {"ok": False, "code": "", "source": "imap",
+                "detail": "บัญชีนี้ไม่มี refresh_token — ดึง OTP ไม่ได้ (Microsoft ปิดล็อกอินด้วยรหัสผ่านแล้ว)"}
+
     def batch_import_accounts(self, raw_text, group_name="ทั่วไป"):
         """นำเข้าบัญชีทีละหลายบรรทัด: แต่ละบรรทัด = 1 บัญชี คั่นด้วย | , ; หรือ TAB
         รูปแบบ: อีเมล|รหัสผ่าน[|refresh_token][|client_id] — พอร์ตจาก open_batch_import_dialog เดิม"""

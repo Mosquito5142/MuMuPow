@@ -344,8 +344,21 @@ function editAccount(email){
   document.getElementById('accToken').value = a.token || '';
   document.getElementById('accFormTitle').textContent = 'แก้ไขบัญชี';
 }
-function resetAccForm(){ ['accEmail','accName','accToken','accPass'].forEach(i=>document.getElementById(i).value=''); document.getElementById('accGroup').value='ทั่วไป'; document.getElementById('accFormTitle').textContent='เพิ่ม / แก้ไขบัญชี'; }
+function resetAccForm(){ ['accEmail','accName','accToken','accPass'].forEach(i=>document.getElementById(i).value=''); document.getElementById('accGroup').value='ทั่วไป'; document.getElementById('accFormTitle').textContent='เพิ่ม / แก้ไขบัญชี'; const ot=document.getElementById('otpTestResult'); if(ot) ot.style.display='none'; }
 async function saveAccount(){ if(!hasPy()) return; const p={email:accEmail.value,name:accName.value,group:accGroup.value,password:accPass.value,token:accToken.value}; await PY.save_account(p); resetAccForm(); renderAccounts(); }
+// ทดสอบดึง OTP บัญชีเดียว — ใช้ค่าจากฟอร์ม (client_id ที่ฟอร์มไม่มี backend จะดึงจากไฟล์ให้)
+async function testAccountOtp(){
+  const box = document.getElementById('otpTestResult');
+  const show = (bg, bd, fg, txt) => { box.style.display='block'; box.style.background=bg; box.style.border='1px solid '+bd; box.style.color=fg; box.textContent=txt; };
+  if(!hasPy()){ notReady('ทดสอบดึง OTP (ต้องเปิดผ่าน .exe)'); return; }
+  const email = (document.getElementById('accEmail')||{}).value || '';
+  if(!email.trim()){ show('#2A1113','#7F1D1D','#FCA5A5','กรอกอีเมลก่อน'); return; }
+  show('#0A0F19','#24344B','#90A0B7','⏳ กำลังยิงตรงหา Microsoft…');
+  const r = await PY.test_otp_credentials(email, (document.getElementById('accPass')||{}).value||'', (document.getElementById('accToken')||{}).value||'', '', '');
+  if(r && r.ok) show('#0C2A1E','#14603F','#6EE7B7','✅ '+r.detail);
+  else if(r && r.source==='microsoft' && /Microsoft ปฏิเสธ/.test(r.detail||'')) show('#2A1113','#7F1D1D','#FCA5A5','❌ '+r.detail);
+  else show('#2E2410','#7A5A1E','#FBBF24','⚠ '+((r&&r.detail)||'ทดสอบไม่สำเร็จ'));
+}
 
 // ================= SCRIPT =================
 const DEMO_STEPS = {name:"ล็อกอิน + เก็บของประจำวัน",count:8,steps:[

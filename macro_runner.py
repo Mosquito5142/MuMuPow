@@ -151,6 +151,113 @@ def parse_ui_query(query):
 
 
 # ---------- ดึง OTP จากอีเมล (พอร์ตจาก MuMuGUI.fetch_otp_* — ไม่พึ่ง GUI) ----------
+
+# endpoint แลก refresh_token → access token ของ Microsoft (public client ไม่ต้องมี secret)
+# เมล hotmail/outlook ที่ซื้อมาแบบ mail|pass|refresh_token|client_id ใช้ตัวใดตัวหนึ่งนี้
+# แล้วแต่คนขาย — ลองทั้งคู่ ตัวที่คืน access_token มาได้ถือว่าใช่
+_MS_TOKEN_ENDPOINTS = [
+    "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "https://login.live.com/oauth20_token.srf",
+]
+# scope ต้องตรงกับที่ token ถูกออกให้ — ลอง .default (ตามที่ app ลงทะเบียนไว้) ก่อน
+# แล้วค่อยลอง Mail.Read แบบระบุตรง ๆ
+_MS_SCOPES = [
+    "https://graph.microsoft.com/.default",
+    "https://graph.microsoft.com/Mail.Read offline_access",
+]
+
+
+def _ms_get_access_token(log, mail_address, refresh_token, client_id):
+    """แลก refresh_token เป็น access_token ตรงกับ Microsoft — คืน (access_token, reason)
+
+    reason: "ok" | "token_dead" (Microsoft ปฏิเสธ token/client_id — โค้ดแก้ไม่ได้)
+            | "network" (ต่อเน็ตไม่ได้/timeout — ลองใหม่ทีหลังได้)
+    """
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+    saw_reject = False   # เจอ Microsoft ปฏิเสธจริง ๆ (ไม่ใช่แค่ network) อย่างน้อยหนึ่งครั้ง
+    for endpoint in _MS_TOKEN_ENDPOINTS:
+        for scope in _MS_SCOPES:
+            data = urllib.parse.urlencode({
+                "client_id": client_id,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "scope": scope,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                endpoint, data=data, method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"})
+            try:
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                tok = body.get("access_token")
+                if tok:
+                    return tok, "ok"
+            except urllib.error.HTTPError as e:
+                # 400/401 = Microsoft ปฏิเสธ token/client_id (invalid_grant/unauthorized_client)
+                # ลอง scope/endpoint อื่นต่อ เผื่อแค่ scope ไม่ตรง แต่จำไว้ว่าเจอการปฏิเสธ
+                try:
+                    err = json.loads(e.read().decode("utf-8")).get("error", "")
+                except Exception:
+                    err = ""
+                if e.code in (400, 401):
+                    saw_reject = True
+                    log(f"[{mail_address}] Microsoft ปฏิเสธ ({scope.split('/')[-1]}): {err or e.code}", "warn")
+                    continue
+                log(f"[{mail_address}] แลก token ผิดพลาด HTTP {e.code}", "warn")
+            except Exception as e:
+                log(f"[{mail_address}] ต่อ Microsoft ไม่ได้: {e}", "warn")
+                return None, "network"
+    return None, ("token_dead" if saw_reject else "network")
+
+
+def _fetch_otp_via_microsoft(log, mail_address, refresh_token, client_id, pattern_str):
+    """คุยตรงกับ Microsoft: แลก token → อ่านเมลผ่าน Graph API — ไม่พึ่งเว็บคนกลาง
+
+    คืน (code, reason):
+      reason "ok"          → เจอ OTP (code = รหัส)
+             "no_otp_yet"  → ล็อกอินเมลได้ แต่ยังไม่มี OTP ตามแพทเทิร์นในกล่อง
+             "token_dead"  → token/client_id ใช้ไม่ได้แล้ว (Microsoft ปฏิเสธ) — โค้ดแก้ไม่ได้
+             "network"     → ต่อเน็ต/Microsoft ไม่ได้ชั่วคราว
+    """
+    import urllib.request
+    import urllib.error
+    import re
+
+    access_token, reason = _ms_get_access_token(log, mail_address, refresh_token, client_id)
+    if not access_token:
+        return None, reason
+
+    url = ("https://graph.microsoft.com/v1.0/me/messages"
+           "?$top=5&$select=subject,body,receivedDateTime&$orderby=receivedDateTime%20desc")
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            # ได้ token มาแต่ Graph ไม่ให้อ่านเมล = สิทธิ์ไม่พอ/โดนเพิกถอน — จัดเป็น token ใช้ไม่ได้
+            return None, "token_dead"
+        log(f"[{mail_address}] อ่านเมลผ่าน Graph ไม่ได้ HTTP {e.code}", "warn")
+        return None, "network"
+    except Exception as e:
+        log(f"[{mail_address}] อ่านเมลผ่าน Graph ผิดพลาด: {e}", "warn")
+        return None, "network"
+
+    for msg in (data.get("value") or [])[:5]:
+        body = (msg.get("body") or {}).get("content") or ""
+        m = re.search(pattern_str, body)
+        if m:
+            log(f"[{mail_address}] [Microsoft] เจอเมล '{msg.get('subject','')}' → ดึง OTP สำเร็จ", "ok")
+            return m.group(0), "ok"
+    log(f"[{mail_address}] [Microsoft] ล็อกอินได้ แต่ยังไม่พบ OTP ตามแพทเทิร์น '{pattern_str}'", "warn")
+    return None, "no_otp_yet"
+
+
 def _fetch_otp_via_readmail_api(log, mail_address, refresh_token, client_id, pattern_str):
     """ดึงอีเมลผ่าน API read-mail.me ด้วย OAuth2 token"""
     import urllib.request
@@ -197,11 +304,20 @@ def fetch_otp_from_mail(log, mail_address, mail_password, pattern_str=None,
         pattern_str = r'\b\d{6}\b'
 
     if refresh_token and client_id:
-        log(f"[{mail_address}] พบโทเคน OAuth2 → ดึงผ่าน API read-mail.me", "info")
+        # คุยตรงกับ Microsoft ก่อน (ไม่พึ่งเว็บคนกลางที่ล่มได้) → พลาดค่อยลอง read-mail.me
+        log(f"[{mail_address}] พบโทเคน OAuth2 → คุยตรงกับ Microsoft", "info")
+        code, reason = _fetch_otp_via_microsoft(log, mail_address, refresh_token, client_id, pattern_str)
+        if code:
+            return code
+        if reason == "token_dead":
+            # token/client_id ตายแล้ว — read-mail.me ก็ใช้ token เดียวกัน ไม่ต้องลองซ้ำให้เสียเวลา
+            log(f"[{mail_address}] token/client_id ใช้ไม่ได้แล้ว (Microsoft ปฏิเสธ) — เมลนี้หมดอายุ", "err")
+            return None
+        log(f"[{mail_address}] คุยตรงไม่สำเร็จ ({reason}) → ลองผ่าน read-mail.me สำรอง", "warn")
         code = _fetch_otp_via_readmail_api(log, mail_address, refresh_token, client_id, pattern_str)
         if code:
             return code
-        log(f"[{mail_address}] API ล้มเหลว → ลองผ่าน IMAP สำรอง", "warn")
+        log(f"[{mail_address}] read-mail.me ก็ไม่ได้ → ลองผ่าน IMAP สำรอง", "warn")
 
     try:
         mail = imaplib.IMAP4_SSL("outlook.office365.com")
