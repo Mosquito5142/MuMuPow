@@ -2912,12 +2912,15 @@ class Api:
         return {"enabled": bool(cfg.get("enabled", True)),
                 "package": cfg.get("package", ""),
                 "boot_wait": float(cfg.get("boot_wait", 10.0) or 10.0),
+                # เข้าเกมให้อัตโนมัติก่อนเริ่มแต่ละไอดี (ถ้าจอยังไม่อยู่ในเกม) — ดีฟอลต์เปิด
+                "auto_enter": bool(cfg.get("auto_enter", True)),
                 "steps": len(cfg.get("open_login_steps", []) or [])}
 
-    def save_reset_settings(self, enabled, package, boot_wait):
+    def save_reset_settings(self, enabled, package, boot_wait, auto_enter=True):
         cfg = self._load_reset_cfg()
         cfg["enabled"] = bool(enabled)
         cfg["package"] = (package or "").strip()
+        cfg["auto_enter"] = bool(auto_enter)
         try:
             cfg["boot_wait"] = float(boot_wait)
         except (TypeError, ValueError):

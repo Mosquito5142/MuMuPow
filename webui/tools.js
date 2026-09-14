@@ -427,11 +427,13 @@ async function loadResetCfg(){
   if(g('rstEnabled')) g('rstEnabled').checked = !!s.enabled;
   if(g('rstPackage')) g('rstPackage').value = s.package||'';
   if(g('rstBootWait')) g('rstBootWait').value = s.boot_wait;
+  // ไม่มีคีย์ auto_enter (ไฟล์เก่า) = ถือว่าเปิด ตรงกับดีฟอลต์ backend
+  if(g('rstAutoEnter')) g('rstAutoEnter').checked = (s.auto_enter !== false);
 }
 async function saveResetCfg(){
   if(!needPy('รีเซ็ตเกม')) return;
   const g=id=>(document.getElementById(id)||{});
-  await PY.save_reset_settings(g('rstEnabled').checked, g('rstPackage').value, g('rstBootWait').value);
+  await PY.save_reset_settings(g('rstEnabled').checked, g('rstPackage').value, g('rstBootWait').value, g('rstAutoEnter').checked);
 }
 
 // ---- นำเข้าบัญชีแบบกลุ่ม (วางหลายบรรทัดทีเดียว) ----

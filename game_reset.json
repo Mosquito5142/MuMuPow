@@ -53,5 +53,5 @@
     }
   ],
   "on_stuck": "next",
-  "retry_rounds": 1
+  "retry_rounds": 2
 }
