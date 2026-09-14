@@ -1054,6 +1054,25 @@ class MuMuController:
             ["-s", device_id, "shell", "monkey", "-p", package,
              "-c", "android.intent.category.LAUNCHER", "1"])
 
+    def foreground_package(self, device_id):
+        """ชื่อ package ของแอปที่กำลังอยู่หน้าสุด (foreground) — คืน "" ถ้าอ่านไม่ได้
+
+        ใช้เช็คว่าจอ "อยู่ในเกมหรือยัง" ก่อนเริ่มรัน ลอง dumpsys 2 แบบเผื่อบางรุ่นบล็อกตัวใดตัวหนึ่ง
+        คืน "" เมื่อดึงไม่ได้ (ตัวเรียกจะตีความว่า "ไม่แน่ใจ" แล้วเลือกไม่รบกวนจอที่อาจรันอยู่)
+        """
+        import re
+        for args in (["shell", "dumpsys", "window"],
+                     ["shell", "dumpsys", "activity", "activities"]):
+            ok, out = self.run_adb_cmd(["-s", device_id] + args, timeout=8)
+            if not ok or not out:
+                continue
+            # mCurrentFocus / mFocusedApp / topResumedActivity ล้วนมีรูป  <pkg>/<activity>
+            for key in ("mCurrentFocus", "mFocusedApp", "topResumedActivity", "ResumedActivity"):
+                m = re.search(key + r"[^\n]*?\s([A-Za-z0-9_.]+)/", out)
+                if m:
+                    return m.group(1)
+        return ""
+
     # Multi-device action runners (Parallelized)
     def run_parallel_action(self, devices, action_func, *args):
         """Runs action_func(device_id, *args) on all specified devices in parallel."""

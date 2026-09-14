@@ -159,11 +159,14 @@ _MS_TOKEN_ENDPOINTS = [
     "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     "https://login.live.com/oauth20_token.srf",
 ]
-# scope ต้องตรงกับที่ token ถูกออกให้ — ลอง .default (ตามที่ app ลงทะเบียนไว้) ก่อน
-# แล้วค่อยลอง Mail.Read แบบระบุตรง ๆ
+# scope ต้องตรงกับที่ token ถูกออกให้ — เมล hotmail ที่ซื้อมา (client_id ของ Thunderbird)
+# เป็น public client จึงต้องระบุ Mail.Read ตรง ๆ ส่วน .default จะได้ invalid_request เสมอ
+# (ทดสอบกับ token สดจริงแล้ว) เอา Mail.Read ขึ้นก่อน token ดีจะผ่านครั้งแรกเลย ไม่เสีย
+# round-trip กับ .default และไม่ขึ้น warning "Microsoft ปฏิเสธ" หลอกทุกบัญชีเวลารันจริง
+# คง .default ไว้ท้ายเป็นเผื่อคนขายบางเจ้าใช้ app ที่ลงทะเบียน permission ไว้ล่วงหน้า
 _MS_SCOPES = [
-    "https://graph.microsoft.com/.default",
     "https://graph.microsoft.com/Mail.Read offline_access",
+    "https://graph.microsoft.com/.default",
 ]
 
 
@@ -716,6 +719,10 @@ class MacroRunner:
             self.progress(device, **base)
 
         prog(step_idx=0, step_total=total, step_desc="กำลังเริ่ม…")
+        # เริ่มบัญชีใหม่ (ไม่ใช่ 'รันต่อ' ที่ start_index>0) → เช็คก่อนว่าอยู่ในเกมไหม ถ้าไม่ เปิดให้
+        # (รันต่อไม่เช็ค เพราะจอค้างอยู่กลางสคริปต์ตรงไหนก็ให้ทำต่อจากตรงนั้น ไม่รีเข้าเกมทับ)
+        if start_index == 0:
+            self._ensure_in_game(device)
         status = self._run_steps(device, account, self.steps, prog, path="", depth=0, disp="",
                                  start_at=start_index)
 
@@ -1848,20 +1855,27 @@ class MacroRunner:
         return "missing", None, None
 
     # ---------- reset เกมเมื่อบัญชีติดปัญหา (เวอร์ชันย่อ) ----------
-    def _reset_device(self, device):
+    def _launch_game(self, device, force_stop=True):
+        """เปิดเกมให้ถึง 'หน้า login' ตาม game_reset.json (package + boot_wait + open_login_steps)
+
+        force_stop=True  → ปิดเกมก่อนเปิดใหม่ (ใช้ตอนรีเซ็ตเพราะบัญชีติดปัญหา — ต้องเริ่มสด)
+        force_stop=False → ไม่ปิดของเดิม แค่เปิด/ดึงขึ้นหน้า (ใช้ตอน 'เข้าเกมให้ก่อนเริ่ม')
+        คืน True ถ้าลองเปิดแล้ว, False ถ้าไม่มี package ให้เปิด
+        """
         cfg = self.reset_cfg or {}
         pkg = cfg.get("package")
-        if not cfg.get("enabled") or not pkg:
-            return
+        if not pkg:
+            return False
         try:
-            self.controller.stop_app(device, pkg)
-            time.sleep(1.0)
+            if force_stop:
+                self.controller.stop_app(device, pkg)
+                time.sleep(1.0)
             self.controller.launch_app_by_package(device, pkg)
             time.sleep(float(cfg.get("boot_wait", 10.0) or 10.0))
             # เล่นสเต็ปเปิดช่อง login (แตะพิกัด/รอ anchor) ถ้ามี
             for st in cfg.get("open_login_steps", []):
                 if not self.running():
-                    return
+                    return True
                 if st.get("anchor_img"):
                     self._wait_anchor(device, st)
                 try:
@@ -1869,8 +1883,39 @@ class MacroRunner:
                     time.sleep(float(st.get("delay", 1.0) or 1.0))
                 except (TypeError, ValueError, KeyError):
                     continue
+            return True
         except Exception as e:
-            self.log(f"[{device}] รีเซ็ตเกมล้มเหลว: {e}", "warn")
+            self.log(f"[{device}] เปิดเกมล้มเหลว: {e}", "warn")
+            return False
+
+    def _reset_device(self, device):
+        cfg = self.reset_cfg or {}
+        if not cfg.get("enabled") or not cfg.get("package"):
+            return
+        self._launch_game(device, force_stop=True)
+
+    def _ensure_in_game(self, device):
+        """ก่อนเริ่มบัญชี ถ้าจอยังไม่ได้อยู่ในเกม → เปิดเกมให้ (ไม่ต้องกดเข้าเกมทีละจอเอง)
+
+        เปิดเมื่อ 'รู้แน่ว่าไม่ใช่เกม' เท่านั้น — ถ้าอ่าน foreground ไม่ได้ (คืน "") จะไม่เปิด
+        เพราะเช็คก่อนทุกไอดี ถ้าเผลอเปิดตอนเกมรันอยู่จริงจะเด้ง/แครชกลางคิว เสียเวลา boot_wait ซ้ำ
+        """
+        cfg = self.reset_cfg or {}
+        pkg = cfg.get("package")
+        # auto_enter ดีฟอลต์เปิด (มี package = อยากให้เข้าเกมให้) — ปิดได้จากหน้าตั้งค่า
+        if not pkg or not cfg.get("auto_enter", True):
+            return
+        try:
+            fg = self.controller.foreground_package(device)
+        except Exception:
+            fg = ""
+        if not fg:
+            self.log(f"[{device}] เช็คแอปที่เปิดอยู่ไม่ได้ → ไม่เสี่ยงเปิดเกมทับ (ข้ามการเข้าเกมให้)", "warn")
+            return
+        if pkg in fg:
+            return  # อยู่ในเกมแล้ว ไม่ต้องทำอะไร
+        self.log(f"[{device}] ยังไม่ได้อยู่ในเกม (เปิดอยู่: {fg}) → เปิดเกมให้ก่อนเริ่ม", "info")
+        self._launch_game(device, force_stop=False)
 
     # ---------- helper ----------
     @staticmethod
