@@ -1,7 +1,7 @@
 {
   "enabled": true,
   "package": "com.lmdgame.kuroko.sea",
-  "boot_wait": 10.0,
+  "boot_wait": 15.0,
   "open_login_steps": [
     {
       "type": "tap",
@@ -53,5 +53,6 @@
     }
   ],
   "on_stuck": "next",
-  "retry_rounds": 2
+  "retry_rounds": 2,
+  "auto_enter": true
 }
