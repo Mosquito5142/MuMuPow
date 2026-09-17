@@ -5,8 +5,13 @@
       "type": "if_image",
       "desc": "",
       "text": "",
+      "tap_mode": "none",
+      "x": "undefined",
+      "y": "undefined",
+      "radius": "60",
+      "interval": "0.5",
       "threshold": 0.8,
-      "timeout": 2.0,
+      "timeout": 10.0,
       "then": [
         {
           "type": "tap",
@@ -55,9 +60,10 @@
             "w": 24,
             "h": 41
           },
-          "anchor_timeout": 30.0,
+          "anchor_timeout": 999.0,
           "anchor_threshold": 0.8,
-          "anchor_on_fail": "pause"
+          "anchor_on_fail": "pause",
+          "anchor_tap": false
         },
         {
           "type": "tap",
