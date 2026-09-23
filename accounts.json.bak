@@ -602,7 +602,7 @@
   {
     "email": "beckettcarsonfreh@hotmail.com",
     "password": "Aromime5458",
-    "checked": false,
+    "checked": true,
     "group": "มอส",
     "name": "Daikisan",
     "last_status": "device_error",
