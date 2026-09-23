@@ -380,6 +380,7 @@ const FALLBACK_TYPE_OPTIONS = [
   {value:'find_yellow_stage',label:'ด่านเหลือง (find_yellow_stage)'},
   {value:'if_image',label:'ทางเลือก ถ้าเจอภาพ (if_image)'},
   {value:'tap_until_image',label:'กดรัวจนเจอรูป (tap_until_image)'},
+  {value:'tap_until_gone',label:'กดรัวจนรูปหาย — รับของจนครบ (tap_until_gone)'},
   {value:'tap_around_until_image',label:'กดรอบๆ การ์ดจนเจอรูป (tap_around_until_image)'},
   {value:'answer_quiz',label:'ตอบคำถามอัตโนมัติ (answer_quiz)'},
   {value:'story_auto',label:'เล่นเนื้อเรื่อง (story_auto)'},
@@ -423,6 +424,7 @@ const STEP_FIELD_MAP = {
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
   if_image:['Text','TapMode','XY','Radius','Interval','Threshold','Timeout','Delay'],
   tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
+  tap_until_gone:['XY','Text','Interval','Timeout','Threshold','Delay'],
   tap_around_until_image:['XY','Text','Radius','Interval','Timeout','Threshold','Delay'],
   answer_quiz:['Points','Submit','Refresh','Box','Mode','Text','Interval','Timeout','Threshold','Delay'],
 };
@@ -439,6 +441,7 @@ const STEP_TEXT_LABEL = {
   screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
   if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
   tap_until_image:'ไฟล์รูปเป้าหมาย (.png ใน templates) — หรือกด "ตั้งภาพจากจอ (ลากกรอบ)" ในโหมดโฟลว์',
+  tap_until_gone:'ภาพที่บอกว่า "ยังมีของเหลือ" (ปุ่มรับ/ไอเทม) — กดจนภาพนี้หายแล้วไปต่อ',
   tap_around_until_image:'ไฟล์รูปเป้าหมายที่รอให้ขึ้น (.png) — หรือกด "ตั้งภาพเป้าหมายจากจอ" ในโหมดโฟลว์',
   answer_quiz:'ไฟล์รูปที่บอกว่า "ตอบครบแล้ว" เช่นป๊อปอัพรับรางวัล — หรือกด "ตั้งภาพเป้าหมายจากจอ"',
 };
