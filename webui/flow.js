@@ -220,7 +220,7 @@ function stepIcon(t){
     start_app:'power',stop_app:'power-off',detect_image:'image',wait_for_image:'image',
     tap_text:'text-cursor-input',wait_for_text:'search',clear_ads_loop:'x-circle',fetch_otp:'mail',
     screenshot:'camera',read_diamond:'gem',run_set:'layers',keyboard:'keyboard',
-    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2',tap_around_until_image:'scan-search',answer_quiz:'list-checks'})[t] || 'circle';
+    find_yellow_stage:'star',if_image:'git-branch',tap_until_image:'mouse-pointer-2',tap_until_gone:'image-off',tap_around_until_image:'scan-search',answer_quiz:'list-checks'})[t] || 'circle';
 }
 function stepDetail(s){
   const t = s.type||'tap';
@@ -231,6 +231,7 @@ function stepDetail(s){
   if(t==='run_set') return s.set||'';
   if(t==='keyboard') return (s.key||'')+' ('+(s.action||'')+')';
   if(t==='tap_until_image') return 'กดรัว ('+(s.x||'?')+','+(s.y||'?')+') ทุก '+(s.interval||0.5)+' วิ จนเจอรูป';
+  if(t==='tap_until_gone') return 'กดรัว ('+(s.x||'?')+','+(s.y||'?')+') ทุก '+(s.interval||0.5)+' วิ จนรูปหาย (รับของจนครบ)';
   // บอกให้ชัดว่าเจอแล้วจะกดหรือแค่รอ — เดิมดูจากบล็อกไม่ออก ต้องเดาเอง
   if(t==='answer_quiz'){
     const n = (String(s.points||'').match(/\d+\s*,\s*\d+/g)||[]).length;
@@ -257,9 +258,9 @@ function blockWarning(s){
   if(t === 'swipe' && (empty(s.x) || empty(s.x2))) return 'ยังไม่ตั้งจุดเริ่ม/ปลายการปัด';
   if(t === 'text' && !String(s.text || '').trim()) return 'ยังไม่ใส่ข้อความที่จะพิมพ์';
   // ตั้งภาพได้ 2 ทาง: ลากกรอบจากจอ (wait_img) หรือใส่ชื่อไฟล์ใน templates/ (text) — มีอย่างใดอย่างหนึ่งก็พอ
-  if((t === 'detect_image' || t === 'wait_for_image' || t === 'tap_until_image') && !s.wait_img && !String(s.text || '').trim())
+  if((t === 'detect_image' || t === 'wait_for_image' || t === 'tap_until_image' || t === 'tap_until_gone') && !s.wait_img && !String(s.text || '').trim())
     return 'ยังไม่ตั้งภาพ — กด "ตั้งภาพจากจอ (ลากกรอบ)"';
-  if(t === 'tap_until_image' && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งพิกัดที่จะกดรัว';
+  if((t === 'tap_until_image' || t === 'tap_until_gone') && (empty(s.x) || empty(s.y))) return 'ยังไม่ตั้งพิกัดที่จะกดรัว';
   if(t === 'answer_quiz'){
     if(!String(s.points||'').trim()) return 'ยังไม่ตั้งพิกัดตัวเลือก — กด "เก็บพิกัดตัวเลือกจากจอ"';
     if(!s.wait_img && !String(s.text||'').trim()) return 'ยังไม่ตั้งภาพที่บอกว่าตอบครบแล้ว';
@@ -410,7 +411,7 @@ function renderFlowActions(s, path){
   html += btn('flowMoveSel(1)','arrow-down','ลง','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   html += btn('flowStartCut()','scissors','ย้ายไปที่อื่น','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
   html += btn('flowMoveIntoBranch()','git-branch','ย้ายเข้าเงื่อนไข','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
-  if(t==='tap'||t==='swipe'||t==='tap_until_image'){
+  if(t==='tap'||t==='swipe'||t==='tap_until_image'||t==='tap_until_gone'){
     html += btn('flowPickCoord()','crosshair','ตั้งพิกัดจากภาพจอ','background:#0F2F4A;border:1px solid #164E72;color:#7DD3FC');
     html += btn('flowPickImage(\'anchor\')','image-plus','อัดภาพรอก่อนกด','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
   }
@@ -437,7 +438,7 @@ function renderFlowActions(s, path){
     if(s.wait_img) html += btn('flowTestWaitMatch()','flask-conical','ทดสอบภาพเป้าหมาย','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
     if(s.find_img) html += btn('flowTestFindMatch()','flask-conical','ทดสอบภาพการ์ด','background:#121A28;border:1px solid #24344B;color:#C7D2E0');
   }
-  if(t==='wait_for_image'||t==='detect_image'||t==='tap_until_image'){
+  if(t==='wait_for_image'||t==='detect_image'||t==='tap_until_image'||t==='tap_until_gone'){
     // ลากกรอบจากจอจริงแทนการพิมพ์ชื่อไฟล์ใน templates/ เอง
     html += btn('flowPickImage(\'wait\')','image-plus','ตั้งภาพจากจอ (ลากกรอบ)','background:#2E2410;border:1px solid #7A5A1E;color:#FBBF24');
     if(s.wait_img) html += btn('flowTestWaitMatch()','flask-conical','ทดสอบว่าเจอไหม','background:#121A28;border:1px solid #24344B;color:#C7D2E0');

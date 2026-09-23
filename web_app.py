@@ -1444,6 +1444,7 @@ class Api:
                 "read_diamond": "อ่านเพชร", "story_auto": "เล่นเนื้อเรื่อง", "run_set": "ชุดคำสั่ง",
                 "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง",
                 "tap_until_image": "กดรัวจนเจอรูป",
+                "tap_until_gone": "กดรัวจนรูปหาย",
                 "tap_around_until_image": "กดรอบๆ การ์ดจนเจอรูป",
                 "answer_quiz": "ตอบคำถามอัตโนมัติ",
                 "if_image": "ทางเลือก (ถ้าเจอภาพ)"}
@@ -1454,6 +1455,7 @@ class Api:
                   "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
                   "if_image": "git-branch", "story_auto": "clapperboard",
                   "tap_until_image": "mouse-pointer-2",
+                  "tap_until_gone": "image-off",
                   "tap_around_until_image": "scan-search",
                   "answer_quiz": "list-checks"}
 
@@ -1469,6 +1471,7 @@ class Api:
         "detect_image": ["text", "threshold", "click", "delay"],
         "wait_for_image": ["text", "timeout", "threshold", "click", "delay"],
         "tap_until_image": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
+        "tap_until_gone": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
         "tap_around_until_image": ["x", "y", "text", "radius", "interval", "timeout", "threshold", "delay"],
         "answer_quiz": ["points", "submit", "refresh", "box", "mode", "text",
                         "interval", "timeout", "threshold", "delay"],
@@ -1501,6 +1504,9 @@ class Api:
         # กดรัวข้ามโฆษณา: 0.5 วิ/ครั้ง คือจังหวะที่เกมส่วนใหญ่รับไหวโดยไม่หลุด
         "tap_until_image": {"x": "0", "y": "0", "text": "", "interval": 0.5,
                             "timeout": 30, "threshold": 0.8, "delay": 0},
+        # รับของจนครบ: กดจนภาพ (ปุ่มรับ/ไอเทม) หายหมด แล้วไปต่อ
+        "tap_until_gone": {"x": "0", "y": "0", "text": "", "interval": 0.5,
+                           "timeout": 30, "threshold": 0.8, "delay": 0},
         # radius = ใช้เมื่อไม่ได้ตั้งภาพการ์ด (กดรอบพิกัด x,y แทน)
         "tap_around_until_image": {"x": "0", "y": "0", "text": "", "radius": 60, "interval": 0.5,
                                    "timeout": 30, "threshold": 0.8, "delay": 0},
@@ -1569,7 +1575,7 @@ class Api:
         order = ["tap", "swipe", "text", "if_image", "keyevent", "sleep", "start_app", "stop_app",
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
-                 "screenshot", "find_yellow_stage", "story_auto", "tap_until_image",
+                 "screenshot", "find_yellow_stage", "story_auto", "tap_until_image", "tap_until_gone",
                  "tap_around_until_image", "answer_quiz"]
         return [{"value": t, "label": f"{self._STEP_TH.get(t, t)} ({t})"} for t in order]
 

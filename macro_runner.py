@@ -1153,6 +1153,8 @@ class MacroRunner:
             self._wait_for_image(device, step); return
         elif t == "tap_until_image":
             self._tap_until_image(device, step); return
+        elif t == "tap_until_gone":
+            self._tap_until_image(device, step, gone=True); return
         elif t == "tap_around_until_image":
             self._tap_around_until_image(device, step); return
         elif t == "answer_quiz":
@@ -1296,32 +1298,39 @@ class MacroRunner:
         self.log(f"[{device}] รอครบ {timeout:g} วิ ยังไม่เจอรูป '{tf}'", "warn")
 
     # ---------- กดรัวจนกว่าภาพเป้าหมายจะขึ้น ----------
-    def _tap_until_image(self, device, step):
-        """แตะพิกัดเดิมซ้ำ ๆ ทุก interval วินาที จนกว่าจะเจอ 'ภาพเป้าหมาย' แล้วค่อยไปขั้นต่อไป
+    def _tap_until_image(self, device, step, gone=False):
+        """แตะพิกัดเดิมซ้ำ ๆ ทุก interval วินาที จนกว่าเงื่อนไขภาพจะเป็นจริง แล้วค่อยไปขั้นต่อไป
 
-        ใช้กับหน้าโฆษณา/คัตซีนที่ต้องกดข้ามหลายทีติดกัน และไม่รู้ว่าต้องกดกี่ครั้ง —
-        การใส่ tap ซ้ำ ๆ ไว้เป็นสิบขั้นเดาจำนวนเอาจะพังทันทีที่โฆษณายาว/สั้นกว่าที่เดา
+        gone=False (tap_until_image) → หยุดเมื่อ 'เจอ' ภาพเป้าหมาย
+            ใช้กับหน้าโฆษณา/คัตซีนที่ต้องกดข้ามหลายทีจนถึงหน้าที่ต้องการ (ภาพ = ปลายทาง)
+        gone=True  (tap_until_gone)  → หยุดเมื่อภาพ 'หายไป'
+            ใช้กับ 'รับของจนครบ' — กดปุ่มรับซ้ำ ๆ จนไอเทม/ปุ่มรับหายหมด (ภาพ = สัญญาณว่ายังเหลือ)
 
-        เช็คภาพก่อนกดเสมอ (ถ้าถึงหน้าที่ต้องการอยู่แล้วจะได้ไม่กดเกินไปอีกที)
-        ครบเวลาแล้วยังไม่เจอ = เตือนแล้วไปต่อ ไม่ล้มทั้งบัญชี (ให้ด่าน anchor ของขั้นถัดไปจัดการ)
+        ทั้งคู่ไม่รู้ล่วงหน้าว่าต้องกดกี่ครั้ง การใส่ tap ซ้ำ ๆ ไว้เป็นสิบขั้นเดาจำนวนเอาจะพัง
+        ทันทีที่ของยาว/สั้นกว่าที่เดา — เช็คภาพทุกรอบแทน
+        เช็คภาพก่อนกดเสมอ (ถ้าเงื่อนไขเป็นจริงอยู่แล้วจะได้ไม่กดเกินไปอีกที)
+        ครบเวลาแล้วเงื่อนไขยังไม่เป็นจริง = เตือนแล้วไปต่อ ไม่ล้มทั้งบัญชี
         """
+        label = "กดรัวจนรูปหาย" if gone else "กดรัวจนเจอรูป"
         tmpl_bytes, tmpl_path = self._step_template(step)
         if tmpl_bytes is None and tmpl_path is None:
-            self.log(f"[{device}] กดรัวจนเจอรูป: ยังไม่ได้ตั้งภาพเป้าหมาย → ข้าม", "warn")
+            self.log(f"[{device}] {label}: ยังไม่ได้ตั้งภาพเป้าหมาย → ข้าม", "warn")
             return
         try:
             x, y = self._as_int(step.get("x")), self._as_int(step.get("y"))
         except (TypeError, ValueError):
-            self.log(f"[{device}] กดรัวจนเจอรูป: ยังไม่ได้ตั้งพิกัดที่จะกด → ข้าม", "warn")
+            self.log(f"[{device}] {label}: ยังไม่ได้ตั้งพิกัดที่จะกด → ข้าม", "warn")
             return
 
         timeout = float(step.get("timeout", 30) or 30)
         interval = max(0.05, float(step.get("interval", 0.5) or 0.5))
         threshold = float(step.get("threshold", 0.8) or 0.8)
-        tap_found = bool(step.get("click"))     # เจอแล้วกดที่ภาพด้วยไหม (ปกติแค่ไปขั้นต่อไป)
+        # click (เจอแล้วกดที่ภาพ) ใช้เฉพาะโหมด 'จนเจอ' — โหมด 'จนหาย' กดพิกัดเดิมอย่างเดียว
+        tap_found = bool(step.get("click")) and not gone
         name = (step.get("text") or "").strip() or "ภาพที่ลากกรอบไว้"
 
-        self.log(f"[{device}] กดรัวที่ ({x},{y}) ทุก {interval:g} วิ จนเจอ '{name}' "
+        cond = "รูปหาย" if gone else f"เจอ '{name}'"
+        self.log(f"[{device}] กดรัวที่ ({x},{y}) ทุก {interval:g} วิ จน{cond} "
                  f"(สูงสุด {timeout:g} วิ)…", "info")
         deadline = time.time() + timeout
         taps = 0
@@ -1331,8 +1340,10 @@ class MacroRunner:
             ok, data = self.controller.capture_screenshot_bytes(device)
             if ok:
                 found, mx, my, _m = self._match_step_template(data, step, threshold)
-                if found:
-                    self.log(f"[{device}] เจอ '{name}' แล้ว (กดไป {taps} ครั้ง) → ไปต่อ", "ok")
+                # เงื่อนไขหยุด: gone → ไม่เจอแล้ว · ปกติ → เจอแล้ว
+                if (not found) if gone else found:
+                    done_msg = ("รูปหายแล้ว" if gone else f"เจอ '{name}' แล้ว")
+                    self.log(f"[{device}] {done_msg} (กดไป {taps} ครั้ง) → ไปต่อ", "ok")
                     if tap_found:
                         self.controller.tap(device, mx, my)
                     self._sleep_delay(step)
@@ -1341,7 +1352,8 @@ class MacroRunner:
             taps += 1
             if not self._interruptible_sleep(interval):
                 return
-        self.log(f"[{device}] กดรัวครบ {timeout:g} วิ ({taps} ครั้ง) ยังไม่เจอ '{name}' → ไปต่อ", "warn")
+        still = "รูปยังไม่หาย" if gone else f"ยังไม่เจอ '{name}'"
+        self.log(f"[{device}] กดรัวครบ {timeout:g} วิ ({taps} ครั้ง) {still} → ไปต่อ", "warn")
         self._sleep_delay(step)
 
     @staticmethod
