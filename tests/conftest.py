@@ -17,6 +17,17 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_error_reports(tmp_path, monkeypatch):
+    """ทุกเทส: ให้ MacroRunner เขียนรายงานจุดที่ติด/ไฟล์ log ลง tmp_path แทน error_reports จริง
+    (เดิมเทสเขียนบรรทัดปลอม device ':7555' / ภาพ 6 ไบต์ ปนลงรายงานจริงของผู้ใช้)"""
+    import macro_runner
+    d = str(tmp_path / "error_reports")
+    monkeypatch.setattr(macro_runner, "error_reports_dir", lambda: d)
+    yield d
+    macro_runner.close_file_log()   # ปิดไฟล์ log ก่อน — Windows ลบโฟลเดอร์ที่มีไฟล์เปิดค้างไม่ได้
+
+
 @pytest.fixture(scope="session")
 def gui_app():
     import gui as G

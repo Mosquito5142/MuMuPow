@@ -178,6 +178,11 @@ def test_stop_cancels_active_resume():
         assert ":7555" in api._active_resumes
         api.stop()
         assert api._active_resumes[":7555"]["running"] is False
+        # รอเธรดรันต่อปิดตัวให้จบก่อนลบโฟลเดอร์ชั่วคราว — ไม่งั้นเธรดยังเขียน accounts.json ค้างอยู่
+        # แล้ว rmtree ชน PermissionError บน Windows (เกิดสุ่ม ๆ เมื่อ log ช้าลงนิดเดียว)
+        th = api._active_resumes[":7555"].get("thread")
+        if th is not None:
+            th.join(timeout=10)
     finally:
         shutil.rmtree(tmp)
 

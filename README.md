@@ -314,6 +314,7 @@ MuMuPow/
 | `เจอรูปกด` / `รอรูป` (detect_image, wait_for_image) | `แตะ` (tap) |
 | `ทางเลือก (ถ้าเจอภาพ)` (if_image) | `ปัด` (swipe) |
 | `กดรัวจนเจอรูป` (tap_until_image) | `พิมพ์` (text) |
+| `กดที่รูป` (tap_image) | |
 | `กดรอบๆ การ์ดจนเจอรูป` (tap_around_until_image) | `ปุ่มระบบ` (keyevent) |
 | `ตอบคำถาม` (answer_quiz) | `รอ` (sleep) |
 | `เคลียร์โฆษณา` (clear_ads_loop) | `เปิด/ปิดแอป` |

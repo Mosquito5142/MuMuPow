@@ -379,6 +379,7 @@ const FALLBACK_TYPE_OPTIONS = [
   {value:'keyboard',label:'คีย์บอร์ด (keyboard)'},{value:'screenshot',label:'ถ่ายภาพ (screenshot)'},
   {value:'find_yellow_stage',label:'ด่านเหลือง (find_yellow_stage)'},
   {value:'if_image',label:'ทางเลือก ถ้าเจอภาพ (if_image)'},
+  {value:'tap_image',label:'กดที่รูป (tap_image)'},
   {value:'tap_until_image',label:'กดรัวจนเจอรูป (tap_until_image)'},
   {value:'tap_until_gone',label:'กดรัวจนรูปหาย — รับของจนครบ (tap_until_gone)'},
   {value:'tap_around_until_image',label:'กดรอบๆ การ์ดจนเจอรูป (tap_around_until_image)'},
@@ -423,6 +424,7 @@ const STEP_FIELD_MAP = {
   fetch_otp:['Text','Delay'], read_diamond:['Delay'], run_set:['Set','Block'],
   keyboard:['Key','Action','Delay'], screenshot:['Text','Delay'], find_yellow_stage:['Delay'],
   if_image:['Text','TapMode','XY','Radius','Interval','Threshold','Timeout','Delay'],
+  tap_image:['Text','Timeout','Threshold','OnFail','Delay'],
   tap_until_image:['XY','Text','Interval','Timeout','Threshold','Delay'],
   tap_until_gone:['XY','Text','Interval','Timeout','Threshold','Delay'],
   tap_around_until_image:['XY','Text','Radius','Interval','Timeout','Threshold','Delay'],
@@ -440,12 +442,13 @@ const STEP_TEXT_LABEL = {
   fetch_otp:'แพทเทิร์น OTP (regex เช่น \\d{6})',
   screenshot:'ที่เก็บไฟล์ภาพ ({NAME} {DATE} {TIME} ได้)',
   if_image:'ไฟล์รูปเงื่อนไข (.png ใน templates) — หรือกด "ตั้งภาพเงื่อนไขจากจอ" ในโหมดโฟลว์',
+  tap_image:'ไฟล์รูปที่จะกด (.png ใน templates) — หรือกด "ตั้งภาพจากจอ (ลากกรอบ)" ในโหมดโฟลว์',
   tap_until_image:'ไฟล์รูปเป้าหมาย (.png ใน templates) — หรือกด "ตั้งภาพจากจอ (ลากกรอบ)" ในโหมดโฟลว์',
   tap_until_gone:'ภาพที่บอกว่า "ยังมีของเหลือ" (ปุ่มรับ/ไอเทม) — กดจนภาพนี้หายแล้วไปต่อ',
   tap_around_until_image:'ไฟล์รูปเป้าหมายที่รอให้ขึ้น (.png) — หรือกด "ตั้งภาพเป้าหมายจากจอ" ในโหมดโฟลว์',
   answer_quiz:'ไฟล์รูปที่บอกว่า "ตอบครบแล้ว" เช่นป๊อปอัพรับรางวัล — หรือกด "ตั้งภาพเป้าหมายจากจอ"',
 };
-const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Refresh','Box','Mode','TapMode','Threshold','Click','Delay'];
+const ALL_FLD = ['XY','XY2','Duration','Text','Set','Block','Code','Key','Action','Seconds','Timeout','Interval','Radius','Points','Submit','Refresh','Box','Mode','TapMode','OnFail','Threshold','Click','Delay'];
 function toggleBlockFields(){ const on=(document.getElementById('sfBlockOn')||{}).checked; const box=document.getElementById('sfBlockOpts'); if(box) box.style.display=on?'flex':'none'; }
 function applyTypeFields(t){
   const show = STEP_FIELD_MAP[t] || ['Delay'];
@@ -492,6 +495,8 @@ function fillStepForm(st){
   g('sfBox').value = st.box||'';
   if(st.mode) g('sfMode').value = st.mode;
   g('sfTapMode').value = st.tap_mode || 'none';
+  // กดที่รูป: ไม่ได้ตั้งมา = ข้าม (ตรงกับค่าเริ่มต้นของตัวรัน)
+  g('sfOnFail').value = st.on_fail || 'skip';
   // ไม่ได้ตั้งค่ามา = เปิด (ตัวรันดีฟอลต์ click=True) ต้องโชว์ให้ตรงกับที่จะเกิดขึ้นจริง
   g('sfClick').checked = (st.click === undefined || st.click === null || st.click === '' ) ? true : !!st.click;
   g('sfDesc').value = st.desc===''||st.desc==='-'?'':st.desc;
@@ -529,6 +534,7 @@ function collectStepPatch(){
   if(show.includes('Box')) p.box=g('sfBox');
   if(show.includes('Mode')) p.mode=g('sfMode');
   if(show.includes('TapMode')) p.tap_mode=g('sfTapMode');
+  if(show.includes('OnFail')) p.on_fail=g('sfOnFail');
   if(show.includes('Click')) p.click=!!(document.getElementById('sfClick')||{}).checked;
   if(show.includes('Delay')) p.delay=g('sfDelay');
   return p;
