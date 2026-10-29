@@ -1,0 +1,145 @@
+{
+  "name": "รับของ29_10_69",
+  "steps": [
+    {
+      "type": "run_set",
+      "set": "login",
+      "desc": "ใช้ชุด: login"
+    },
+    {
+      "type": "sleep",
+      "desc": "",
+      "seconds": 5.0
+    },
+    {
+      "type": "run_set",
+      "set": "ข้ามโฆษณา",
+      "desc": "ใช้ชุด: ข้ามโฆษณา"
+    },
+    {
+      "type": "run_set",
+      "set": "ข้ามโฆษณา",
+      "desc": "ใช้ชุด: ข้ามโฆษณา"
+    },
+    {
+      "type": "run_set",
+      "set": "ข้ามhotzone",
+      "desc": "ใช้ชุด: ข้ามhotzone"
+    },
+    {
+      "type": "run_set",
+      "desc": "ใช้ชุด: ส่งรถบัส",
+      "set": "ส่งรถบัส",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "บล็อก: กลับหน้าแรก",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "desc": "ใช้ชุด: รับลูกบอล",
+      "set": "รับลูกบอล",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "บล็อก: กลับหน้าแรก",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "desc": "ใช้ชุด: ตอบคำถาม",
+      "set": "ตอบคำถาม",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "บล็อก: กลับหน้าแรก",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "สุ่มฟรี",
+      "desc": "บล็อก: สุ่มฟรี",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "บล็อก: กลับหน้าแรก",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "ร้านค้า",
+      "desc": "บล็อก: ร้านค้า",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "บล็อก: กลับหน้าแรก",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "desc": "ใช้ชุด: รูน",
+      "set": "รูน",
+      "block_on_fail": "home_retry"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "ใช้ชุด: กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "รับเควส",
+      "desc": "บล็อก: รับเควส",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "ใช้ชุด: กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "รับเมล",
+      "desc": "บล็อก: รับเมล",
+      "block_on_fail": "home_retry",
+      "block_home": "กลับหน้าแรก"
+    },
+    {
+      "type": "run_set",
+      "set": "กลับหน้าแรก",
+      "desc": "ใช้ชุด: กลับหน้าแรก"
+    },
+    {
+      "type": "read_diamond",
+      "desc": "",
+      "delay": 1.0
+    },
+    {
+      "type": "run_set",
+      "set": "logout",
+      "desc": "ใช้ชุด: logout"
+    }
+  ]
+}

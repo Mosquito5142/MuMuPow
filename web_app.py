@@ -19,7 +19,7 @@ import datetime
 import webview
 
 from mumu_controller import MuMuController, get_host_specs, estimate_mumu_capacity
-from macro_runner import MacroRunner, StoryRunner, account_display_name
+from macro_runner import MacroRunner, StoryRunner, account_display_name, cleanup_old_error_images
 
 
 def base_dir():
@@ -1443,6 +1443,7 @@ class Api:
                 "clear_ads_loop": "เคลียร์โฆษณา", "fetch_otp": "กรอก OTP", "screenshot": "ถ่ายภาพ",
                 "read_diamond": "อ่านเพชร", "story_auto": "เล่นเนื้อเรื่อง", "run_set": "ชุดคำสั่ง",
                 "keyboard": "คีย์บอร์ด", "find_yellow_stage": "ด่านเหลือง",
+                "tap_image": "กดที่รูป",
                 "tap_until_image": "กดรัวจนเจอรูป",
                 "tap_until_gone": "กดรัวจนรูปหาย",
                 "tap_around_until_image": "กดรอบๆ การ์ดจนเจอรูป",
@@ -1454,6 +1455,7 @@ class Api:
                   "clear_ads_loop": "x-circle", "fetch_otp": "mail", "screenshot": "camera",
                   "run_set": "layers", "keyboard": "keyboard", "read_diamond": "gem",
                   "if_image": "git-branch", "story_auto": "clapperboard",
+                  "tap_image": "target",
                   "tap_until_image": "mouse-pointer-2",
                   "tap_until_gone": "image-off",
                   "tap_around_until_image": "scan-search",
@@ -1470,6 +1472,7 @@ class Api:
         "stop_app": ["text", "delay"],
         "detect_image": ["text", "threshold", "click", "delay"],
         "wait_for_image": ["text", "timeout", "threshold", "click", "delay"],
+        "tap_image": ["text", "timeout", "threshold", "on_fail", "delay"],
         "tap_until_image": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
         "tap_until_gone": ["x", "y", "text", "interval", "timeout", "threshold", "delay"],
         "tap_around_until_image": ["x", "y", "text", "radius", "interval", "timeout", "threshold", "delay"],
@@ -1501,6 +1504,8 @@ class Api:
         # click=True: เจอแล้วแตะตรงจุดที่เจอเลย (ตรงกับค่าดีฟอลต์ของตัวรัน)
         "detect_image": {"text": "", "threshold": 0.8, "click": True, "delay": 1.0},
         "wait_for_image": {"text": "", "timeout": 30, "threshold": 0.8, "click": True, "delay": 0},
+        # กดที่รูป: รอภาพขึ้นได้ 10 วิ ไม่เจอ = ข้ามไปขั้นต่อไป (on_fail="fail" = นับว่าบัญชีล้ม)
+        "tap_image": {"text": "", "timeout": 10, "threshold": 0.8, "on_fail": "skip", "delay": 1.0},
         # กดรัวข้ามโฆษณา: 0.5 วิ/ครั้ง คือจังหวะที่เกมส่วนใหญ่รับไหวโดยไม่หลุด
         "tap_until_image": {"x": "0", "y": "0", "text": "", "interval": 0.5,
                             "timeout": 30, "threshold": 0.8, "delay": 0},
@@ -1562,6 +1567,7 @@ class Api:
                    "seconds": s.get("seconds", ""), "timeout": s.get("timeout", ""),
                    "key": s.get("key", ""), "action": s.get("action", ""),
                    "set": s.get("set", ""), "threshold": s.get("threshold", ""),
+                   "on_fail": s.get("on_fail", ""),
                    "delay": delay}
             out.append({"no": f"{i+1:02d}", "type": typ, "icon": icon,
                         "detail": detail, "delay": (f"{float(delay):g}s" if delay else "-"),
@@ -1575,7 +1581,7 @@ class Api:
         order = ["tap", "swipe", "text", "if_image", "keyevent", "sleep", "start_app", "stop_app",
                  "detect_image", "wait_for_image", "tap_text", "wait_for_text",
                  "clear_ads_loop", "fetch_otp", "read_diamond", "run_set", "keyboard",
-                 "screenshot", "find_yellow_stage", "story_auto", "tap_until_image", "tap_until_gone",
+                 "screenshot", "find_yellow_stage", "story_auto", "tap_image", "tap_until_image", "tap_until_gone",
                  "tap_around_until_image", "answer_quiz"]
         return [{"value": t, "label": f"{self._STEP_TH.get(t, t)} ({t})"} for t in order]
 
@@ -3140,6 +3146,12 @@ class Api:
 
 
 def main():
+    # เปิดโปรแกรม: ล้างโฟลเดอร์ภาพจุดที่ติด (error_reports/YYYYMMDD) ที่เก่ากว่า 30 วัน
+    # พังก็ไม่เป็นไร — ห้ามทำให้โปรแกรมเปิดไม่ขึ้น
+    try:
+        cleanup_old_error_images()
+    except Exception:
+        pass
     api = Api()
     html_path = os.path.join(resource_dir(), "webui", "index.html")
     webview.create_window(

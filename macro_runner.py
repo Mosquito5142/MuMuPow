@@ -14,6 +14,13 @@ import random
 import json
 import threading
 import datetime
+import re
+import shutil
+import uuid
+import hashlib
+import logging
+import collections
+from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor
 
 from mumu_controller import (find_tesseract,
@@ -37,6 +44,7 @@ DEFAULT_STEP_DELAYS = {
     "stop_app": 1.0,
     "detect_image": 1.0,
     "wait_for_image": 1.0,
+    "tap_image": 1.0,
     "tap_text": 1.0,
     "wait_for_text": 1.0,
     "clear_ads_loop": 1.0,
@@ -452,6 +460,141 @@ def send_keyboard_input(log, device, ordered_devices, key_name, action):
             post(h, WM_KEYUP, vk, 0)
 
 
+# ---------- ที่เก็บรายงานจุดที่ติด / ไฟล์ log ข้อความ ----------
+# ไฟล์ log ข้อความหมุนเมื่อโตถึง 5 MB เก็บย้อนหลัง 5 ไฟล์ (รวมไม่เกิน ~30 MB)
+RUN_LOG_MAX_BYTES = 5 * 1024 * 1024
+RUN_LOG_BACKUPS = 5
+# จำนวนบรรทัด log ล่าสุดของจอนั้นที่แนบไปกับรายงาน (rec["tail"])
+REPORT_TAIL_LINES = 30
+# ลบโฟลเดอร์ภาพจุดที่ติด (error_reports/YYYYMMDD) ที่เก่ากว่ากี่วัน
+ERROR_IMAGE_KEEP_DAYS = 30
+# ชื่อโฟลเดอร์ภาพต้องเป็นเลข 8 หลักล้วน — ห้ามหลวมกว่านี้ เพราะเป็นตัวตัดสินว่าจะลบโฟลเดอร์ไหน
+_DATE_DIR_RE = re.compile(r"^\d{8}$")
+# ดึงค่าความเหมือนจากข้อความที่ mumu_controller._match_template คืนมา
+_CONFIDENCE_RE = re.compile(r"confidence:\s*([0-9]*\.?[0-9]+)")
+# ชนิดขั้นที่ฟิลด์ text = ชื่อไฟล์ภาพใน templates/ (ใช้เติม rec["template"])
+_IMAGE_TEXT_TYPES = {"detect_image", "wait_for_image", "tap_image", "tap_until_image",
+                     "tap_until_gone", "tap_around_until_image", "if_image", "answer_quiz"}
+
+_file_logger = logging.getLogger("mumupow.run")
+_file_logger.propagate = False      # ไม่ส่งต่อไป root logger (กันพิมพ์ซ้ำ/ไปโผล่ที่อื่น)
+_file_logger.setLevel(logging.INFO)
+_file_log_lock = threading.Lock()
+_report_lock = threading.Lock()     # หลายจอรันพร้อมกัน — กันหมุนไฟล์/เขียนรายงานชนกัน
+
+
+def error_reports_dir():
+    """โฟลเดอร์ error_reports/ ข้าง .exe หรือข้างโค้ด (อิง base_dir())
+    แยกเป็นฟังก์ชันเพื่อให้เทส monkeypatch ไป tmp_path ได้โดยไม่กระทบ base_dir() ตัวอื่น
+    (เดิมเทส MacroRunner เขียนรายงานปลอมปนลง error_reports จริง)"""
+    return os.path.join(base_dir(), "error_reports")
+
+
+def _ensure_file_log():
+    """เปิด RotatingFileHandler ที่ error_reports/logs/run.log (เปิดครั้งเดียว ใช้ร่วมทุก runner)
+    ถ้าโฟลเดอร์ปลายทางเปลี่ยน (เช่นเทสชี้ไป tmp_path) จะปิดตัวเก่าแล้วเปิดใหม่"""
+    path = os.path.abspath(os.path.join(error_reports_dir(), "logs", "run.log"))
+    with _file_log_lock:
+        for h in list(_file_logger.handlers):
+            if getattr(h, "baseFilename", None) == path:
+                return _file_logger
+        close_file_log(_locked=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        h = RotatingFileHandler(path, maxBytes=RUN_LOG_MAX_BYTES, backupCount=RUN_LOG_BACKUPS,
+                                encoding="utf-8", delay=True)
+        h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
+                                         "%Y-%m-%d %H:%M:%S"))
+        _file_logger.addHandler(h)
+        return _file_logger
+
+
+def close_file_log(_locked=False):
+    """ปิดไฟล์ log ที่เปิดค้างไว้ (ใช้ตอนเปลี่ยนโฟลเดอร์ และตอนจบเทส — Windows ลบไฟล์ที่เปิดอยู่ไม่ได้)"""
+    def _close():
+        for h in list(_file_logger.handlers):
+            _file_logger.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+    if _locked:
+        _close()
+    else:
+        with _file_log_lock:
+            _close()
+
+
+def app_version():
+    """ป้ายเวอร์ชันสำหรับรายงาน — exe ใช้เวลาที่ build (mtime ของ .exe) / รันจากโค้ดใช้ mtime ของไฟล์นี้
+    พอให้รู้ว่ารายงานมาจาก build ไหน โดยไม่ต้องดูแลเลขเวอร์ชันเองอีกที่"""
+    try:
+        if getattr(sys, "frozen", False):
+            ts = os.path.getmtime(sys.executable)
+            return "exe-" + datetime.datetime.fromtimestamp(ts).strftime("%Y%m%d-%H%M")
+        ts = os.path.getmtime(os.path.abspath(__file__))
+        return "src-" + datetime.datetime.fromtimestamp(ts).strftime("%Y%m%d-%H%M")
+    except Exception:
+        return "unknown"
+
+
+def rotate_report_monthly(path, now=None):
+    """หมุน report.jsonl รายเดือน: ถ้าไฟล์เดิมถูกเขียนล่าสุดคนละเดือนกับตอนนี้
+    → เปลี่ยนชื่อเป็น report_YYYYMM.jsonl (YYYYMM = เดือนของไฟล์เดิม) แล้วเริ่มไฟล์ใหม่
+    ชื่อชนกัน (หมุนซ้ำเดือนเดียวกัน) → เติม _2, _3 … ไม่เขียนทับของเก่า
+    คืนพาธไฟล์ที่ถูกเปลี่ยนชื่อ หรือ None ถ้าไม่ได้หมุน"""
+    now = now or datetime.datetime.now()
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            return None
+        old = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y%m")
+    except OSError:
+        return None
+    if old == now.strftime("%Y%m"):
+        return None
+    folder = os.path.dirname(path)
+    dst = os.path.join(folder, f"report_{old}.jsonl")
+    n = 2
+    while os.path.exists(dst):
+        dst = os.path.join(folder, f"report_{old}_{n}.jsonl")
+        n += 1
+    os.rename(path, dst)
+    return dst
+
+
+def cleanup_old_error_images(days=ERROR_IMAGE_KEEP_DAYS, today=None, root=None):
+    """ลบโฟลเดอร์ภาพจุดที่ติด error_reports/YYYYMMDD ที่เก่ากว่า days วัน (เรียกตอนเปิดโปรแกรม)
+
+    ระวังเป็นพิเศษ — ลบเฉพาะที่ตรงทุกข้อ:
+      - ชื่อเป็นเลข 8 หลักล้วน และแปลงเป็นวันที่จริงได้ (เช่น 20261399 ไม่ลบ)
+      - เป็นโฟลเดอร์จริง ไม่ใช่ไฟล์/ลิงก์ (logs/, report*.jsonl ไม่โดนแน่นอน)
+      - วันที่ในชื่อเก่ากว่าวันนี้เกิน days วัน
+    คืนรายชื่อโฟลเดอร์ที่ลบ"""
+    root = root or error_reports_dir()
+    today = today or datetime.date.today()
+    removed = []
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return removed
+    for name in names:
+        if not _DATE_DIR_RE.match(name):
+            continue
+        p = os.path.join(root, name)
+        if os.path.islink(p) or not os.path.isdir(p):
+            continue
+        try:
+            d = datetime.datetime.strptime(name, "%Y%m%d").date()
+        except ValueError:
+            continue
+        if (today - d).days > days:
+            try:
+                shutil.rmtree(p)
+                removed.append(name)
+            except OSError:
+                pass
+    return removed
+
+
 class MacroRunner:
     # ชนิด step ที่ตัวรันนี้ยังไม่รองรับ (จะ log แล้วข้าม ไม่ให้พังทั้งรอบ) — ตอนนี้ว่างแล้ว
     # หมายเหตุ: run_set ถูกขยายทิ้งไปตั้งแต่ __init__ แล้ว จึงไม่โผล่ถึง _dispatch
@@ -461,7 +604,15 @@ class MacroRunner:
                  running_check=None, anchor_poll=2.0, reset_cfg=None, diamond_cfg=None,
                  gemini_key="", script_sets=None, on_stuck="pause"):
         self.controller = controller
-        self.log = log_cb or (lambda t, k="info": None)
+        # ทุกบรรทัด log ผ่าน _record_log ก่อน: เขียนลงไฟล์ (error_reports/logs/run.log)
+        # และเก็บบรรทัดล่าสุดไว้แนบกับรายงานจุดที่ติด (rec["tail"]) แล้วค่อยส่งต่อให้ UI ตามเดิม
+        self._user_log = log_cb or (lambda t, k="info": None)
+        self._tail = collections.deque(maxlen=500)
+        self.log = self._log_and_record
+        # รหัสการรันครั้งนี้ — ใช้จับกลุ่มรายงานที่มาจากการกดรันครั้งเดียวกัน
+        self.run_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+        # สถานะรายเธรด (1 จอ = 1 เธรด): บล็อกที่กำลังรัน / ขั้นย่อยที่พังล่าสุด / ค่าความเหมือนล่าสุด
+        self._tl = threading.local()
         # {ชื่อชุด: steps} สำหรับคลี่ run_set — None = ไปอ่านจากโฟลเดอร์ script_sets/ เอง
         # ต้องตั้งก่อน _expand_sets เพราะบรรทัดถัดไปเรียกใช้ทันที
         self.script_sets = script_sets
@@ -853,6 +1004,10 @@ class MacroRunner:
                     # ไปกลับหน้าแรก+เริ่ม set ใหม่เอง (ไม่หยุดรอ/ไม่วนเองในนี้ เพราะบล็อกคุมการลองใหม่แล้ว)
                     if block_mode:
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → ถือว่าชุดคำสั่งนี้พัง (จะกลับหน้าแรกแล้วลองใหม่)", "warn")
+                        # บันทึกขั้นย่อยที่พังจริงไว้ด้วย — เดิมเห็นแค่ 'block_failed' ระดับ run_set
+                        # ทำให้ไม่รู้ว่าพังที่ขั้นไหนในชุด
+                        self._save_failure_report(device, account, here, step, "anchor_missing_in_block",
+                                                  step_no=num)
                         return "device_error"
                     # ค่าเริ่มต้นเป็น 'pause' (เรียนรู้ทีละจอ) แทน 'abort' เดิม — วนกลับ (retry) ยังคง
                     # เป็นเครื่องมือที่ต้องตั้งเองเท่านั้น ไม่ใช่ค่าเริ่มต้น ตรงตามที่ผู้ใช้ต้องการ
@@ -869,7 +1024,8 @@ class MacroRunner:
                             continue
                         reason = "ยังไม่ได้ตั้งขั้นเป้าหมายให้วนกลับ" if target is None else f"วนครบ {limit} รอบแล้วยังไม่เจอ"
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → {reason} → หยุดจอนี้ กันรันมั่ว", "err")
-                        self._save_failure_report(device, account, here, step, "anchor_missing_retry_exhausted")
+                        self._save_failure_report(device, account, here, step, "anchor_missing_retry_exhausted",
+                                                  step_no=num)
                         return "device_error"
                     elif pol == "skip":
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} → ข้ามสเต็ปนี้ไป", "warn")
@@ -880,7 +1036,8 @@ class MacroRunner:
                         # (execute_one จะรีเซ็ตเกมกลับหน้า login ให้ก่อนหยิบบัญชีถัดไป)
                         if self.on_stuck == "next":
                             self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → ข้ามบัญชีนี้ ไปไอดีถัดไป", "err")
-                            self._save_failure_report(device, account, here, step, "anchor_missing")
+                            self._save_failure_report(device, account, here, step, "anchor_missing",
+                                                      step_no=num)
                             return "device_error"
                         # ก่อนหยุดรอจริง ลองย้อนไปทำขั้นก่อนหน้าซ้ำอีก 1 ที (เผื่อกดตอนนั้นแล้วจอ/เครื่องค้าง
                         # เลยไม่ขยับมาจอนี้จริง ๆ) แล้วเช็ค anchor ใหม่ — ถ้าลองแล้วยังไม่เจอจริง ๆ ค่อยหยุดรอ
@@ -897,14 +1054,18 @@ class MacroRunner:
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} → กดตามพิกัดเดิม (เสี่ยง)", "warn")
                     else:
                         self.log(f"[{device}] ไม่เจอภาพขั้น {num} ({desc}) → หยุดจอนี้ กันรันมั่ว", "err")
-                        self._save_failure_report(device, account, here, step, "anchor_missing")
+                        self._save_failure_report(device, account, here, step, "anchor_missing",
+                                                  step_no=num)
                         return "device_error"
 
+            # ล้างค่าความเหมือนของขั้นก่อน ไม่ให้ไปปนในรายงานของขั้นนี้
+            self._blocks()   # สร้าง _tl ถ้ายังไม่มี
+            self._tl.best_score = None
             try:
                 self._dispatch(device, account, step, anchor_hit)
             except Exception as e:
                 self.log(f"[{device}] ขั้น {num} ล้มเหลว: {e}", "err")
-                self._save_failure_report(device, account, here, step, str(e))
+                self._save_failure_report(device, account, here, step, str(e), step_no=num)
                 return "device_error"
 
             idx += 1
@@ -927,7 +1088,21 @@ class MacroRunner:
             retries = 3
         total_rounds = retries + 1  # ครั้งแรก + ลองซ้ำอีก retries รอบ
 
+        # จำว่ากำลังอยู่ในบล็อกไหน รอบที่เท่าไหร่ — รายงานของขั้นย่อยจะได้มี set_name/attempt
+        blk = {"set": set_name, "attempt": 0, "total": total_rounds}
+        self._blocks().append(blk)
+        self._tl.inner = None
+        try:
+            return self._run_block_rounds(device, account, step, prog, here, num, depth,
+                                          set_name, sub_steps, home_steps, total_rounds, blk)
+        finally:
+            self._blocks().pop()
+
+    def _run_block_rounds(self, device, account, step, prog, here, num, depth,
+                          set_name, sub_steps, home_steps, total_rounds, blk):
+        """ลูปรอบของ _run_block (แยกออกมาเพื่อให้ push/pop สแตกบล็อกครอบได้ครบทุกทางออก)"""
         for attempt in range(1, total_rounds + 1):
+            blk["attempt"] = attempt
             if not self.running():
                 return "stopped"
             self.log(f"[{device}] ▶ เริ่มชุด '{set_name}' (รอบ {attempt}/{total_rounds})", "info")
@@ -941,7 +1116,8 @@ class MacroRunner:
             # r == device_error/paused → ชุดนี้พังในรอบนี้
             if attempt >= total_rounds:
                 self.log(f"[{device}] ⛔ ชุด '{set_name}' พังครบ {total_rounds} รอบแล้ว → หยุด (บันทึกจุดที่ติดไว้)", "err")
-                self._save_failure_report(device, account, here, step, f"block_failed:{set_name}")
+                self._save_failure_report(device, account, here, step, f"block_failed:{set_name}",
+                                          step_no=num)
                 return "device_error"
             # ยังมีรอบเหลือ → กลับหน้าแรกก่อนเริ่มใหม่
             if home_steps:
@@ -1049,12 +1225,16 @@ class MacroRunner:
             if not self._interruptible_sleep(poll):
                 return "stopped"
 
-    def _save_failure_report(self, device, account, step_path, step, reason):
+    def _save_failure_report(self, device, account, step_path, step, reason, step_no=None):
         """บันทึก 'จุดที่ติด' (พอร์ตจาก gui._save_failure_report): แคปภาพ ณ ตอนติด +
-        ข้อมูลบัญชี/สเต็ป/เหตุผล ลง error_reports/ ไว้ย้อนดูภายหลัง"""
+        ข้อมูลบัญชี/สเต็ป/เหตุผล ลง error_reports/ ไว้ย้อนดูภายหลัง
+
+        ฟิลด์เสริม (ใส่เฉพาะที่มีค่า): step_no (เลขแบบที่ UI แสดง เริ่ม 1), set_name/attempt (ถ้าอยู่ในบล็อก),
+        x/y, template, threshold, best_score, timeout, on_fail, resolution, app_version, run_id,
+        inner_path/inner_reason (บรรทัด block_failed อ้างถึงขั้นย่อยที่พังจริง), tail (log 30 บรรทัดล่าสุด)"""
         try:
             now = datetime.datetime.now()
-            folder = os.path.join(base_dir(), "error_reports", now.strftime("%Y%m%d"))
+            folder = os.path.join(error_reports_dir(), now.strftime("%Y%m%d"))
             os.makedirs(folder, exist_ok=True)
             port = str(device).split(":")[-1]
             img_path = os.path.join(folder, f"{now.strftime('%H%M%S')}_{port}_step{step_path.replace('.', '-')}.png")
@@ -1073,11 +1253,69 @@ class MacroRunner:
                 "step_type": step.get("type", ""), "step_desc": step.get("desc", ""),
                 "reason": reason, "image": saved,
             }
-            with open(os.path.join(base_dir(), "error_reports", "report.jsonl"), "a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            rec.update(self._report_extras(device, step, reason, step_no))
+            report = os.path.join(error_reports_dir(), "report.jsonl")
+            with _report_lock:
+                rotate_report_monthly(report, now)
+                with open(report, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            # อยู่ในบล็อก = จำไว้เป็น 'ขั้นย่อยที่พัง' ให้บรรทัด block_failed ของบล็อกอ้างถึง
+            if self._blocks() and not str(reason).startswith("block_failed:"):
+                self._tl.inner = (step_path, reason)
             self.log(f"[{device}] บันทึกจุดที่ติด: ขั้น {step_path} '{step.get('desc', '')}' ({reason})", "warn")
         except Exception as e:
             self.log(f"[{device}] บันทึกรายงานปัญหาไม่สำเร็จ: {e}", "warn")
+
+    def _report_extras(self, device, step, reason, step_no):
+        """ฟิลด์เสริมของรายงาน — ตัดฟิลด์ที่ไม่เกี่ยวกับขั้นนี้ทิ้ง (ไม่ใส่ค่าว่าง/None)"""
+        ex = {}
+        if step_no:
+            ex["step_no"] = str(step_no)
+        blocks = self._blocks()
+        if blocks:
+            top = blocks[-1]
+            ex["set_name"] = top["set"]
+            ex["attempt"] = f"{top['attempt']}/{top['total']}"
+        for k in ("x", "y"):
+            v = step.get(k)
+            if v not in (None, ""):
+                try:
+                    ex[k] = self._as_int(v)
+                except (TypeError, ValueError):
+                    ex[k] = v
+        tpl = self._template_label(step)
+        if tpl:
+            ex["template"] = tpl
+        anchor = str(reason).startswith("anchor_")
+        thr = step.get("anchor_threshold") if anchor and step.get("anchor_img") else step.get("threshold")
+        if thr not in (None, ""):
+            ex["threshold"] = thr
+        score = getattr(self._tl, "best_score", None)   # _tl มีแน่ (เรียก _blocks() ด้านบนแล้ว)
+        if score is not None and not str(reason).startswith("block_failed:"):
+            ex["best_score"] = score
+        to = step.get("anchor_timeout") if anchor and step.get("anchor_img") else step.get("timeout")
+        if to not in (None, ""):
+            ex["timeout"] = to
+        of = step.get("anchor_on_fail") if anchor else step.get("on_fail")
+        if of:
+            ex["on_fail"] = of
+        try:
+            res = self.controller.get_resolution(device) if hasattr(self.controller, "get_resolution") else None
+            if res and res != "Unknown":
+                ex["resolution"] = str(res)
+        except Exception:
+            pass
+        ex["app_version"] = app_version()
+        ex["run_id"] = getattr(self, "run_id", "")
+        if str(reason).startswith("block_failed:"):
+            inner = getattr(self._tl, "inner", None)
+            if inner:
+                ex["inner_path"], ex["inner_reason"] = inner[0], inner[1]
+            self._tl.inner = None
+        tail = self._tail_for(device)
+        if tail:
+            ex["tail"] = tail
+        return ex
 
     def _pause_checkpoint(self, device, account, step_path, step, prog):
         """anchor_on_fail='pause': ต่างจาก _save_failure_report ตรงที่นี่ไม่ใช่ 'ความล้มเหลว' แต่เป็น
@@ -1112,6 +1350,55 @@ class MacroRunner:
         if not ok:
             raise RuntimeError(f"คำสั่ง {label} ล้มเหลว: {msg}")
         return ret
+
+    # ---------- log + บริบทสำหรับรายงานจุดที่ติด ----------
+    def _log_and_record(self, text, kind="info"):
+        """log ทุกบรรทัด: เก็บใน tail + เขียนไฟล์ แล้วส่งให้ callback เดิม (ไฟล์พังห้ามทำให้การรันพัง)"""
+        self._tail.append(f"{datetime.datetime.now().strftime('%H:%M:%S')} [{kind}] {text}")
+        try:
+            lvl = {"err": logging.ERROR, "warn": logging.WARNING}.get(kind, logging.INFO)
+            _ensure_file_log().log(lvl, "%s", text)
+        except Exception:
+            pass
+        self._user_log(text, kind)
+
+    def _tail_for(self, device, n=REPORT_TAIL_LINES):
+        """บรรทัด log ล่าสุดของจอนี้ (บรรทัดของจออื่นที่รันพร้อมกันถูกกรองออก)"""
+        tag = f"[{device}]"
+        return [l for l in list(getattr(self, "_tail", ())) if tag in l][-n:]
+
+    def _blocks(self):
+        """สแตกบล็อกกันพังที่กำลังรันในเธรดนี้: [{'set': ชื่อ, 'attempt': n, 'total': m}, ...]"""
+        tl = self.__dict__.get("_tl")
+        if tl is None:   # runner ที่ไม่ได้ผ่าน __init__ (เช่นสร้างด้วย __new__ ในเทส)
+            tl = self._tl = threading.local()
+        st = getattr(tl, "blocks", None)
+        if st is None:
+            st = tl.blocks = []
+        return st
+
+    def _note_match(self, msg):
+        """จำค่าความเหมือนล่าสุดจากข้อความผลเทียบภาพ (เอาไปใส่ rec['best_score'])"""
+        m = _CONFIDENCE_RE.search(str(msg or ""))
+        if m:
+            self._blocks()   # สร้าง _tl ถ้ายังไม่มี
+            try:
+                self._tl.best_score = round(float(m.group(1)), 3)
+            except ValueError:
+                pass
+
+    @staticmethod
+    def _template_label(step):
+        """ภาพที่ขั้นนี้ใช้ — ชื่อไฟล์ใน templates/ หรือ hash สั้นของภาพที่ลากกรอบ (base64 ยาวเกินจะใส่ log)"""
+        parts = []
+        txt = str(step.get("text") or "").strip()
+        if step.get("type") in _IMAGE_TEXT_TYPES and txt:
+            parts.append(txt)
+        for k in ("wait_img", "anchor_img", "find_img"):
+            b64 = step.get(k)
+            if b64:
+                parts.append(f"{k}:{hashlib.sha1(str(b64).encode('utf-8')).hexdigest()[:8]}")
+        return " | ".join(parts) or None
 
     # ---------- dispatch ต่อชนิด step ----------
     def _dispatch(self, device, account, step, anchor_hit):
@@ -1151,6 +1438,8 @@ class MacroRunner:
             self._read_diamond(device, account)
         elif t == "wait_for_image":
             self._wait_for_image(device, step); return
+        elif t == "tap_image":
+            self._tap_image(device, step); return
         elif t == "tap_until_image":
             self._tap_until_image(device, step); return
         elif t == "tap_until_gone":
@@ -1263,8 +1552,14 @@ class MacroRunner:
         """เทียบภาพต้นแบบของ step กับภาพจอ — เลือกวิธีตามว่าเป็น base64 หรือไฟล์"""
         tmpl_bytes, tmpl_path = self._step_template(step)
         if tmpl_bytes is not None:
-            return self.controller.match_template_bytes(data, tmpl_bytes, threshold)
-        return self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
+            res = self.controller.match_template_bytes(data, tmpl_bytes, threshold)
+        else:
+            res = self.controller.find_image_in_bytes(data, tmpl_path, threshold=threshold)
+        try:
+            self._note_match(res[3])   # จำค่าความเหมือนล่าสุดไว้ใส่รายงานถ้าขั้นนี้พัง
+        except Exception:
+            pass
+        return res
 
     def _wait_for_image(self, device, step):
         tmpl_bytes, tmpl_path = self._step_template(step)
@@ -1296,6 +1591,67 @@ class MacroRunner:
             if not self._interruptible_sleep(interval):
                 return
         self.log(f"[{device}] รอครบ {timeout:g} วิ ยังไม่เจอรูป '{tf}'", "warn")
+
+    # ---------- กดที่รูป (หาภาพแล้วกดกึ่งกลางภาพครั้งเดียว) ----------
+    # จังหวะเช็คจอระหว่างรอภาพ — ไม่เปิดให้ตั้งในฟอร์ม เพราะขั้นนี้ไม่ได้กดรัว แค่รอภาพขึ้น
+    _TAP_IMAGE_POLL = 0.5
+
+    def _tap_image(self, device, step):
+        """หาภาพเป้าหมายบนจอ (template matching) แล้วแตะที่กึ่งกลางภาพ 'ครั้งเดียว' แล้วไปขั้นต่อไป
+
+        ต่างจาก detect_image ตรงที่รอภาพขึ้นได้จนถึง timeout (detect_image เช็ครอบเดียวแล้วจบ)
+        และต่างจาก tap_until_image ตรงที่ไม่กดพิกัดอื่นระหว่างรอ — กดเฉพาะตรงภาพที่เจอเท่านั้น
+
+        on_fail = สิ่งที่ทำเมื่อครบ timeout แล้วยังไม่เจอภาพ
+            "skip" (ค่าเริ่มต้น) → เตือนใน log แล้วไปขั้นต่อไป ไม่ล้มทั้งบัญชี (เหมือนชนิดอื่น)
+            "fail"               → โยน error ให้ _run_steps บันทึกว่าบัญชีนี้ล้มที่ขั้นนี้
+        timeout 0 = เช็คแค่รอบเดียว (ใช้แทน detect_image ได้)
+        """
+        tmpl_bytes, tmpl_path = self._step_template(step)
+        if tmpl_bytes is None and tmpl_path is None:
+            # ตั้งค่าไม่ครบ = เตือนแล้วข้าม เหมือนชนิดเทียบภาพตัวอื่น (ไม่นับเป็นล้ม)
+            if step.get("text"):
+                self.log(f"[{device}] กดที่รูป: ไม่พบเทมเพลต {step.get('text')} → ข้าม", "warn")
+            else:
+                self.log(f"[{device}] กดที่รูป: ยังไม่ได้ตั้งภาพเป้าหมาย → ข้าม", "warn")
+            return
+        # แปลงค่าจากฟอร์ม (อาจเป็นข้อความ/ว่าง) — ค่าพังให้ถอยไปใช้ค่าเริ่มต้น
+        try:
+            timeout = max(0.0, float(step.get("timeout", 10)))
+        except (TypeError, ValueError):
+            timeout = 10.0
+        try:
+            threshold = float(step.get("threshold", 0.8) or 0.8)
+        except (TypeError, ValueError):
+            threshold = 0.8
+        on_fail = str(step.get("on_fail") or "skip").strip().lower()
+        name = (step.get("text") or "").strip() or "ภาพที่ลากกรอบไว้"
+
+        self.log(f"[{device}] หา '{name}' เพื่อกด (สูงสุด {timeout:g} วิ)…", "info")
+        deadline = time.time() + timeout
+        while True:
+            if not self.running():
+                return
+            ok, data = self.controller.capture_screenshot_bytes(device)
+            if ok:
+                found, mx, my, _m = self._match_step_template(data, step, threshold)
+                if found:
+                    # ผ่าน _check เพื่อให้ ADB ล้มเหลวถูกนับเป็นขั้นที่ล้ม ไม่ใช่เงียบ ๆ
+                    self._check(device, "tap_image",
+                                self.controller.tap(device, self._as_int(mx), self._as_int(my)))
+                    self.log(f"[{device}] เจอ '{name}' → กดที่ ({mx},{my})", "ok")
+                    self._sleep_delay(step)
+                    return
+            # เช็คก่อนนอน: timeout 0 = เช็ครอบเดียวแล้วจบเลย ไม่ต้องรอเปล่า ๆ
+            if time.time() >= deadline:
+                break
+            if not self._interruptible_sleep(self._TAP_IMAGE_POLL):
+                return
+        msg = f"กดที่รูป: ครบ {timeout:g} วิ ยังไม่เจอ '{name}'"
+        if on_fail == "fail":
+            raise RuntimeError(msg)
+        self.log(f"[{device}] {msg} → ข้าม", "warn")
+        self._sleep_delay(step)
 
     # ---------- กดรัวจนกว่าภาพเป้าหมายจะขึ้น ----------
     def _tap_until_image(self, device, step, gone=False):
@@ -1856,6 +2212,7 @@ class MacroRunner:
             ok, data = self.controller.capture_screenshot_bytes(device)
             if ok:
                 found, cx, cy, _msg = self.controller.match_template_bytes(data, tmpl, threshold)
+                self._note_match(_msg)   # ค่าความเหมือนของภาพ anchor (ใส่รายงานถ้าหาไม่เจอ)
                 if found:
                     return "found", cx, cy
             waited = 0.0
