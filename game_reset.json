@@ -53,6 +53,6 @@
     }
   ],
   "on_stuck": "next",
-  "retry_rounds": 3,
+  "retry_rounds": 5,
   "auto_enter": true
 }
