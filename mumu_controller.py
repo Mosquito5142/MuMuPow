@@ -4,6 +4,7 @@ import sys
 import shutil
 import tempfile
 import re
+import uuid
 import time
 import json
 import base64
@@ -882,19 +883,43 @@ class MuMuController:
         return 3
 
     def _device_identity(self, device_id):
-        """serial|boot serial|android_id ของเครื่อง — None ถ้าถามไม่ได้หรือว่างหมด"""
+        """serial|boot serial|android_id ของเครื่อง — None ถ้าถามไม่ได้หรือว่างหมด
+        ใช้ output แบบมี label (S=/B=/A=) + `true` ท้ายสุด: run_adb_cmd ตัดบรรทัดว่างหัวท้าย
+        และคำสั่งสุดท้ายที่ล้มอาจทำให้บรรทัดสุดท้ายหาย — parse ตามตำแหน่งจึงเพี้ยนได้"""
         cmd = ["-s", device_id, "shell",
-               "getprop ro.serialno; getprop ro.boot.serialno; settings get secure android_id"]
+               "echo S=$(getprop ro.serialno); echo B=$(getprop ro.boot.serialno); "
+               "echo A=$(settings get secure android_id); true"]
         for _ in range(2):  # เปิดหลายจอพร้อมกันอาจตอบไม่ทัน — ลองซ้ำ 1 ครั้ง
             ok, out = self.run_adb_cmd(cmd, timeout=5)
             if not ok:
                 continue
-            lines = [ln.strip() for ln in (out or "").splitlines()][:3]
-            lines += [""] * (3 - len(lines))
-            vals = ["" if v.lower() in self._NULL_IDS else v for v in lines]
+            found = {}
+            for ln in (out or "").splitlines():
+                m = re.match(r"\s*([SBA])=(.*)$", ln)
+                if m:
+                    found[m.group(1)] = m.group(2).strip()
+            vals = [found.get(k, "") for k in "SBA"]
+            vals = ["" if v.lower() in self._NULL_IDS else v for v in vals]
             if any(vals):
                 return "|".join(vals)
         return None
+
+    _PROBE_FILE = "/data/local/tmp/.mumupow_probe"
+
+    def _same_instance(self, keep, other):
+        """ยืนยันว่า 2 การเชื่อมต่อคือ instance เดียวกันจริง (โคลน MuMu ก๊อปดิสก์ข้อมูล
+        จึงอาจมี serial+android_id ซ้ำทั้งที่เป็นคนละจอ): เขียน token ผ่าน keep แล้วอ่านผ่าน other
+        True = เหมือนกัน, False = คนละ instance, None = ตรวจไม่ได้"""
+        tok = uuid.uuid4().hex
+        ok, _ = self.run_adb_cmd(
+            ["-s", keep, "shell", f"echo {tok} > {self._PROBE_FILE}"], timeout=5)
+        if not ok:
+            return None
+        ok, out = self.run_adb_cmd(["-s", other, "shell", f"cat {self._PROBE_FILE}"], timeout=5)
+        if not ok:
+            # ไฟล์ไม่อยู่บนจออีกตัว = ดิสก์คนละก้อน = คนละ instance (ไม่ใช่ adb พัง)
+            return False if "no such file" in (out or "").lower() else None
+        return (out or "").strip() == tok
 
     def _drop_duplicate(self, device_id):
         if not device_id.startswith("emulator-"):
@@ -902,7 +927,7 @@ class MuMuController:
 
     def get_unique_devices(self, connected_devices):
         """ตัดการเชื่อมต่อที่ชี้ไปจอเดียวกันออก — หมายเหตุอยู่ใน self.last_dedup_notes"""
-        notes = []
+        notes = self.last_dedup_notes = []
 
         # 1) รวมชื่อเล่นของการเชื่อมต่อเดียวกัน (ไม่ต้องถามเครื่อง)
         groups, order = {}, []
@@ -936,6 +961,13 @@ class MuMuController:
             if cur is None:
                 by_id[ident] = d
                 kept.append(d)
+                continue
+            same = self._same_instance(cur, d)
+            if same is None:
+                notes.append(f"⚠️ {d} อาจเป็นจอเดียวกับ {cur} (ตรวจยืนยันไม่ได้)")
+                kept.append(d)
+            elif not same:
+                kept.append(d)  # โคลน: คนละ instance แม้ id ตรงกัน
             elif self._keep_rank(d) < self._keep_rank(cur):
                 kept[kept.index(cur)] = d
                 by_id[ident] = d
@@ -945,7 +977,6 @@ class MuMuController:
                 notes.append(f"ตัดจอซ้ำ {d} (= {cur})")
                 self._drop_duplicate(d)
 
-        self.last_dedup_notes = notes
         return kept
 
     def load_ports(self):

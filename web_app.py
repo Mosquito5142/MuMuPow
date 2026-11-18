@@ -268,6 +268,10 @@ class Api:
         self._log.append({"ts": ts, "text": text, "kind": kind})
         self._log = self._log[-600:]
 
+    def _push_dedup_notes(self):
+        for n in getattr(self.controller, "last_dedup_notes", None) or []:
+            self._push_log(n, "warn" if n.startswith("⚠️") else "info")
+
     def get_logs(self):
         """คืน log ทั้งหมดตามลำดับจริง — ให้หน้าคอนโซลเต็ม/ปุ่มคัดลอก
         (log ตอนรันถูก append เข้า self._log ด้วย จึงไม่หายตอนเริ่มรันรอบใหม่)"""
@@ -289,10 +293,6 @@ class Api:
         }
 
     # ---------- actions (เรียกจากปุ่มบนเว็บ) ----------
-    def _push_dedup_notes(self):
-        for n in getattr(self.controller, "last_dedup_notes", None) or []:
-            self._push_log(n, "warn" if n.startswith("⚠️") else "info")
-
     def scan(self):
         self._push_log("กำลังสแกนและเชื่อมต่อ Emulator…", "info")
         try:
