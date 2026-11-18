@@ -289,6 +289,10 @@ class Api:
         }
 
     # ---------- actions (เรียกจากปุ่มบนเว็บ) ----------
+    def _push_dedup_notes(self):
+        for n in getattr(self.controller, "last_dedup_notes", None) or []:
+            self._push_log(n, "warn" if n.startswith("⚠️") else "info")
+
     def scan(self):
         self._push_log("กำลังสแกนและเชื่อมต่อ Emulator…", "info")
         try:
@@ -298,6 +302,7 @@ class Api:
             devices, _log = self.controller.scan_and_connect_all()
             self.devices = devices
             self.selected = set(devices)
+            self._push_dedup_notes()
             self._push_log(f"เชื่อมต่อสำเร็จ {len(devices)} จอ", "ok")
         except Exception as e:
             self._push_log(f"สแกนล้มเหลว: {e}", "err")
@@ -314,6 +319,7 @@ class Api:
             connected = self.controller.get_connected_devices()
             self.devices = self.controller.get_unique_devices(connected)
             self.selected |= set(self.devices)
+            self._push_dedup_notes()
             self._push_log(f"เชื่อมต่อ {addr}: {'สำเร็จ' if ok else out}", "ok" if ok else "err")
         except Exception as e:
             self._push_log(f"เชื่อมต่อ {addr} ล้มเหลว: {e}", "err")

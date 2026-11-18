@@ -98,3 +98,24 @@ def test_never_disconnects_emulator_entries():
     c = make({"emulator-5556": "S\nS\nA", REAL[0]: "S\nS\nA"})
     assert c.get_unique_devices(["emulator-5556", REAL[0]]) == [REAL[0]]
     assert c.disconnected == []
+
+
+def test_scan_pushes_dedup_notes_to_log():
+    import web_app
+
+    class Ctl:
+        last_dedup_notes = ["ตัดจอซ้ำ emulator-5556 (= 127.0.0.1:16416)",
+                            "⚠️ ระบุตัวตน 127.0.0.1:5561 ไม่ได้ — อาจเป็นจอซ้ำ"]
+
+        def load_ports(self):
+            return [16416]
+
+        def scan_and_connect_all(self):
+            return ["127.0.0.1:16416"], ""
+
+    api = web_app.Api()
+    api.controller = Ctl()
+    api.scan()
+    kinds = {e["text"]: e["kind"] for e in api._log}
+    assert kinds["ตัดจอซ้ำ emulator-5556 (= 127.0.0.1:16416)"] == "info"
+    assert kinds["⚠️ ระบุตัวตน 127.0.0.1:5561 ไม่ได้ — อาจเป็นจอซ้ำ"] == "warn"
