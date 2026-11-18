@@ -78,7 +78,8 @@ def test_friend_case_ten_becomes_six():
     ids["emulator-5558"] = "SER2\nSER2\nAID2"
     connected = ["emulator-5556", "emulator-5558", "emulator-5560"] + REAL + ["127.0.0.1:5561"]
     c = make(ids)
-    assert c.get_unique_devices(connected) == REAL
+    # ตัวที่ถูกเก็บแทนจะอยู่ตำแหน่งของตัวซ้ำที่มาก่อน — เทียบแบบไม่สนลำดับ
+    assert sorted(c.get_unique_devices(connected)) == sorted(REAL)
 
 
 def test_alias_merged_without_identity():
