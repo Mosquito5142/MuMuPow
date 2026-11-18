@@ -715,6 +715,7 @@ class MuMuController:
         # ลำดับความสำคัญ: ค่าที่ส่งเข้ามา > พาธที่ผู้ใช้เคยบันทึกไว้ (จำข้ามการเปิดโปรแกรม) > ค้นหาอัตโนมัติ
         self.adb_path = adb_path or self.load_saved_adb_path() or self.find_adb()
         self.common_ports = self.load_ports()
+        self.last_dedup_notes = []
 
     def _config_dir(self):
         """โฟลเดอร์ที่วางไฟล์ตั้งค่า (ข้างตัว .exe ตอน build, ข้างไฟล์ .py ตอน dev)"""
@@ -857,35 +858,95 @@ class MuMuController:
                     devices.append(parts[0])
         return devices
 
+    _NULL_IDS = {"", "unknown", "null", "none"}
+
+    @staticmethod
+    def _alias_key(device_id):
+        """emulator-N, 127.0.0.1:N+1 และ localhost:N+1 คือการเชื่อมต่อเดียวกัน"""
+        m = re.fullmatch(r"emulator-(\d+)", device_id)
+        if m:
+            return f"127.0.0.1:{int(m.group(1)) + 1}"
+        m = re.fullmatch(r"localhost:(\d+)", device_id)
+        if m:
+            return f"127.0.0.1:{m.group(1)}"
+        return device_id
+
+    @staticmethod
+    def _keep_rank(device_id):
+        """ยิ่งน้อยยิ่งอยากเก็บ: พอร์ต MuMu 12 (>=16384) > 127.0.0.1 อื่น > emulator-* > อื่น ๆ"""
+        m = re.fullmatch(r"127\.0\.0\.1:(\d+)", device_id)
+        if m:
+            return 0 if int(m.group(1)) >= 16384 else 1
+        if device_id.startswith("emulator-"):
+            return 2
+        return 3
+
+    def _device_identity(self, device_id):
+        """serial|boot serial|android_id ของเครื่อง — None ถ้าถามไม่ได้หรือว่างหมด"""
+        cmd = ["-s", device_id, "shell",
+               "getprop ro.serialno; getprop ro.boot.serialno; settings get secure android_id"]
+        for _ in range(2):  # เปิดหลายจอพร้อมกันอาจตอบไม่ทัน — ลองซ้ำ 1 ครั้ง
+            ok, out = self.run_adb_cmd(cmd, timeout=5)
+            if not ok:
+                continue
+            lines = [ln.strip() for ln in (out or "").splitlines()][:3]
+            lines += [""] * (3 - len(lines))
+            vals = ["" if v.lower() in self._NULL_IDS else v for v in lines]
+            if any(vals):
+                return "|".join(vals)
+        return None
+
+    def _drop_duplicate(self, device_id):
+        if not device_id.startswith("emulator-"):
+            self.disconnect_device(device_id)  # เก็บ ADB ให้สะอาด
+
     def get_unique_devices(self, connected_devices):
-        """Filters out duplicate connections to the same physical emulator."""
-        unique_devices = []
-        seen_serials = set()
-        
-        def get_device_serial(device_id):
-            # Query device serial number with a low timeout (2 seconds)
-            success, serial = self.run_adb_cmd(["-s", device_id, "shell", "getprop", "ro.serialno"], timeout=2)
-            if success and serial.strip():
-                return device_id, serial.strip()
-            # Fallback to MAC address
-            success, mac = self.run_adb_cmd(["-s", device_id, "shell", "cat", "/sys/class/net/wlan0/address"], timeout=2)
-            if success and mac.strip():
-                return device_id, mac.strip()
-            return device_id, device_id # Fallback to itself
+        """ตัดการเชื่อมต่อที่ชี้ไปจอเดียวกันออก — หมายเหตุอยู่ใน self.last_dedup_notes"""
+        notes = []
 
-        if connected_devices:
-            with ThreadPoolExecutor(max_workers=max(1, len(connected_devices))) as executor:
-                results = list(executor.map(get_device_serial, connected_devices))
+        # 1) รวมชื่อเล่นของการเชื่อมต่อเดียวกัน (ไม่ต้องถามเครื่อง)
+        groups, order = {}, []
+        for d in connected_devices:
+            k = self._alias_key(d)
+            if k not in groups:
+                groups[k] = []
+                order.append(k)
+            groups[k].append(d)
+        reps = []
+        for k in order:
+            members = sorted(groups[k], key=self._keep_rank)
+            reps.append(members[0])
+            for dup in members[1:]:
+                notes.append(f"ตัดจอซ้ำ {dup} (= {members[0]})")
+                self._drop_duplicate(dup)
 
-            for device_id, serial in results:
-                if serial not in seen_serials:
-                    seen_serials.add(serial)
-                    unique_devices.append(device_id)
-                else:
-                    # Disconnect duplicate connection to keep ADB clean
-                    self.disconnect_device(device_id)
-        
-        return unique_devices
+        # 2) ระบุตัวตนแล้วรวมตัวที่ id ตรงกันทุกค่า
+        ids = {}
+        if reps:
+            with ThreadPoolExecutor(max_workers=len(reps)) as executor:
+                ids = dict(zip(reps, executor.map(self._device_identity, reps)))
+        kept, by_id = [], {}
+        for d in reps:
+            ident = ids.get(d)
+            if ident is None:
+                notes.append(f"⚠️ ระบุตัวตน {d} ไม่ได้ — อาจเป็นจอซ้ำ")
+                kept.append(d)
+                continue
+            cur = by_id.get(ident)
+            if cur is None:
+                by_id[ident] = d
+                kept.append(d)
+            elif self._keep_rank(d) < self._keep_rank(cur):
+                kept[kept.index(cur)] = d
+                by_id[ident] = d
+                notes.append(f"ตัดจอซ้ำ {cur} (= {d})")
+                self._drop_duplicate(cur)
+            else:
+                notes.append(f"ตัดจอซ้ำ {d} (= {cur})")
+                self._drop_duplicate(d)
+
+        self.last_dedup_notes = notes
+        return kept
 
     def load_ports(self):
         """Loads ports from ports.json if it exists, otherwise returns empty list."""
