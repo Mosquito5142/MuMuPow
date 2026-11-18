@@ -957,24 +957,29 @@ class MuMuController:
                 notes.append(f"⚠️ ระบุตัวตน {d} ไม่ได้ — อาจเป็นจอซ้ำ")
                 kept.append(d)
                 continue
-            cur = by_id.get(ident)
-            if cur is None:
-                by_id[ident] = d
+            rep_list = by_id.setdefault(ident, [])
+            unverified = []
+            match = None
+            for rep in rep_list:
+                same = self._same_instance(rep, d)
+                if same:
+                    match = rep
+                    break
+                if same is None:
+                    unverified.append(rep)
+            if match is None:
+                # ไม่มีตัวไหนยืนยันว่าเป็น instance เดียวกัน — เก็บไว้ (จอหายแย่กว่าจอซ้ำที่เห็น)
+                for rep in unverified:
+                    notes.append(f"⚠️ {d} อาจเป็นจอเดียวกับ {rep} (ตรวจยืนยันไม่ได้)")
                 kept.append(d)
-                continue
-            same = self._same_instance(cur, d)
-            if same is None:
-                notes.append(f"⚠️ {d} อาจเป็นจอเดียวกับ {cur} (ตรวจยืนยันไม่ได้)")
-                kept.append(d)
-            elif not same:
-                kept.append(d)  # โคลน: คนละ instance แม้ id ตรงกัน
-            elif self._keep_rank(d) < self._keep_rank(cur):
-                kept[kept.index(cur)] = d
-                by_id[ident] = d
-                notes.append(f"ตัดจอซ้ำ {cur} (= {d})")
-                self._drop_duplicate(cur)
+                rep_list.append(d)
+            elif self._keep_rank(d) < self._keep_rank(match):
+                kept[kept.index(match)] = d
+                rep_list[rep_list.index(match)] = d
+                notes.append(f"ตัดจอซ้ำ {match} (= {d})")
+                self._drop_duplicate(match)
             else:
-                notes.append(f"ตัดจอซ้ำ {d} (= {cur})")
+                notes.append(f"ตัดจอซ้ำ {d} (= {match})")
                 self._drop_duplicate(d)
 
         return kept

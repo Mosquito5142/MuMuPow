@@ -8,11 +8,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mumu_controller import MuMuController
 
 
-def make(ids, fail_first=(), same_instance=None, probe_fail=False):
+def make(ids, fail_first=(), same_instance=None, probe_fail=False, cat_error=None):
     """ids: {device: "serial\nboot\nandroid_id"} (หรือ output แบบ label "S=..\nB=..\nA=.." ดิบ)
     ไม่มีใน dict = ถามไม่ได้ (timeout); fail_first: device ที่ครั้งแรก timeout ครั้งสองตอบได้
     same_instance: {device: ชื่อ instance} — จอที่ไม่ได้ระบุ = instance ของตัวเอง (ไฟล์ /data แยกกัน)
-    probe_fail: เขียน/อ่านไฟล์ probe ไม่ได้"""
+    probe_fail: เขียน/อ่านไฟล์ probe ไม่ได้
+    cat_error: ข้อความ error ของ cat ที่ไม่ใช่ "No such file" (เช่น device offline)"""
     c = MuMuController.__new__(MuMuController)  # ข้าม __init__ (ไม่หา adb จริง)
     c.disconnected = []
     calls = {}
@@ -39,6 +40,8 @@ def make(ids, fail_first=(), same_instance=None, probe_fail=False):
             fs[inst] = shell.split()[1]
             return True, ""
         if shell.startswith("cat "):
+            if cat_error:
+                return False, cat_error
             return (True, fs[inst]) if inst in fs else (False, "cat: No such file or directory")
         return False, "?"
 
@@ -181,11 +184,32 @@ def test_in_place_replacement_order_pinned():
 
 
 def test_notes_reset_at_start_of_each_call():
+    import pytest
     c = make({REAL[0]: "S0\nS0\nA0"})
-    c.get_unique_devices([REAL[0], REAL[1]])
-    assert c.last_dedup_notes
-    c.get_unique_devices([])
-    assert c.last_dedup_notes == []
+    c.last_dedup_notes = ["stale note"]
+
+    def boom(d):
+        raise RuntimeError("identity lookup failed")
+
+    c._device_identity = boom
+    with pytest.raises(RuntimeError):
+        c.get_unique_devices([REAL[0], REAL[1]])
+    assert "stale note" not in c.last_dedup_notes
+
+
+def test_multi_clone_interleaved_connections():
+    A1, B1, A2, B2 = (f"127.0.0.1:{p}" for p in (16416, 16448, 16480, 16512))
+    c = make({d: IDENT for d in (A1, B1, A2, B2)},
+             same_instance={A1: "A", A2: "A", B1: "B", B2: "B"})
+    assert c.get_unique_devices([A1, B1, A2, B2]) == [A1, B1]
+    assert sum(n.startswith("ตัดจอซ้ำ") for n in c.last_dedup_notes) == 2
+
+
+def test_probe_non_nosuchfile_error_keeps_both_with_warning():
+    c = make({REAL[0]: IDENT, REAL[1]: IDENT}, cat_error="error: device offline")
+    assert c.get_unique_devices(REAL[:2]) == REAL[:2]
+    assert c.disconnected == []
+    assert f"⚠️ {REAL[1]} อาจเป็นจอเดียวกับ {REAL[0]} (ตรวจยืนยันไม่ได้)" in c.last_dedup_notes
 
 
 def test_connect_manual_pushes_notes():
