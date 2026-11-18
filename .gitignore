@@ -23,3 +23,14 @@ release_zip/
 # เก็บบรรทัดนี้ไว้เผื่อ PyInstaller สร้าง dist/ ขึ้นมาใหม่ (publish.py build ลง release_build/ แทน)
 /dist/
 
+
+# ---- ตัวโปรแกรม .exe: ส่งลูกค้าผ่าน GitHub Releases (publish.py) ไม่เก็บใน git ----
+*.exe
+
+# ---- ของชั่วคราว/ข้อมูลเครื่องนี้ ไม่ต้องเข้า git ----
+.superpowers/
+screenshots/
+temp_screen.png
+match_result.png
+backup_coords_*/
+โปรแกรมใหม่ดีไซน์มินิมอล/
